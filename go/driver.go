@@ -69,6 +69,19 @@ const (
 	OptionAuthRefreshToken = "bigquery.auth.refresh_token"
 	OptionAuthQuotaProject = "bigquery.auth.quota_project"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// OptionStringAuthAccessTokenEndpoint overrides the OAuth token endpoint used when
+	// refreshing access tokens. Defaults to AccessTokenEndpoint.
+	OptionStringAuthAccessTokenEndpoint = "adbc.bigquery.sql.auth.access_token_endpoint"
+	// OptionStringAuthAccessTokenServerName overrides the TLS server name used when
+	// contacting the access token endpoint. Defaults to AccessTokenServerName.
+	OptionStringAuthAccessTokenServerName = "adbc.bigquery.sql.auth.access_token_server_name"
+	// OptionValueAuthTypeTemporaryAccessToken instructs the driver to authenticate using
+	// a one-off bearer access token provided directly via OptionStringAuthAccessToken.
+	OptionValueAuthTypeTemporaryAccessToken = "adbc.bigquery.sql.auth_type.temporary_access_token"
+	OptionStringAuthAccessToken             = "adbc.bigquery.sql.auth.access_token"
+
 	// OptionQueryParameterMode specifies if the query uses positional syntax ("?")
 	// or the named syntax ("@p"). It is illegal to mix positional and named syntax.
 	// Default is OptionValueQueryParameterModePositional.

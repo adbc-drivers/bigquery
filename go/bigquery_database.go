@@ -38,12 +38,15 @@ import (
 type databaseImpl struct {
 	driverbase.DatabaseImplBase
 
-	authType        string
-	credentialsType option.CredentialsType
-	credentials     string
-	clientID        string
-	clientSecret    string
-	refreshToken    string
+	authType              string
+	credentialsType       option.CredentialsType
+	credentials           string
+	clientID              string
+	clientSecret          string
+	refreshToken          string
+	accessToken           string
+	accessTokenEndpoint   string
+	accessTokenServerName string
 
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
@@ -72,6 +75,9 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		clientID:                   d.clientID,
 		clientSecret:               d.clientSecret,
 		refreshToken:               d.refreshToken,
+		accessToken:                d.accessToken,
+		accessTokenEndpoint:        d.accessTokenEndpoint,
+		accessTokenServerName:      d.accessTokenServerName,
 		impersonateTargetPrincipal: d.impersonateTargetPrincipal,
 		impersonateDelegates:       d.impersonateDelegates,
 		impersonateScopes:          d.impersonateScopes,
@@ -118,6 +124,12 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.clientSecret, nil
 	case OptionAuthRefreshToken:
 		return d.refreshToken, nil
+	case OptionStringAuthAccessToken:
+		return d.accessToken, nil
+	case OptionStringAuthAccessTokenEndpoint:
+		return d.accessTokenEndpoint, nil
+	case OptionStringAuthAccessTokenServerName:
+		return d.accessTokenServerName, nil
 	case OptionAuthQuotaProject:
 		return d.quotaProject, nil
 	case OptionLocation:
@@ -204,7 +216,8 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			OptionValueAuthTypeJSONCredentialString,
 			OptionValueAuthTypeUserAuthentication,
 			OptionValueAuthTypeAppDefaultCredentials,
-			OptionValueAuthTypeAnonymous:
+			OptionValueAuthTypeAnonymous,
+			OptionValueAuthTypeTemporaryAccessToken:
 			d.authType = value
 		default:
 			return adbc.Error{
@@ -238,6 +251,12 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.clientSecret = value
 	case OptionAuthRefreshToken:
 		d.refreshToken = value
+	case OptionStringAuthAccessToken:
+		d.accessToken = value
+	case OptionStringAuthAccessTokenEndpoint:
+		d.accessTokenEndpoint = value
+	case OptionStringAuthAccessTokenServerName:
+		d.accessTokenServerName = value
 	case OptionAuthQuotaProject:
 		d.quotaProject = value
 	case OptionImpersonateTargetPrincipal:
