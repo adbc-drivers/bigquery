@@ -171,6 +171,14 @@ const (
 	// already authorized on a dataset are skipped.
 	OptionJsonAuthorizeViewToDatasets = "adbc.bigquery.dataset.authorize_view_to_datasets"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// Legacy CSV ingest options. Prefer the new ADBC ingest API; these are
+	// kept for compatibility with callers from the legacy arrow-adbc driver.
+	OptionStringIngestFileDelimiter = "adbc.bigquery.ingest.csv_delimiter"
+	OptionStringIngestPath          = "adbc.bigquery.ingest.csv_filepath"
+	OptionStringIngestSchema        = "adbc.bigquery.ingest.csv_schema"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

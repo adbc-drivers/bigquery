@@ -88,6 +88,11 @@ type statement struct {
 	tableDescription string
 	// JSON {view: [{project, dataset}, ...]} of authorized-view grants.
 	authorizeViewToDatasets string
+
+	// Legacy CSV ingest — separate from the new ADBC bulk-ingest API.
+	ingestPath          string
+	ingestFileDelimiter string
+	explicitSchema      []*bigquery.FieldSchema
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -105,9 +110,14 @@ func (st *statement) GetOptionDouble(ctx context.Context, key string) (float64, 
 }
 
 func (st *statement) SetOptionBytes(ctx context.Context, key string, value []byte) error {
-	return adbc.Error{
-		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
-		Code: adbc.StatusNotImplemented,
+	switch key {
+	case OptionStringIngestSchema:
+		return st.loadExplicitSchema(ctx, value)
+	default:
+		return adbc.Error{
+			Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
+			Code: adbc.StatusNotImplemented,
+		}
 	}
 }
 
@@ -195,6 +205,10 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return st.tableDescription, nil
 	case OptionJsonAuthorizeViewToDatasets:
 		return st.authorizeViewToDatasets, nil
+	case OptionStringIngestFileDelimiter:
+		return st.ingestFileDelimiter, nil
+	case OptionStringIngestPath:
+		return st.ingestPath, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -393,6 +407,13 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		st.tableDescription = v
 	case OptionJsonAuthorizeViewToDatasets:
 		st.authorizeViewToDatasets = v
+	case OptionStringIngestPath:
+		st.ingestPath = v
+	case OptionStringIngestFileDelimiter:
+		st.ingestFileDelimiter = v
+	case OptionStringIngestSchema:
+		// String-encoded schema for compatibility; prefer SetOptionBytes.
+		return st.loadExplicitSchema(ctx, []byte(v))
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -467,6 +488,8 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 	case st.ingest.TableName != "":
 		n, err := st.executeIngest(ctx)
 		return nil, n, err
+	case st.ingestPath != "":
+		return st.executeCSVIngest(ctx)
 	case st.copyTableSource != "":
 		return st.executeCopyTable(ctx)
 	case st.updateTableColumnsDescription != "" || st.updateTableColumnsPolicyTags != "":
