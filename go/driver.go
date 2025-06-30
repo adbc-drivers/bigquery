@@ -362,29 +362,31 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 	return driverbase.NewDatabase(db), nil
 }
 
-func stringToTable(defaultProjectID, defaultDatasetID, value string) (*bigquery.Table, error) {
+// stringToTable resolves a `[[ProjectId.]DatasetId.]TableId` reference against
+// the connection's defaults and returns a table bound to the connection's
+// client. The table must be obtained through the client — see
+// connectionImpl.table.
+func stringToTable(cnxn *connectionImpl, value string) (*bigquery.Table, error) {
 	parts := strings.Split(value, ".")
-	table := &bigquery.Table{
-		ProjectID: defaultProjectID,
-		DatasetID: defaultDatasetID,
-	}
+	projectID, datasetID := cnxn.catalog, cnxn.dbSchema
+	var tableID string
 	switch len(parts) {
 	case 1:
-		table.TableID = parts[0]
+		tableID = parts[0]
 	case 2:
-		table.DatasetID = parts[0]
-		table.TableID = parts[1]
+		datasetID = parts[0]
+		tableID = parts[1]
 	case 3:
-		table.ProjectID = parts[0]
-		table.DatasetID = parts[1]
-		table.TableID = parts[2]
+		projectID = parts[0]
+		datasetID = parts[1]
+		tableID = parts[2]
 	default:
 		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("[bq] invalid table reference format, expected `[[ProjectId.]DatasetId.]TableId`, got: `%s`", value),
 		}
 	}
-	return table, nil
+	return cnxn.table(projectID, datasetID, tableID), nil
 }
 
 func stringToTableCreateDisposition(value string) (bigquery.TableCreateDisposition, error) {

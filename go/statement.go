@@ -361,7 +361,7 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		if v == "" {
 			st.queryConfig.Dst = nil
 		} else {
-			val, err := stringToTable(st.cnxn.catalog, st.cnxn.dbSchema, v)
+			val, err := stringToTable(st.cnxn, v)
 			if err == nil {
 				st.queryConfig.Dst = val
 			} else {

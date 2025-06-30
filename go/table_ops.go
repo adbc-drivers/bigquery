@@ -38,14 +38,14 @@ func (st *statement) executeCopyTable(ctx context.Context) (array.RecordReader, 
 			Msg:  "[bq] copy_table requires both source and destination to be set",
 		}
 	}
-	source, err := stringToTable(st.cnxn.catalog, st.cnxn.dbSchema, st.copyTableSource)
+	source, err := stringToTable(st.cnxn, st.copyTableSource)
 	if err != nil {
 		return nil, -1, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("[bq] invalid source table: %v", err),
 		}
 	}
-	dest, err := stringToTable(st.cnxn.catalog, st.cnxn.dbSchema, st.copyTableDestination)
+	dest, err := stringToTable(st.cnxn, st.copyTableDestination)
 	if err != nil {
 		return nil, -1, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
@@ -158,7 +158,7 @@ func (st *statement) executeAuthorizeViewToDatasets(ctx context.Context) (array.
 	}
 
 	for viewName, datasets := range viewToDataset {
-		view, err := stringToTable(st.cnxn.catalog, st.cnxn.dbSchema, viewName)
+		view, err := stringToTable(st.cnxn, viewName)
 		if err != nil {
 			return nil, -1, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
