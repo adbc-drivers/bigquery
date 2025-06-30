@@ -95,6 +95,11 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// OptionJsonUpdateTableColumnsDescription accepts a JSON object
+	// {column: description} to be applied to the destination table
+	// specified by OptionQueryDestinationTable.
+	OptionJsonUpdateTableColumnsDescription = "bigquery.table.update_columns_description"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -180,6 +185,7 @@ var (
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
 		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
+		"adbc.bigquery.table.update_columns_description":      OptionJsonUpdateTableColumnsDescription,
 	}
 )
 
