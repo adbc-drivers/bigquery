@@ -10,8 +10,10 @@ package bigquery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -72,6 +74,55 @@ func (st *statement) executeCopyTable(ctx context.Context) (array.RecordReader, 
 	}
 	if err := status.Err(); err != nil {
 		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "copy job")
+	}
+	return emptyResult()
+}
+
+// executeUpdateTableColumnsMetadata updates column-level descriptions
+// on the table referenced by queryConfig.Dst. The input is a JSON object
+// {column: string}. Columns not present in the map are left untouched.
+func (st *statement) executeUpdateTableColumnsMetadata(ctx context.Context) (array.RecordReader, int64, error) {
+	if st.queryConfig.Dst == nil {
+		return nil, -1, adbc.Error{
+			Code: adbc.StatusInvalidState,
+			Msg:  "[bq] update_columns requires a destination table",
+		}
+	}
+
+	var columnDescriptions map[string]string
+	if st.updateTableColumnsDescription != "" {
+		if err := json.Unmarshal([]byte(st.updateTableColumnsDescription), &columnDescriptions); err != nil {
+			return nil, -1, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] parse column descriptions JSON: %v", err),
+			}
+		}
+	}
+
+	table := st.queryConfig.Dst
+	md, err := table.Metadata(ctx)
+	if err != nil {
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "get table metadata")
+	}
+
+	newSchema := make([]*bigquery.FieldSchema, len(md.Schema))
+	for i, field := range md.Schema {
+		nf := &bigquery.FieldSchema{
+			Name:        field.Name,
+			Type:        field.Type,
+			Description: field.Description,
+			Repeated:    field.Repeated,
+			Required:    field.Required,
+			Schema:      field.Schema,
+			PolicyTags:  field.PolicyTags,
+		}
+		if d, ok := columnDescriptions[field.Name]; ok {
+			nf.Description = d
+		}
+		newSchema[i] = nf
+	}
+	if _, err := table.Update(ctx, bigquery.TableMetadataToUpdate{Schema: newSchema}, md.ETag); err != nil {
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "update table schema")
 	}
 	return emptyResult()
 }

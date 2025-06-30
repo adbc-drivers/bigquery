@@ -151,6 +151,13 @@ const (
 	OptionStringCopyTableDestination      = "adbc.bigquery.copy_table.destination"
 	OptionStringCopyTableWriteDisposition = "adbc.bigquery.copy_table.write_disposition"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// OptionJsonUpdateTableColumnsDescription accepts a JSON object
+	// {column: description} to be applied to the destination table
+	// specified by OptionStringQueryDestinationTable.
+	OptionJsonUpdateTableColumnsDescription = "adbc.bigquery.table.update_columns_description"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
