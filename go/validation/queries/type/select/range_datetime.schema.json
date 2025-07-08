@@ -1,0 +1,22 @@
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "res",
+            "format": "+s",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "start",
+                    "format": "tsu:",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "end",
+                    "format": "tsu:",
+                    "flags": ["nullable"]
+                }
+            ]
+        }
+    ]
+}

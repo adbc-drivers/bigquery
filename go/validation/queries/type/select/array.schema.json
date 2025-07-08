@@ -1,0 +1,77 @@
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "res_bool",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "b",
+                    "flags": ["nullable"]
+                }
+            ]
+        },
+        {
+            "name": "res_bool_null",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "b",
+                    "flags": ["nullable"]
+                }
+            ]
+        },
+        {
+            "name": "res_int64",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "l",
+                    "flags": ["nullable"]
+                }
+            ]
+        },
+        {
+            "name": "res_int64_null",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "l",
+                    "flags": ["nullable"]
+                }
+            ]
+        },
+        {
+            "name": "res_string",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "u",
+                    "flags": ["nullable"]
+                }
+            ]
+        },
+        {
+            "name": "res_string_null",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "u",
+                    "flags": ["nullable"]
+                }
+            ]
+        }
+    ]
+}

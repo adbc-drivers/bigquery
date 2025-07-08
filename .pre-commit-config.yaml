@@ -1,0 +1,52 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: 8a948e557ca98afa9489998ad0b85515964df9c4  # v0.12.0
+  hooks:
+    - id: ruff-check
+      name: "ruff check (isort)"
+      args: ["--select", "I", "--fix"]
+    - id: ruff-check
+      args: ["--fix"]
+    - id: ruff-format
+
+- repo: https://github.com/codespell-project/codespell
+  rev: 63c8f8312b7559622c0d82815639671ae42132ac  # v2.4.1
+  hooks:
+  - id: codespell
+    exclude: >
+        (?x)^(
+            .*go\.sum|
+            bigquery/LICENSE\.txt
+        )$
+
+- repo: https://github.com/golangci/golangci-lint
+  rev: 00a561d9a79578a2800dece2f04c60ad479a3798  # v2.1.2
+  hooks:
+  - id: golangci-lint
+    name: lint BigQuery
+    entry: bash -c 'cd bigquery && golangci-lint run --fix --timeout 5m'
+    types_or: [go, go-mod]
+
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
+  hooks:
+  - id: check-added-large-files
+  - id: check-case-conflict
+  - id: check-executables-have-shebangs
+  - id: check-yaml
+  - id: detect-private-key
+  - id: end-of-file-fixer
+  - id: mixed-line-ending
+    args: [--fix=lf]
+    exclude: '\.bat$'
+  - id: trailing-whitespace
+
+- repo: local
+  hooks:
+  - id: copyright-header
+    name: Check for copyright header
+    language: python
+    pass_filenames: true
+    entry: "./ci/scripts/check_copyright_header.py"

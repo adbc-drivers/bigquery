@@ -1,0 +1,24 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+name: Build & Test
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@613e69437a93e0ddabcdae7773a3ee12c7a0bc38
+    secrets:
+      dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
+      driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
+      nightly_signing_private_key: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY }}
+      nightly_signing_private_key_id: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_ID }}
+      nightly_signing_private_key_password: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_PASSWORD }}
+    with:
+      driver: bigquery

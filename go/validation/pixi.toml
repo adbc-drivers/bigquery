@@ -1,0 +1,17 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+[workspace]
+authors = ["David Li <li.davidm96@gmail.com>"]
+channels = ["conda-forge"]
+name = "validation"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+test = "pytest -rfEsxX -vvs tests/"
+
+[dependencies]
+python = ">=3.13,<4"
+
+[pypi-dependencies]
+adbc-drivers-validation = { git = "ssh://git@github.com/adbc-drivers/validation", rev = "0400ab4551b416a4a1444dc7d022c62cd4c9bc4e" }

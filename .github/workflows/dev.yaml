@@ -1,0 +1,19 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+name: Dev
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: adbc-drivers/dev/.github/workflows/dev.yaml@613e69437a93e0ddabcdae7773a3ee12c7a0bc38
+    secrets:
+      pre_commit_ssh_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
+      ssh_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}

@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+//
+// This file has been modified from its original version, which is
+// under the Apache License:
+//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -22,14 +27,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/bigquery"
+	driver "github.com/adbc-drivers/google/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
-	driver "github.com/apache/arrow-adbc/go/adbc/driver/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc/validation"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -120,6 +126,9 @@ func getSqlTypeFromArrowField(f arrow.Field) string {
 	case arrow.DATE32, arrow.DATE64:
 		return "DATE"
 	case arrow.TIMESTAMP:
+		if f.Type.(*arrow.TimestampType).TimeZone == "" {
+			return "DATETIME"
+		}
 		return "TIMESTAMP"
 	case arrow.TIME32, arrow.TIME64:
 		return "TIME"
@@ -216,11 +225,6 @@ func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.
 		panic(err)
 	}
 
-	// wait for some time before accessing it
-	// BigQuery needs some time to make the table available
-	// otherwise the query will fail with error saying the table cannot be found
-	time.Sleep(5 * time.Second)
-
 	insertQuery := "INSERT INTO " + q.quoteTblName(tableName) + " VALUES ("
 	bindings := strings.Repeat("?,", int(r.NumCols()))
 	insertQuery += bindings[:len(bindings)-1] + ")"
@@ -309,11 +313,6 @@ func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr arra
 		panic(err)
 	}
 
-	// wait for some time before accessing it
-	// BigQuery needs some time to make the table available
-	// otherwise the query will fail with error saying the table cannot be found
-	time.Sleep(5 * time.Second)
-
 	insertQuery := "INSERT INTO " + q.quoteTblName(tableName) + " VALUES ("
 	bindings := strings.Repeat("?,", rdr.Schema().NumFields())
 	insertQuery += bindings[:len(bindings)-1] + ")"
@@ -368,10 +367,10 @@ func (q *BigQueryQuirks) SupportsDynamicParameterBinding() bool       { return f
 func (q *BigQueryQuirks) SupportsErrorIngestIncompatibleSchema() bool { return false }
 func (q *BigQueryQuirks) Catalog() string                             { return q.catalogName }
 func (q *BigQueryQuirks) DBSchema() string                            { return q.schemaName }
-func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) interface{} {
+func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) any {
 	switch code {
 	case adbc.InfoDriverName:
-		return "ADBC BigQuery Driver - Go"
+		return "Columnar ADBC Driver for Google BigQuery"
 	// runtime/debug.ReadBuildInfo doesn't currently work for tests
 	// github.com/golang/go/issues/33976
 	case adbc.InfoDriverVersion:
@@ -385,7 +384,7 @@ func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) interface{} {
 	case adbc.InfoDriverADBCVersion:
 		return adbc.AdbcVersion1_1_0
 	case adbc.InfoVendorName:
-		return "BigQuery"
+		return "Google BigQuery"
 	}
 
 	return nil
@@ -845,8 +844,11 @@ func (suite *BigQueryTests) TestSqlIngestTimestampTypes() {
 			Nullable: true,
 		},
 		{
-			Name: "col_timestamp_s_ntz", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"},
+			Name: "col_timestamp_s_ntz", Type: &arrow.TimestampType{Unit: arrow.Microsecond},
 			Nullable: true,
+			Metadata: arrow.MetadataFrom(map[string]string{
+				"ARROW:extension:name": "google:sqlType:datetime",
+			}),
 		},
 	}, nil)
 
@@ -1551,3 +1553,62 @@ func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 }
 
 var _ validation.DriverQuirks = (*BigQueryQuirks)(nil)
+
+type BigQueryTestSuite struct {
+	suite.Suite
+	project string
+	dataset string
+	mem     *memory.CheckedAllocator
+	ctx     context.Context
+	driver  adbc.Driver
+	db      adbc.Database
+	cnxn    adbc.Connection
+	stmt    adbc.Statement
+}
+
+func (s *BigQueryTestSuite) SetupSuite() {
+	var err error
+
+	s.project = os.Getenv("BIGQUERY_PROJECT_ID")
+	s.dataset = os.Getenv("BIGQUERY_DATASET_ID")
+
+	if s.project == "" || s.dataset == "" {
+		s.T().Skip("BIGQUERY_PROJECT_ID and BIGQUERY_DATASET_ID must be set")
+	}
+
+	s.ctx = context.Background()
+	s.mem = memory.NewCheckedAllocator(memory.DefaultAllocator)
+
+	s.driver = driver.NewDriver(s.mem)
+	s.db, err = s.driver.NewDatabase(map[string]string{
+		driver.OptionStringProjectID: s.project,
+		driver.OptionStringDatasetID: s.dataset,
+	})
+	s.NoError(err)
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	})
+	logger := slog.New(handler)
+	s.db.(adbc.DatabaseLogging).SetLogger(logger)
+
+	s.cnxn, err = s.db.Open(s.ctx)
+	s.NoError(err)
+
+	s.stmt, err = s.cnxn.NewStatement()
+	s.NoError(err)
+}
+
+func (s *BigQueryTestSuite) TearDownSuite() {
+	if s.stmt != nil {
+		s.NoError(s.stmt.Close())
+	}
+	if s.cnxn != nil {
+		s.NoError(s.cnxn.Close())
+	}
+	if s.db != nil {
+		s.NoError(s.db.Close())
+	}
+	s.mem.AssertSize(s.T(), 0)
+}

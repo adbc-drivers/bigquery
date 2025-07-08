@@ -1,0 +1,5 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+[tags]
+caveats = ["BigQuery's timestamp is effectively an Instant; use DATETIME for naive timestamps"]
+sql-type-name = "TIMESTAMP"

@@ -1,0 +1,4 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+# SCM syntax highlighting & preventing 3-way merges
+pixi.lock merge=binary linguist-language=YAML linguist-generated=true

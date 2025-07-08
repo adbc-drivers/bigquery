@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+//
+// This file has been modified from its original version, which is
+// under the Apache License:
+//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -58,15 +63,27 @@ func checkContext(ctx context.Context, maybeErr error) error {
 func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, int64, error) {
 	job, err := query.Run(ctx)
 	if err != nil {
-		return nil, -1, err
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
 	}
 	if executeUpdate {
-		return nil, 0, nil
+		js, err := job.Wait(ctx)
+		if err != nil {
+			return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "wait for job")
+		}
+		if err := js.Err(); err != nil {
+			return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
+		} else if !js.Done() {
+			return nil, -1, adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  "[bq] Query job did not complete",
+			}
+		}
+		return nil, -1, nil
 	}
 
 	iter, err := job.Read(ctx)
 	if err != nil {
-		return nil, -1, err
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "read query results")
 	}
 
 	var arrowIterator bigquery.ArrowIterator
@@ -74,7 +91,7 @@ func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (b
 	// iterator should be empty (#2173)
 	if iter.TotalRows > 0 {
 		if arrowIterator, err = iter.ArrowIterator(); err != nil {
-			return nil, -1, err
+			return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results")
 		}
 	} else {
 		arrowIterator = emptyArrowIterator{iter.Schema}
@@ -144,6 +161,7 @@ func runPlainQuery(ctx context.Context, query *bigquery.Query, alloc memory.Allo
 			ch <- rec
 		}
 
+		// TODO(lidavidm): doesn't this discard the error?
 		err = checkContext(ctx, rdr.Err())
 		defer close(ch)
 	}()
@@ -152,7 +170,7 @@ func runPlainQuery(ctx context.Context, query *bigquery.Query, alloc memory.Allo
 
 func queryRecordWithSchemaCallback(ctx context.Context, group *errgroup.Group, query *bigquery.Query, rec arrow.Record, ch chan arrow.Record, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema)) (int64, error) {
 	totalRows := int64(-1)
-	for i := 0; i < int(rec.NumRows()); i++ {
+	for i := range int(rec.NumRows()) {
 		parameters, err := getQueryParameter(rec, i, parameterMode)
 		if err != nil {
 			return -1, err
@@ -161,6 +179,9 @@ func queryRecordWithSchemaCallback(ctx context.Context, group *errgroup.Group, q
 			query.Parameters = parameters
 		}
 
+		// TODO: we can inspect arrowIterator.Schema and determine
+		// which rows we may have to cast (to add appropriate
+		// extension type)
 		arrowIterator, rows, err := runQuery(ctx, query, false)
 		if err != nil {
 			return -1, err

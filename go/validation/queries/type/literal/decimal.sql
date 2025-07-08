@@ -1,0 +1,1 @@
+SELECT NUMERIC '123.45' AS res

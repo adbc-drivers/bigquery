@@ -1,0 +1,39 @@
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "res",
+            "format": "+s",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "_field_1",
+                    "format": "b",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "_field_2",
+                    "format": "l",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "_field_3",
+                    "format": "u",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "_field_4",
+                    "format": "+l",
+                    "flags": ["nullable"],
+                    "children": [
+                        {
+                            "name": "item",
+                            "format": "l",
+                            "flags": ["nullable"]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

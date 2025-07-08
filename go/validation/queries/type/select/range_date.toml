@@ -1,0 +1,5 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+[tags]
+show-arrow-type-parameters = true
+sql-type-name = "RANGE<DATE>"

@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+//
+// This file has been modified from its original version, which is
+// under the Apache License:
+//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -24,7 +29,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -32,9 +36,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/apache/arrow-adbc/go/adbc/driver/internal"
-	"github.com/apache/arrow-adbc/go/adbc/driver/internal/driverbase"
 	"github.com/apache/arrow-go/v18/arrow"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/iterator"
@@ -57,6 +60,8 @@ type connectionImpl struct {
 	// tableID is the default table for statement
 	tableID string
 
+	sessionID *string
+
 	resultRecordBufferSize int
 	prefetchConcurrency    int
 
@@ -64,12 +69,12 @@ type connectionImpl struct {
 }
 
 func (c *connectionImpl) GetCatalogs(ctx context.Context, catalogFilter *string) ([]string, error) {
-	catalogPattern, err := internal.PatternToRegexp(catalogFilter)
+	catalogPattern, err := driverbase.PatternToRegexp(catalogFilter)
 	if err != nil {
 		return nil, err
 	}
 	if catalogPattern == nil {
-		catalogPattern = internal.AcceptAll
+		catalogPattern = driverbase.AcceptAll
 	}
 
 	// Connections to BQ are scoped to a particular Project, which corresponds to catalog-level namespacing.
@@ -84,12 +89,12 @@ func (c *connectionImpl) GetCatalogs(ctx context.Context, catalogFilter *string)
 }
 
 func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog string, schemaFilter *string) ([]string, error) {
-	schemaPattern, err := internal.PatternToRegexp(schemaFilter)
+	schemaPattern, err := driverbase.PatternToRegexp(schemaFilter)
 	if err != nil {
 		return nil, err
 	}
 	if schemaPattern == nil {
-		schemaPattern = internal.AcceptAll
+		schemaPattern = driverbase.AcceptAll
 	}
 
 	it := c.client.Datasets(ctx)
@@ -114,12 +119,12 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 }
 
 func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog string, schema string, tableFilter *string, columnFilter *string, includeColumns bool) ([]driverbase.TableInfo, error) {
-	tablePattern, err := internal.PatternToRegexp(tableFilter)
+	tablePattern, err := driverbase.PatternToRegexp(tableFilter)
 	if err != nil {
 		return nil, err
 	}
 	if tablePattern == nil {
-		tablePattern = internal.AcceptAll
+		tablePattern = driverbase.AcceptAll
 	}
 
 	it := c.client.DatasetInProject(catalog, schema).Tables(ctx)
@@ -139,7 +144,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 		md, err := table.Metadata(ctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
 		if err != nil {
-			return nil, err
+			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
 		}
 
 		var constraints []driverbase.ConstraintInfo
@@ -148,7 +153,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 			if md.TableConstraints.PrimaryKey != nil {
 				constraints = append(constraints, driverbase.ConstraintInfo{
 					// BigQuery Primary Keys are unnamed
-					ConstraintType:        internal.PrimaryKey,
+					ConstraintType:        driverbase.PrimaryKey,
 					ConstraintColumnNames: driverbase.RequiredList(md.TableConstraints.PrimaryKey.Columns),
 				})
 			}
@@ -168,7 +173,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 				}
 				constraints = append(constraints, driverbase.ConstraintInfo{
 					ConstraintName:        driverbase.Nullable(fk.Name),
-					ConstraintType:        internal.ForeignKey,
+					ConstraintType:        driverbase.ForeignKey,
 					ConstraintColumnUsage: columnUsage,
 				})
 			}
@@ -176,12 +181,12 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 		var columns []driverbase.ColumnInfo
 		if includeColumns {
-			columnPattern, err := internal.PatternToRegexp(columnFilter)
+			columnPattern, err := driverbase.PatternToRegexp(columnFilter)
 			if err != nil {
 				return nil, err
 			}
 			if columnPattern == nil {
-				columnPattern = internal.AcceptAll
+				columnPattern = driverbase.AcceptAll
 			}
 
 			columns = make([]driverbase.ColumnInfo, 0)
@@ -208,7 +213,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 					if err != nil {
 						return nil, err
 					}
-					xdbcDataType := internal.ToXdbcDataType(field.Type)
+					xdbcDataType := driverbase.ToXdbcDataType(field.Type)
 
 					columns = append(columns, driverbase.ColumnInfo{
 						ColumnName:          fieldschema.Name,
@@ -285,14 +290,84 @@ func (c *connectionImpl) ListTableTypes(ctx context.Context) ([]string, error) {
 	}, nil
 }
 
+func (c *connectionImpl) exec(ctx context.Context, stmt string, config func(*bigquery.QueryConfig)) (*bigquery.JobStatus, error) {
+	query := c.client.Query(stmt)
+	query.DefaultProjectID = c.catalog
+	query.DefaultDatasetID = c.dbSchema
+	if c.sessionID != nil {
+		query.ConnectionProperties = append(query.ConnectionProperties, &bigquery.ConnectionProperty{
+			Key:   "session_id",
+			Value: *c.sessionID,
+		})
+	}
+	if config != nil {
+		config(&query.QueryConfig)
+	}
+
+	// Do NOT use errToAdbcErr here since we don't have context. Expect
+	// the caller to do that.
+	job, err := query.Run(ctx)
+	if err != nil {
+		return nil, err
+	}
+	status := job.LastStatus()
+	if err := status.Err(); err != nil {
+		return nil, err
+
+	}
+	return status, nil
+}
+
 // SetAutocommit implements driverbase.AutocommitSetter.
 func (c *connectionImpl) SetAutocommit(enabled bool) error {
+	// TODO(https://github.com/apache/arrow-adbc/issues/2772)
+	ctx := context.Background()
 	if enabled {
+		if c.sessionID == nil {
+			// This should never happen
+			return adbc.Error{
+				Code: adbc.StatusInvalidState,
+				Msg:  "[bq] SetAutocommit to `false` called, but sessionID is not set",
+			}
+		}
+
+		_, err := c.exec(ctx, "COMMIT TRANSACTION", nil)
+		if err != nil {
+			return errToAdbcErr(adbc.StatusInternal, err, "commit transaction")
+		}
+		_, err = c.exec(ctx, fmt.Sprintf("CALL BQ.ABORT_SESSION('%s')", *c.sessionID), nil)
+		if err != nil {
+			return errToAdbcErr(adbc.StatusInternal, err, "close session")
+		}
+		c.sessionID = nil
 		return nil
-	}
-	return adbc.Error{
-		Code: adbc.StatusNotImplemented,
-		Msg:  "SetAutocommit to `false` is not yet implemented",
+	} else {
+		if c.sessionID != nil {
+			// This should never happen
+			return adbc.Error{
+				Code: adbc.StatusInvalidState,
+				Msg:  "[bq] SetAutocommit to `true` called, but sessionID is already set",
+			}
+		}
+
+		status, err := c.exec(ctx, "SELECT 1", func(config *bigquery.QueryConfig) {
+			config.CreateSession = true
+		})
+		if err != nil {
+			return errToAdbcErr(adbc.StatusInternal, err, "create session")
+		} else if status.Statistics.SessionInfo == nil {
+			return adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  "[bq] could not create session: no session info in job status",
+			}
+		}
+		c.sessionID = &status.Statistics.SessionInfo.SessionID
+
+		_, err = c.exec(ctx, "BEGIN TRANSACTION", nil)
+		if err != nil {
+			return errToAdbcErr(adbc.StatusInternal, err, "begin transaction")
+		}
+		return nil
 	}
 }
 
@@ -300,27 +375,41 @@ func (c *connectionImpl) SetAutocommit(enabled bool) error {
 // only be used if autocommit is disabled.
 //
 // Behavior is undefined if this is mixed with SQL transaction statements.
-func (c *connectionImpl) Commit(_ context.Context) error {
-	return adbc.Error{
-		Code: adbc.StatusNotImplemented,
-		Msg:  "Commit not yet implemented for BigQuery driver",
+func (c *connectionImpl) Commit(ctx context.Context) error {
+	_, err := c.exec(ctx, "COMMIT TRANSACTION", nil)
+	if err != nil {
+		return errToAdbcErr(adbc.StatusInternal, err, "commit transaction")
 	}
+	_, err = c.exec(ctx, "BEGIN TRANSACTION", nil)
+	if err != nil {
+		return errToAdbcErr(adbc.StatusInternal, err, "begin transaction")
+	}
+	return nil
 }
 
 // Rollback rolls back any pending transactions. Only used if autocommit
 // is disabled.
 //
 // Behavior is undefined if this is mixed with SQL transaction statements.
-func (c *connectionImpl) Rollback(_ context.Context) error {
-	return adbc.Error{
-		Code: adbc.StatusNotImplemented,
-		Msg:  "Rollback not yet implemented for BigQuery driver",
+func (c *connectionImpl) Rollback(ctx context.Context) error {
+	_, err := c.exec(ctx, "ROLLBACK TRANSACTION", nil)
+	if err != nil {
+		return errToAdbcErr(adbc.StatusInternal, err, "rollback transaction")
 	}
+	_, err = c.exec(ctx, "BEGIN TRANSACTION", nil)
+	if err != nil {
+		return errToAdbcErr(adbc.StatusInternal, err, "begin transaction")
+	}
+	return nil
 }
 
 // Close closes this connection and releases any associated resources.
 func (c *connectionImpl) Close() error {
-	return c.client.Close()
+	err := c.client.Close()
+	if err != nil {
+		return errToAdbcErr(adbc.StatusIO, err, "close client")
+	}
+	return nil
 }
 
 // Metadata methods
@@ -440,6 +529,7 @@ func (c *connectionImpl) NewStatement() (adbc.Statement, error) {
 		parameterMode:          OptionValueQueryParameterModePositional,
 		resultRecordBufferSize: c.resultRecordBufferSize,
 		prefetchConcurrency:    c.prefetchConcurrency,
+		ingest:                 driverbase.NewBulkIngestOptions(),
 		queryConfig: bigquery.QueryConfig{
 			DefaultProjectID: c.catalog,
 			DefaultDatasetID: c.dbSchema,
@@ -498,7 +588,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	if c.catalog == "" {
 		return adbc.Error{
 			Code: adbc.StatusInvalidArgument,
-			Msg:  "ProjectID is empty",
+			Msg:  "[bq] ProjectID is empty",
 		}
 	}
 	switch c.authType {
@@ -513,19 +603,19 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			if c.clientID == "" {
 				return adbc.Error{
 					Code: adbc.StatusInvalidArgument,
-					Msg:  fmt.Sprintf("The `%s` parameter is empty", OptionStringAuthClientID),
+					Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthClientID),
 				}
 			}
 			if c.clientSecret == "" {
 				return adbc.Error{
 					Code: adbc.StatusInvalidArgument,
-					Msg:  fmt.Sprintf("The `%s` parameter is empty", OptionStringAuthClientSecret),
+					Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthClientSecret),
 				}
 			}
 			if c.refreshToken == "" {
 				return adbc.Error{
 					Code: adbc.StatusInvalidArgument,
-					Msg:  fmt.Sprintf("The `%s` parameter is empty", OptionStringAuthRefreshToken),
+					Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthRefreshToken),
 				}
 			}
 			credentials = option.WithTokenSource(c)
@@ -533,24 +623,24 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 		client, err := bigquery.NewClient(ctx, c.catalog, credentials)
 		if err != nil {
-			return err
+			return errToAdbcErr(adbc.StatusIO, err, "create client")
 		}
 
 		err = client.EnableStorageReadClient(ctx, credentials)
 		if err != nil {
-			return err
+			return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")
 		}
 
 		c.client = client
 	default:
 		client, err := bigquery.NewClient(ctx, c.catalog)
 		if err != nil {
-			return err
+			return errToAdbcErr(adbc.StatusIO, err, "create client")
 		}
 
 		err = client.EnableStorageReadClient(ctx)
 		if err != nil {
-			return err
+			return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")
 		}
 
 		c.client = client
@@ -582,7 +672,7 @@ func sanitizeDataset(value string) (string, error) {
 		if len(value) > 1024 {
 			return "", adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  "Dataset name exceeds 1024 characters",
+				Msg:  "[bq] Dataset name cannot exceed 1024 characters",
 			}
 		}
 		return value, nil
@@ -590,7 +680,7 @@ func sanitizeDataset(value string) (string, error) {
 
 	return "", adbc.Error{
 		Code: adbc.StatusInvalidArgument,
-		Msg:  fmt.Sprintf("invalid characters in value `%s`", value),
+		Msg:  fmt.Sprintf("[bq] invalid characters in dataset `%s`", value),
 	}
 }
 
@@ -697,7 +787,10 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	if schema.PolicyTags != nil {
 		policyTagList, err := json.Marshal(schema.PolicyTags)
 		if err != nil {
-			return arrow.Field{}, err
+			return arrow.Field{}, adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  fmt.Sprintf("[bq] failed to marshal policy tags for field `%s`: %s", schema.Name, err),
+			}
 		}
 		metadata["PolicyTags"] = string(policyTagList)
 	}
@@ -718,53 +811,62 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	case bigquery.BooleanFieldType:
 		field.Type = arrow.FixedWidthTypes.Boolean
 	case bigquery.TimestampFieldType:
-		field.Type = arrow.FixedWidthTypes.Timestamp_ms
+		field.Type = arrow.FixedWidthTypes.Timestamp_us
 	case bigquery.RecordFieldType:
-		if schema.Repeated {
-			if len(schema.Schema) == 1 {
-				arrayField, err := buildField(schema.Schema[0], level+1)
-				if err != nil {
-					return arrow.Field{}, err
-				}
-				field.Type = arrow.ListOf(arrayField.Type)
-				field.Metadata = arrayField.Metadata
-				field.Nullable = arrayField.Nullable
-			} else {
-				return arrow.Field{}, adbc.Error{
-					Code: adbc.StatusInvalidArgument,
-					Msg:  fmt.Sprintf("Cannot create array schema for filed `%s`: len(schema.Schema) != 1", schema.Name),
-				}
+		nestedFields := make([]arrow.Field, len(schema.Schema))
+		for i, nestedSchema := range schema.Schema {
+			f, err := buildField(nestedSchema, level+1)
+			if err != nil {
+				return arrow.Field{}, err
 			}
-		} else {
-			nestedFields := make([]arrow.Field, len(schema.Schema))
-			for i, nestedSchema := range schema.Schema {
-				f, err := buildField(nestedSchema, level+1)
-				if err != nil {
-					return arrow.Field{}, err
-				}
-				nestedFields[i] = f
-			}
-			structType := arrow.StructOf(nestedFields...)
-			if structType == nil {
-				return arrow.Field{}, adbc.Error{
-					Code: adbc.StatusInvalidArgument,
-					Msg:  fmt.Sprintf("Cannot create a struct schema for record `%s`", schema.Name),
-				}
-			}
-			field.Type = structType
+			nestedFields[i] = f
 		}
+		structType := arrow.StructOf(nestedFields...)
+		if structType == nil {
+			return arrow.Field{}, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("Cannot create a struct schema for record `%s`", schema.Name),
+			}
+		}
+		field.Type = structType
 
 	case bigquery.DateFieldType:
 		field.Type = arrow.FixedWidthTypes.Date32
 	case bigquery.TimeFieldType:
 		field.Type = arrow.FixedWidthTypes.Time64us
 	case bigquery.DateTimeFieldType:
-		field.Type = arrow.FixedWidthTypes.Timestamp_us
+		field.Type = &arrow.TimestampType{Unit: arrow.Microsecond}
 	case bigquery.NumericFieldType:
-		field.Type = &arrow.Decimal128Type{
-			Precision: int32(schema.Precision),
-			Scale:     int32(schema.Scale),
+		if schema.Precision == 0 && schema.Scale == 0 {
+			// BigQuery appears to punt, fill in default
+			field.Type = &arrow.Decimal128Type{
+				Precision: 38,
+				Scale:     9,
+			}
+		} else {
+			field.Type = &arrow.Decimal128Type{
+				Precision: int32(schema.Precision),
+				Scale:     int32(schema.Scale),
+			}
 		}
+	case bigquery.RangeFieldType:
+		var childType arrow.DataType
+		switch schema.RangeElementType.Type {
+		case bigquery.DateFieldType:
+			childType = arrow.FixedWidthTypes.Date32
+		case bigquery.DateTimeFieldType:
+			childType = &arrow.TimestampType{Unit: arrow.Microsecond}
+		case bigquery.TimestampFieldType:
+			childType = arrow.FixedWidthTypes.Timestamp_us
+		default:
+			return arrow.Field{}, adbc.Error{
+				Code: adbc.StatusNotImplemented,
+				Msg:  fmt.Sprintf("[bq] %s is not supported in range", schema.RangeElementType.Type),
+			}
+		}
+		field.Type = arrow.StructOf(
+			arrow.Field{Name: "start", Type: childType, Nullable: true},
+			arrow.Field{Name: "end", Type: childType, Nullable: true})
 	case bigquery.GeographyFieldType:
 		// TODO: potentially we should consider using GeoArrow for this
 		field.Type = arrow.BinaryTypes.String
@@ -775,6 +877,8 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		}
 	case bigquery.JSONFieldType:
 		field.Type = arrow.BinaryTypes.String
+	case bigquery.IntervalFieldType:
+		field.Type = arrow.FixedWidthTypes.MonthDayNanoInterval
 	default:
 		// TODO: unsupported ones are:
 		// - bigquery.IntervalFieldType
@@ -783,6 +887,10 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("Google SQL type `%s` is not supported yet", schema.Type),
 		}
+	}
+
+	if schema.Repeated {
+		field.Type = arrow.ListOf(field.Type)
 	}
 
 	if level == 0 {
@@ -828,7 +936,7 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return nil, errToAdbcErr(adbc.StatusIO, err, "get access token")
 	}
 	defer func(Body io.ReadCloser) {
 		bodyErr := Body.Close()
@@ -839,13 +947,13 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 
 	contents, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		return nil, errToAdbcErr(adbc.StatusIO, err, "get access token")
 	}
 
 	var tokenResponse bigQueryTokenResponse
 	err = json.Unmarshal(contents, &tokenResponse)
 	if err != nil {
-		return nil, err
+		return nil, errToAdbcErr(adbc.StatusIO, err, "get access token")
 	}
 	return &tokenResponse, nil
 }

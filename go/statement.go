@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+//
+// This file has been modified from its original version, which is
+// under the Apache License:
+//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -24,6 +29,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -51,6 +57,7 @@ type statement struct {
 	streamBinding          array.RecordReader
 	resultRecordBufferSize int
 	prefetchConcurrency    int
+	ingest                 driverbase.BulkIngestOptions
 }
 
 func (st *statement) GetOptionBytes(key string) ([]byte, error) {
@@ -88,8 +95,9 @@ func (st *statement) SetOptionDouble(key string, value float64) error {
 func (st *statement) Close() error {
 	if st.cnxn == nil {
 		return adbc.Error{
-			Msg:  "statement already closed",
-			Code: adbc.StatusInvalidState}
+			Msg:  "[bq] statement already closed",
+			Code: adbc.StatusInvalidState,
+		}
 	}
 
 	st.clearParameters()
@@ -164,6 +172,24 @@ func (st *statement) GetOptionInt(key string) (int64, error) {
 
 func (st *statement) SetOption(key string, v string) error {
 	switch key {
+	case adbc.OptionKeyIngestTargetTable:
+		st.ingest.TableName = v
+	case adbc.OptionKeyIngestMode:
+		switch v {
+		case adbc.OptionValueIngestModeAppend:
+			fallthrough
+		case adbc.OptionValueIngestModeCreate:
+			fallthrough
+		case adbc.OptionValueIngestModeReplace:
+			fallthrough
+		case adbc.OptionValueIngestModeCreateAppend:
+			st.ingest.Mode = v
+		default:
+			return adbc.Error{
+				Msg:  fmt.Sprintf("[bq] Invalid statement option %s=%s", key, v),
+				Code: adbc.StatusInvalidArgument,
+			}
+		}
 	case OptionStringQueryParameterMode:
 		switch v {
 		case OptionValueQueryParameterModeNamed, OptionValueQueryParameterModePositional:
@@ -171,15 +197,19 @@ func (st *statement) SetOption(key string, v string) error {
 		default:
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("Parameter mode for the statement can only be either %s or %s", OptionValueQueryParameterModeNamed, OptionValueQueryParameterModePositional),
+				Msg:  fmt.Sprintf("[bq] Parameter mode for the statement can only be either %s or %s", OptionValueQueryParameterModeNamed, OptionValueQueryParameterModePositional),
 			}
 		}
 	case OptionStringQueryDestinationTable:
-		val, err := stringToTable(st.cnxn.catalog, st.cnxn.dbSchema, v)
-		if err == nil {
-			st.queryConfig.Dst = val
+		if v == "" {
+			st.queryConfig.Dst = nil
 		} else {
-			return err
+			val, err := stringToTable(st.cnxn.catalog, st.cnxn.dbSchema, v)
+			if err == nil {
+				st.queryConfig.Dst = val
+			} else {
+				return err
+			}
 		}
 	case OptionStringQueryDefaultProjectID:
 		st.queryConfig.DefaultProjectID = v
@@ -251,8 +281,8 @@ func (st *statement) SetOption(key string, v string) error {
 
 	default:
 		return adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("unknown statement string type option `%s`", key),
+			Code: adbc.StatusNotImplemented,
+			Msg:  fmt.Sprintf("[bq] unknown statement string type option `%s`", key),
 		}
 	}
 	return nil
@@ -275,7 +305,7 @@ func (st *statement) SetOptionInt(key string, value int64) error {
 	default:
 		return adbc.Error{
 			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("unknown statement string type option `%s`", key),
+			Msg:  fmt.Sprintf("[bq] unknown statement string type option `%s`", key),
 		}
 	}
 	return nil
@@ -297,9 +327,12 @@ func (st *statement) SetSqlQuery(query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
-	if st.queryConfig.Q == "" {
+	if st.ingest.TableName != "" {
+		n, err := st.executeIngest(ctx)
+		return nil, n, err
+	} else if st.queryConfig.Q == "" {
 		return nil, -1, adbc.Error{
-			Msg:  "cannot execute without a query",
+			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,
 		}
 	}
@@ -315,6 +348,11 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 // ExecuteUpdate executes a statement that does not generate a result
 // set. It returns the number of rows affected if known, otherwise -1.
 func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
+	if st.ingest.TableName != "" {
+		n, err := st.executeIngest(ctx)
+		return n, err
+	}
+
 	boundParameters, err := st.getBoundParameterReader()
 	if err != nil {
 		return -1, err
@@ -330,7 +368,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 		totalRows := int64(0)
 		for boundParameters.Next() {
 			values := boundParameters.Record()
-			for i := 0; i < int(values.NumRows()); i++ {
+			for i := range int(values.NumRows()) {
 				parameters, err := getQueryParameter(values, i, st.parameterMode)
 				if err != nil {
 					return -1, err
@@ -352,10 +390,39 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 
 // ExecuteSchema gets the schema of the result set of a query without executing it.
 func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
-	return nil, adbc.Error{
-		Code: adbc.StatusNotImplemented,
-		Msg:  "ExecuteSchema not yet implemented for BigQuery driver",
+	job, err := st.dryRun(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	status := job.LastStatus()
+	if err := status.Err(); err != nil {
+		return nil, errToAdbcErr(adbc.StatusInternal, err, "get job status (ExecuteSchema)")
+	}
+
+	queryStats, ok := status.Statistics.Details.(*bigquery.QueryStatistics)
+	if !ok {
+		return nil, adbc.Error{
+			Code: adbc.StatusInternal,
+			Msg:  "[bq] could not access query statistics from dry run",
+		}
+	}
+
+	bqSchema := queryStats.Schema
+	if len(bqSchema) == 0 {
+		return arrow.NewSchema([]arrow.Field{}, nil), nil
+	}
+
+	fields := make([]arrow.Field, len(bqSchema))
+	for i, fieldSchema := range bqSchema {
+		f, err := buildField(fieldSchema, 0)
+		if err != nil {
+			return nil, err
+		}
+		fields[i] = f
+	}
+
+	return arrow.NewSchema(fields, nil), nil
 }
 
 // Prepare turns this statement into a prepared statement to be executed
@@ -383,20 +450,44 @@ func (st *statement) Prepare(_ context.Context) error {
 func (st *statement) SetSubstraitPlan(plan []byte) error {
 	return adbc.Error{
 		Code: adbc.StatusNotImplemented,
-		Msg:  "Substrait not yet implemented for BigQuery driver",
+		Msg:  "[bq] Substrait not yet implemented for BigQuery driver",
 	}
 }
 
 func (st *statement) query() *bigquery.Query {
 	query := st.cnxn.client.Query("")
 	query.QueryConfig = st.queryConfig
+	if sessionId := st.cnxn.sessionID; sessionId != nil && *sessionId != "" {
+		query.ConnectionProperties = append(query.ConnectionProperties, &bigquery.ConnectionProperty{
+			Key:   "session_id",
+			Value: *sessionId,
+		})
+	}
 	return query
 }
 
-func arrowDataTypeToTypeKind(field arrow.Field, value arrow.Array) (bigquery.StandardSQLDataType, error) {
+func (st *statement) dryRun(ctx context.Context) (*bigquery.Job, error) {
+	if st.queryConfig.Q == "" {
+		return nil, adbc.Error{
+			Msg:  "[bq] cannot get schema without a query",
+			Code: adbc.StatusInvalidState,
+		}
+	}
+
+	query := st.query()
+	query.DryRun = true
+
+	job, err := query.Run(ctx)
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusInternal, err, "dry run query")
+	}
+	return job, nil
+}
+
+func arrowDataTypeToTypeKind(field arrow.Field) (bigquery.StandardSQLDataType, error) {
 	// https://cloud.google.com/bigquery/docs/reference/storage#arrow_schema_details
 	// https://cloud.google.com/bigquery/docs/reference/rest/v2/StandardSqlDataType#typekind
-	switch value.DataType().ID() {
+	switch field.Type.ID() {
 	case arrow.BOOL:
 		return bigquery.StandardSQLDataType{
 			TypeKind: "BOOL",
@@ -422,9 +513,15 @@ func arrowDataTypeToTypeKind(field arrow.Field, value arrow.Array) (bigquery.Sta
 			TypeKind: "DATE",
 		}, nil
 	case arrow.TIMESTAMP:
-		return bigquery.StandardSQLDataType{
-			TypeKind: "TIMESTAMP",
-		}, nil
+		if field.Type.(*arrow.TimestampType).TimeZone == "" {
+			return bigquery.StandardSQLDataType{
+				TypeKind: "DATETIME",
+			}, nil
+		} else {
+			return bigquery.StandardSQLDataType{
+				TypeKind: "TIMESTAMP",
+			}, nil
+		}
 	case arrow.TIME32, arrow.TIME64:
 		return bigquery.StandardSQLDataType{
 			TypeKind: "TIME",
@@ -439,7 +536,7 @@ func arrowDataTypeToTypeKind(field arrow.Field, value arrow.Array) (bigquery.Sta
 		}, nil
 	case arrow.LIST, arrow.LARGE_LIST, arrow.FIXED_SIZE_LIST, arrow.LIST_VIEW, arrow.LARGE_LIST_VIEW:
 		elemField := field.Type.(*arrow.ListType).ElemField()
-		elemType, err := arrowDataTypeToTypeKind(elemField, value.(*array.List).ListValues())
+		elemType, err := arrowDataTypeToTypeKind(elemField)
 		if err != nil {
 			return bigquery.StandardSQLDataType{}, err
 		}
@@ -448,14 +545,11 @@ func arrowDataTypeToTypeKind(field arrow.Field, value arrow.Array) (bigquery.Sta
 			ArrayElementType: &elemType,
 		}, nil
 	case arrow.STRUCT:
-		numFields := value.(*array.Struct).NumField()
 		structType := bigquery.StandardSQLStructType{
 			Fields: make([]*bigquery.StandardSQLField, 0),
 		}
-		for i := 0; i < numFields; i++ {
-			currentField := field.Type.(*arrow.StructType).Field(i)
-			currentFieldArray := value.(*array.Struct).Field(i)
-			childType, err := arrowDataTypeToTypeKind(currentField, currentFieldArray)
+		for _, currentField := range field.Type.(*arrow.StructType).Fields() {
+			childType, err := arrowDataTypeToTypeKind(currentField)
 			if err != nil {
 				return bigquery.StandardSQLDataType{}, err
 			}
@@ -490,7 +584,7 @@ func arrowDataTypeToTypeKind(field arrow.Field, value arrow.Array) (bigquery.Sta
 		// - arrow.MAP
 		return bigquery.StandardSQLDataType{}, adbc.Error{
 			Code: adbc.StatusNotImplemented,
-			Msg:  fmt.Sprintf("Parameter type %v is not yet implemented for BigQuery driver", value.DataType().ID()),
+			Msg:  fmt.Sprintf("[bq] parameter type %s is not yet implemented", field.Type),
 		}
 	}
 }
@@ -499,94 +593,112 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 	// https://cloud.google.com/bigquery/docs/reference/storage#arrow_schema_details
 	// https://cloud.google.com/bigquery/docs/reference/rest/v2/StandardSqlDataType#typekind
 	parameter := bigquery.QueryParameter{}
-	sqlDataType, err := arrowDataTypeToTypeKind(field, value)
+	sqlDataType, err := arrowDataTypeToTypeKind(field)
 	if err != nil {
 		return bigquery.QueryParameter{}, err
 	}
-	if value.IsNull(i) {
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: "NULL",
-		}
-		return parameter, nil
+
+	isNull := value.IsNull(i)
+	qpv := &bigquery.QueryParameterValue{
+		Type: sqlDataType,
 	}
+
 	switch value.DataType().ID() {
 	case arrow.BOOL:
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullBool{}
+		} else {
+			qpv.Value = bigquery.NullBool{Bool: value.(*array.Boolean).Value(i), Valid: true}
 		}
 	case arrow.INT8, arrow.INT16, arrow.INT32, arrow.INT64, arrow.UINT8, arrow.UINT16, arrow.UINT32, arrow.UINT64:
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullInt64{}
+		} else {
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.FLOAT16, arrow.FLOAT32, arrow.FLOAT64:
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullFloat64{}
+		} else {
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.BINARY, arrow.BINARY_VIEW, arrow.LARGE_BINARY, arrow.FIXED_SIZE_BINARY:
 		// Encoded as a base64 string per RFC 4648, section 4.
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullString{}
+		} else {
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.STRING, arrow.STRING_VIEW, arrow.LARGE_STRING:
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullString{}
+		} else {
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.DATE32:
-		// Encoded as RFC 3339 full-date format string: 1985-04-12
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullDate{}
+		} else {
+			// Encoded as RFC 3339 full-date format string: 1985-04-12
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.DATE64:
-		// Encoded as RFC 3339 full-date format string: 1985-04-12
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+		if isNull {
+			qpv.Value = bigquery.NullDate{}
+		} else {
+			// Encoded as RFC 3339 full-date format string: 1985-04-12
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.TIMESTAMP:
-		// Encoded as an RFC 3339 timestamp with mandatory "Z" time zone string: 1985-04-12T23:20:50.52Z
-		// BigQuery can only do microsecond resolution
-		toTime, _ := value.DataType().(*arrow.TimestampType).GetToTimeFunc()
-		encoded := toTime(value.(*array.Timestamp).Value(i)).Format("2006-01-02T15:04:05.999999Z07:00")
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: encoded,
+		isZoned := value.DataType().(*arrow.TimestampType).TimeZone != ""
+		if isNull {
+			if isZoned {
+				qpv.Value = bigquery.NullTimestamp{}
+			} else {
+				qpv.Value = bigquery.NullDateTime{}
+			}
+		} else {
+			toTime, _ := value.DataType().(*arrow.TimestampType).GetToTimeFunc()
+			ts := toTime(value.(*array.Timestamp).Value(i))
+			if isZoned {
+				// Encoded as an RFC 3339 timestamp with mandatory "Z" time zone string: 1985-04-12T23:20:50.52Z
+				// BigQuery can only do microsecond resolution
+				qpv.Value = ts.Format("2006-01-02T15:04:05.999999Z07:00")
+			} else {
+				qpv.Value = ts.Format("2006-01-02T15:04:05.999999")
+			}
 		}
 	case arrow.TIME32:
-		// Encoded as RFC 3339 partial-time format string: 23:20:50.52
-		encoded := value.(*array.Time32).Value(i).FormattedString(value.DataType().(*arrow.Time32Type).Unit)
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: encoded,
+		if isNull {
+			qpv.Value = bigquery.NullTime{}
+		} else {
+			// Encoded as RFC 3339 partial-time format string: 23:20:50.52
+			qpv.Value = value.(*array.Time32).Value(i).FormattedString(value.DataType().(*arrow.Time32Type).Unit)
 		}
 	case arrow.TIME64:
-		// Encoded as RFC 3339 partial-time format string: 23:20:50.52
-		//
-		// cannot use the default format, which will cause errors like
-		//   googleapi: Error 400: Unparsable query parameter `` in type `TYPE_TIME`,
-		//   Invalid time string "00:00:00.000000001" value: '00:00:00.000000001', invalid
-		encoded := value.(*array.Time64).Value(i).FormattedString(arrow.Microsecond)
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: encoded,
+		if isNull {
+			qpv.Value = bigquery.NullTime{}
+		} else {
+			// Encoded as RFC 3339 partial-time format string: 23:20:50.52
+			//
+			// cannot use the default format, which will cause errors like
+			//   googleapi: Error 400: Unparsable query parameter `` in type `TYPE_TIME`,
+			//   Invalid time string "00:00:00.000000001" value: '00:00:00.000000001', invalid
+			qpv.Value = value.(*array.Time64).Value(i).FormattedString(arrow.Microsecond)
 		}
-	case arrow.DECIMAL128:
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
-		}
-	case arrow.DECIMAL256:
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:  sqlDataType,
-			Value: value.ValueStr(i),
+	case arrow.DECIMAL128, arrow.DECIMAL256:
+		if isNull {
+			qpv.Value = bigquery.NullString{}
+		} else {
+			qpv.Value = value.ValueStr(i)
 		}
 	case arrow.LIST, arrow.FIXED_SIZE_LIST, arrow.LIST_VIEW:
+		if isNull {
+			return parameter, adbc.Error{
+				Code: adbc.StatusNotImplemented,
+				Msg:  fmt.Sprintf("[bq] Null for parameter type %s is not yet implemented", value.DataType()),
+			}
+		}
 		start, end := value.(*array.List).ValueOffsets(i)
 		elemField := field.Type.(*arrow.ListType).ElemField()
 		arrayValues := make([]bigquery.QueryParameterValue, end-start)
@@ -597,12 +709,15 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 			}
 			arrayValues[row-start].Value = pv.Value
 		}
-
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:       sqlDataType,
-			ArrayValue: arrayValues,
-		}
+		qpv.ArrayValue = arrayValues
 	case arrow.LARGE_LIST_VIEW:
+		if isNull {
+			return parameter, adbc.Error{
+				Code: adbc.StatusNotImplemented,
+				Msg:  fmt.Sprintf("[bq] Null for parameter type %s is not yet implemented", value.DataType()),
+			}
+		}
+
 		start, end := value.(*array.LargeListView).ValueOffsets(i)
 		elemField := field.Type.(*arrow.LargeListType).ElemField()
 		arrayValues := make([]bigquery.QueryParameterValue, end-start)
@@ -613,16 +728,19 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 			}
 			arrayValues[row-start].Value = pv.Value
 		}
-
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:       sqlDataType,
-			ArrayValue: arrayValues,
-		}
+		qpv.ArrayValue = arrayValues
 	case arrow.STRUCT:
+		if isNull {
+			return parameter, adbc.Error{
+				Code: adbc.StatusNotImplemented,
+				Msg:  fmt.Sprintf("[bq] Null for parameter type %s is not yet implemented", value.DataType()),
+			}
+		}
+
 		numFields := value.(*array.Struct).NumField()
 		childFields := field.Type.(*arrow.StructType).Fields()
 		structValues := make(map[string]bigquery.QueryParameterValue)
-		for j := 0; j < numFields; j++ {
+		for j := range numFields {
 			currentField := childFields[j]
 			fieldName := currentField.Name
 			if len(fieldName) == 0 {
@@ -645,19 +763,16 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 			}
 			structValues[fieldName] = *pv.Value.(*bigquery.QueryParameterValue)
 		}
-
-		parameter.Value = &bigquery.QueryParameterValue{
-			Type:        sqlDataType,
-			StructValue: structValues,
-		}
+		qpv.StructValue = structValues
 	default:
 		// todo: implement all other types
 		return parameter, adbc.Error{
 			Code: adbc.StatusNotImplemented,
-			Msg:  fmt.Sprintf("Parameter type %v is not yet implemented for BigQuery driver", value.DataType().ID()),
+			Msg:  fmt.Sprintf("[bq] Parameter type %s is not yet implemented", value.DataType()),
 		}
 	}
 
+	parameter.Value = qpv
 	return parameter, nil
 }
 
@@ -754,9 +869,11 @@ func (st *statement) BindStream(_ context.Context, stream array.RecordReader) er
 // This should return an error with StatusNotImplemented if the schema
 // cannot be determined.
 func (st *statement) GetParameterSchema() (*arrow.Schema, error) {
+	// We could look at UndeclaredParameters but BQ seems to just error if it sees
+	// parameters in a dry run
 	return nil, adbc.Error{
 		Code: adbc.StatusNotImplemented,
-		Msg:  "GetParameterSchema not yet implemented for BigQuery driver",
+		Msg:  "[bq] GetParameterSchema not supported",
 	}
 }
 
@@ -774,6 +891,51 @@ func (st *statement) ExecutePartitions(ctx context.Context) (*arrow.Schema, adbc
 		Code: adbc.StatusNotImplemented,
 		Msg:  "ExecutePartitions not yet implemented for BigQuery driver",
 	}
+}
+
+func (st *statement) executeIngest(ctx context.Context) (int64, error) {
+	logger := st.cnxn.Logger.With("op", "bulkingest")
+
+	rdr, err := st.getBoundParameterReader()
+	if err != nil {
+		return -1, err
+	}
+	if rdr == nil {
+		return -1, adbc.Error{
+			Msg:  "[bq] no data bound for bulk ingest",
+			Code: adbc.StatusInvalidState,
+		}
+	}
+
+	impl := &bigqueryBulkIngestImpl{
+		logger:      logger,
+		options:     st.ingest,
+		queryConfig: st.queryConfig,
+		client:      st.cnxn.client,
+	}
+	if err := impl.Init(); err != nil {
+		return -1, adbc.Error{
+			Msg:  fmt.Sprintf("[bq] failed to initialize bulk ingest: %s", err),
+			Code: adbc.StatusInternal,
+		}
+	}
+	defer impl.Close()
+	manager := &driverbase.BulkIngestManager{
+		Impl:       impl,
+		DriverName: "bq",
+		Logger:     logger,
+		Alloc:      st.alloc,
+		Ctx:        ctx,
+		Options:    st.ingest,
+		Data:       rdr,
+	}
+	st.streamBinding = nil
+	defer manager.Close()
+
+	if err := manager.Init(); err != nil {
+		return -1, err
+	}
+	return manager.ExecuteIngest()
 }
 
 var _ adbc.GetSetOptions = (*statement)(nil)

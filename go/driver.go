@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+//
+// This file has been modified from its original version, which is
+// under the Apache License:
+//
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -24,8 +29,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/apache/arrow-adbc/go/adbc/driver/internal/driverbase"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
@@ -100,7 +105,11 @@ type driverImpl struct {
 
 // NewDriver creates a new BigQuery driver using the given Arrow allocator.
 func NewDriver(alloc memory.Allocator) adbc.Driver {
-	info := driverbase.DefaultDriverInfo("BigQuery")
+	info := driverbase.DefaultDriverInfo("Google BigQuery")
+	err := info.RegisterInfoCode(adbc.InfoDriverName, "Columnar ADBC Driver for Google BigQuery")
+	if err != nil {
+		panic(err)
+	}
 	if infoVendorVersion != "" {
 		if err := info.RegisterInfoCode(adbc.InfoVendorVersion, infoVendorVersion); err != nil {
 			panic(err)
@@ -150,7 +159,7 @@ func stringToTable(defaultProjectID, defaultDatasetID, value string) (*bigquery.
 	default:
 		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("Invalid Table Reference format, expected `[[ProjectId.]DatasetId.]TableId`, got: `%s`", value),
+			Msg:  fmt.Sprintf("[bq] invalid table reference format, expected `[[ProjectId.]DatasetId.]TableId`, got: `%s`", value),
 		}
 	}
 	return table, nil

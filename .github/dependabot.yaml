@@ -1,0 +1,31 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    commit-message:
+      prefix: "chore: "
+    directory: "/"
+    groups:
+      actions:
+        patterns:
+          - "*"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "gomod"
+    commit-message:
+      prefix: "chore: "
+    groups:
+      "golang.org/x":
+        applies-to: version-updates
+        patterns:
+          - "golang.org/x/*"
+      opentelemetry:
+        applies-to: version-updates
+        patterns:
+          - "go.opentelemetry.io/otel"
+          - "go.opentelemetry.io/otel/*"
+    open-pull-requests-limit: 5
+    schedule:
+      interval: "weekly"
