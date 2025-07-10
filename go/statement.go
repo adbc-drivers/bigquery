@@ -86,6 +86,8 @@ type statement struct {
 	updateTableColumnsPolicyTags string
 	// Table-level description to set on the destination table.
 	tableDescription string
+	// JSON {view: [{project, dataset}, ...]} of authorized-view grants.
+	authorizeViewToDatasets string
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -191,6 +193,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return st.updateTableColumnsPolicyTags, nil
 	case OptionStringUpdateTableDescriptionValue:
 		return st.tableDescription, nil
+	case OptionJsonAuthorizeViewToDatasets:
+		return st.authorizeViewToDatasets, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -387,6 +391,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		st.updateTableColumnsPolicyTags = v
 	case OptionStringUpdateTableDescriptionValue:
 		st.tableDescription = v
+	case OptionJsonAuthorizeViewToDatasets:
+		st.authorizeViewToDatasets = v
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -467,6 +473,8 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		return st.executeUpdateTableColumnsMetadata(ctx)
 	case st.tableDescription != "":
 		return st.executeUpdateTableDescription(ctx)
+	case st.authorizeViewToDatasets != "":
+		return st.executeAuthorizeViewToDatasets(ctx)
 	case st.queryConfig.Q == "":
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",

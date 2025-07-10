@@ -919,6 +919,11 @@ func (c *connectionImpl) table(project, dataset, table string) *bigquery.Table {
 	return c.client.DatasetInProject(project, dataset).Table(table)
 }
 
+// datasetInProject returns a Dataset handle bound to this connection's client.
+func (c *connectionImpl) datasetInProject(projectID, datasetID string) *bigquery.Dataset {
+	return c.client.DatasetInProject(projectID, datasetID)
+}
+
 // getOrCreateStorageApiDisabledClient lazily constructs (and caches) a
 // BigQuery client that has NOT had its Storage Read API enabled. Required by
 // queries that select pseudo-columns like _PARTITIONDATE/_PARTITIONTIME,

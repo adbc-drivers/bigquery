@@ -165,6 +165,11 @@ const (
 	// OptionStringUpdateTableDescriptionValue sets the table-level
 	// description via Table.Update on the destination table.
 	OptionStringUpdateTableDescriptionValue = "adbc.bigquery.table.update_description"
+	// OptionJsonAuthorizeViewToDatasets accepts a JSON object
+	// {view_name: [{project, dataset}, ...]} adding each view as an
+	// authorized view on the listed source datasets. Idempotent — views
+	// already authorized on a dataset are skipped.
+	OptionJsonAuthorizeViewToDatasets = "adbc.bigquery.dataset.authorize_view_to_datasets"
 
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
