@@ -17,6 +17,8 @@ class BigQueryQuirks(model.DriverQuirks):
         connection_set_current_catalog=False,
         connection_set_current_schema=True,
         connection_transactions=True,
+        get_objects_constraints_foreign=True,
+        get_objects_constraints_primary=True,
         statement_bulk_ingest=True,
         statement_bulk_ingest_schema=True,
         # N.B. while technically supported, this is only inside "multi
@@ -54,3 +56,19 @@ class BigQueryQuirks(model.DriverQuirks):
 
     def is_table_not_found(self, table_name: str, error: Exception) -> bool:
         return "Not found: Table" in str(error) and table_name in str(error)
+
+    @property
+    def sample_ddl_constraints(self) -> list[str]:
+        return [
+            "CREATE TABLE constraint_primary (z INT, a INT, b STRING, PRIMARY KEY (a) NOT ENFORCED)",
+            "CREATE TABLE constraint_primary_multi (z INT, a INT, b STRING, PRIMARY KEY (b, a) NOT ENFORCED)",
+            "CREATE TABLE constraint_primary_multi2 (z INT, a STRING, b INT, PRIMARY KEY (a, b) NOT ENFORCED)",
+            "CREATE TABLE constraint_foreign (z INT, a INT, b INT, FOREIGN KEY (b) REFERENCES constraint_primary(a) NOT ENFORCED)",
+            "CREATE TABLE constraint_foreign_multi (z INT, a INT, b INT, c STRING, FOREIGN KEY (c, b) REFERENCES constraint_primary_multi2(a, b) NOT ENFORCED)",
+            # Ensure the driver doesn't misinterpret column IDs as indices
+            "ALTER TABLE constraint_primary DROP COLUMN z",
+            "ALTER TABLE constraint_primary_multi DROP COLUMN z",
+            "ALTER TABLE constraint_primary_multi2 DROP COLUMN z",
+            "ALTER TABLE constraint_foreign DROP COLUMN z",
+            "ALTER TABLE constraint_foreign_multi DROP COLUMN z",
+        ]

@@ -160,10 +160,12 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 			for _, fk := range md.TableConstraints.ForeignKeys {
 				var columnUsage []driverbase.ConstraintColumnUsage
+				columnNames := make([]string, len(fk.ColumnReferences))
 				if len(fk.ColumnReferences) > 0 {
 					columnUsage = make([]driverbase.ConstraintColumnUsage, len(fk.ColumnReferences))
 				}
 				for i, ref := range fk.ColumnReferences {
+					columnNames[i] = ref.ReferencingColumn
 					columnUsage[i] = driverbase.ConstraintColumnUsage{
 						ForeignKeyCatalog:  driverbase.Nullable(fk.ReferencedTable.ProjectID),
 						ForeignKeyDbSchema: driverbase.Nullable(fk.ReferencedTable.DatasetID),
@@ -174,6 +176,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 				constraints = append(constraints, driverbase.ConstraintInfo{
 					ConstraintName:        driverbase.Nullable(fk.Name),
 					ConstraintType:        driverbase.ForeignKey,
+					ConstraintColumnNames: columnNames,
 					ConstraintColumnUsage: columnUsage,
 				})
 			}
