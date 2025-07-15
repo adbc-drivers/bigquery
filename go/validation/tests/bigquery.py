@@ -11,6 +11,9 @@ class BigQueryQuirks(model.DriverQuirks):
     driver_name = "Columnar ADBC Driver for Google BigQuery"
     vendor_name = "Google BigQuery"
     features = model.DriverFeatures(
+        connection_get_table_schema=True,
+        connection_set_current_catalog=True,
+        connection_set_current_schema=True,
         connection_transactions=True,
         statement_bulk_ingest=True,
         statement_execute_schema=True,

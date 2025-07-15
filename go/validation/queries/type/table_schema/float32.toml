@@ -1,0 +1,3 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+skip = "BigQuery only has FLOAT64"

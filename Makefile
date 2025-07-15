@@ -25,7 +25,7 @@ all: $(DRIVERS)
 clean:
 	$(RM) $(DRIVERS)
 
-libadbc_driver_%.$(SUFFIX): % $(wildcard %/*.go %/pkg/*.go %/pkg/*.c %/pkg/%.h)
+libadbc_driver_%.$(SUFFIX): % $(wildcard %/*.go %/pkg/*.go %/pkg/*.c %/pkg/%.h %/go.mod %/go.sum)
 	go build -C ./$</pkg -o ../../$@ -buildmode=c-shared -tags driverlib -ldflags "-s -w" .
 	-$(RM) ./$(basename $@).h
 	chmod 755 $@
