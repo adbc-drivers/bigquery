@@ -174,6 +174,15 @@ func (st *statement) SetOption(key string, v string) error {
 	switch key {
 	case adbc.OptionKeyIngestTargetTable:
 		st.ingest.TableName = v
+	case adbc.OptionValueIngestTargetCatalog:
+		st.ingest.CatalogName = v
+	case adbc.OptionValueIngestTargetDBSchema:
+		st.ingest.SchemaName = v
+	case adbc.OptionValueIngestTemporary:
+		return adbc.Error{
+			Msg:  "[bq] Temporary tables are not supported",
+			Code: adbc.StatusNotImplemented,
+		}
 	case adbc.OptionKeyIngestMode:
 		switch v {
 		case adbc.OptionValueIngestModeAppend:
@@ -317,6 +326,7 @@ func (st *statement) SetOptionInt(key string, value int64) error {
 // For queries expected to be executed repeatedly, Prepare should be
 // called before execution.
 func (st *statement) SetSqlQuery(query string) error {
+	// TODO(lidavidm): this should reset ingest parameters (and vice versa)
 	st.queryConfig.Q = query
 	return nil
 }

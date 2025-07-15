@@ -78,7 +78,16 @@ func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.Bul
 	source := bigquery.NewReaderSource(pendingFile.f)
 	source.SourceFormat = bigquery.Parquet
 
-	loader := bi.client.Dataset(bi.queryConfig.DefaultDatasetID).Table(bi.options.TableName).LoaderFrom(source)
+	var dataset *bigquery.Dataset
+	if bi.options.CatalogName != "" && bi.options.SchemaName != "" {
+		dataset = bi.client.DatasetInProject(bi.options.CatalogName, bi.options.SchemaName)
+	} else if bi.options.SchemaName != "" {
+		// bulk ingest base will check if the catalog but not the schema is set
+		dataset = bi.client.Dataset(bi.options.SchemaName)
+	} else {
+		dataset = bi.client.Dataset(bi.queryConfig.DefaultDatasetID)
+	}
+	loader := dataset.Table(bi.options.TableName).LoaderFrom(source)
 	// TODO(lidavidm): we could skip the explicit create table; but does
 	// that give us enough control over the schema? Also, we would have to
 	// buffer all the data into one file or buffer all the data into cloud
@@ -184,6 +193,14 @@ func createTableStatement(options *driverbase.BulkIngestOptions, schema *arrow.S
 		b.WriteString("CREATE TABLE ")
 		if ifTableExists == driverbase.BulkIngestTableExistsIgnore {
 			b.WriteString("IF NOT EXISTS ")
+		}
+		if options.CatalogName != "" {
+			b.WriteString(quoteIdentifier(options.CatalogName))
+			b.WriteString(".")
+		}
+		if options.SchemaName != "" {
+			b.WriteString(quoteIdentifier(options.SchemaName))
+			b.WriteString(".")
 		}
 		b.WriteString(quoteIdentifier(options.TableName))
 		b.WriteString(" (")

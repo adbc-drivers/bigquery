@@ -18,6 +18,10 @@ class BigQueryQuirks(model.DriverQuirks):
         connection_set_current_schema=True,
         connection_transactions=True,
         statement_bulk_ingest=True,
+        statement_bulk_ingest_schema=True,
+        # N.B. while technically supported, this is only inside "multi
+        # statement" queries which is not very useful to us
+        statement_bulk_ingest_temporary=False,
         statement_execute_schema=True,
         current_catalog=model.FromEnv("BIGQUERY_PROJECT_ID"),
         current_schema=model.FromEnv("BIGQUERY_DATASET_ID"),
