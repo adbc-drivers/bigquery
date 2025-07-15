@@ -12,13 +12,16 @@ class BigQueryQuirks(model.DriverQuirks):
     vendor_name = "Google BigQuery"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
-        connection_set_current_catalog=True,
+        # TODO(lidavidm): this is a bit weird; it does work, but we'd need two
+        # GCP projects to test it.
+        connection_set_current_catalog=False,
         connection_set_current_schema=True,
         connection_transactions=True,
         statement_bulk_ingest=True,
         statement_execute_schema=True,
         current_catalog=model.FromEnv("BIGQUERY_PROJECT_ID"),
         current_schema=model.FromEnv("BIGQUERY_DATASET_ID"),
+        secondary_schema=model.FromEnv("BIGQUERY_SECONDARY_DATASET_ID"),
         supported_xdbc_fields=[
             "xdbc_data_type",
             "xdbc_type_name",
