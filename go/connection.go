@@ -871,8 +871,8 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 			arrow.Field{Name: "start", Type: childType, Nullable: true},
 			arrow.Field{Name: "end", Type: childType, Nullable: true})
 	case bigquery.GeographyFieldType:
-		// TODO: potentially we should consider using GeoArrow for this
 		field.Type = arrow.BinaryTypes.String
+		metadata["ARROW:extension:name"] = "geoarrow.wkt"
 	case bigquery.BigNumericFieldType:
 		field.Type = &arrow.Decimal256Type{
 			Precision: int32(schema.Precision),
@@ -880,6 +880,7 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		}
 	case bigquery.JSONFieldType:
 		field.Type = arrow.BinaryTypes.String
+		metadata["ARROW:extension:name"] = "arrow.json"
 	case bigquery.IntervalFieldType:
 		field.Type = arrow.FixedWidthTypes.MonthDayNanoInterval
 	default:

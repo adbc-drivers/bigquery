@@ -40,7 +40,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/69/e0/552843e0d356fbb5256d21449fa957fa4eff3bbc135a74a691ee70c7c5da/typing_extensions-4.14.0-py3-none-any.whl
-      - pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=1ddd0b56530bd9d2855fefae1f8455c4dbe5f0e3#1ddd0b56530bd9d2855fefae1f8455c4dbe5f0e3
+      - pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=691e16976d31a77d72c7ca8913ea28ad12390833#691e16976d31a77d72c7ca8913ea28ad12390833
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
   sha256: fe51de6107f9edc7aa4f786a70f4a883943bc9d39b3bb7307c04c41410990726
@@ -76,7 +76,7 @@ packages:
   - pyarrow>=14.0.1 ; extra == 'test'
   - pytest ; extra == 'test'
   requires_python: '>=3.9'
-- pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=1ddd0b56530bd9d2855fefae1f8455c4dbe5f0e3#1ddd0b56530bd9d2855fefae1f8455c4dbe5f0e3
+- pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=691e16976d31a77d72c7ca8913ea28ad12390833#691e16976d31a77d72c7ca8913ea28ad12390833
   name: adbc-drivers-validation
   version: '0.1'
   requires_dist:

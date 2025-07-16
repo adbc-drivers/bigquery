@@ -14,4 +14,4 @@ test = "pytest -rfEsxX -vvs tests/"
 python = ">=3.13,<4"
 
 [pypi-dependencies]
-adbc-drivers-validation = { git = "ssh://git@github.com/adbc-drivers/validation", rev = "1ddd0b56530bd9d2855fefae1f8455c4dbe5f0e3" }
+adbc-drivers-validation = { git = "ssh://git@github.com/adbc-drivers/validation", rev = "691e16976d31a77d72c7ca8913ea28ad12390833" }

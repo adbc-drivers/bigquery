@@ -100,9 +100,22 @@ func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (b
 	return arrowIterator, totalRows, nil
 }
 
-func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memory.Allocator) (*ipc.Reader, error) {
+func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
-	return ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
+	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
+
+	fields := make([]arrow.Field, len(arrowIterator.Schema()))
+	for i, field := range arrowIterator.Schema() {
+		fields[i], err = buildField(field, 0)
+		if err != nil {
+			return nil, nil, errToAdbcErr(adbc.StatusInternal, err, "build schema")
+		}
+	}
+
+	if err != nil {
+		return nil, nil, err
+	}
+	return rdr, arrow.NewSchema(fields, nil), nil
 }
 
 func getQueryParameter(values arrow.Record, row int, parameterMode string) ([]bigquery.QueryParameter, error) {
@@ -127,7 +140,7 @@ func runPlainQuery(ctx context.Context, query *bigquery.Query, alloc memory.Allo
 	if err != nil {
 		return nil, -1, err
 	}
-	rdr, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -150,7 +163,7 @@ func runPlainQuery(ctx context.Context, query *bigquery.Query, alloc memory.Allo
 		curChIndex: 0,
 		err:        nil,
 		cancelFn:   cancelFn,
-		schema:     rdr.Schema(),
+		schema:     schema,
 	}
 
 	go func() {
@@ -179,19 +192,16 @@ func queryRecordWithSchemaCallback(ctx context.Context, group *errgroup.Group, q
 			query.Parameters = parameters
 		}
 
-		// TODO: we can inspect arrowIterator.Schema and determine
-		// which rows we may have to cast (to add appropriate
-		// extension type)
 		arrowIterator, rows, err := runQuery(ctx, query, false)
 		if err != nil {
 			return -1, err
 		}
 		totalRows = rows
-		rdr, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
+		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
 		if err != nil {
 			return -1, err
 		}
-		rdrSchema(rdr.Schema())
+		rdrSchema(schema)
 		group.Go(func() error {
 			defer rdr.Release()
 			for rdr.Next() && ctx.Err() == nil {

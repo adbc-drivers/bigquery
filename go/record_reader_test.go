@@ -54,7 +54,10 @@ func TestEmptyArrowIteratorSerializedArrowSchema(t *testing.T) {
 	bytes := iter.SerializedArrowSchema()
 
 	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	rdr, _ := ipcReaderFromArrowIterator(iter, alloc)
+	rdr, schema, _ := ipcReaderFromArrowIterator(iter, alloc)
+	if len(schema.Fields()) > 0 {
+		t.Errorf("Expected an empty schema, but got %d bytes", len(bytes))
+	}
 	if len(rdr.Schema().Fields()) > 0 {
 		t.Errorf("Expected an empty schema, but got %d bytes", len(bytes))
 	}
