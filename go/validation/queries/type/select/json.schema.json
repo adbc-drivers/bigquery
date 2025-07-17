@@ -8,6 +8,51 @@
             "metadata": {
                 "ARROW:extension:name": "arrow.json"
             }
+        },
+        {
+            "name": "res2",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "item",
+                    "format": "u",
+                    "flags": ["nullable"],
+                    "metadata": {
+                        "ARROW:extension:name": "arrow.json"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "res3",
+            "format": "+s",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "a",
+                    "format": "u",
+                    "flags": ["nullable"],
+                    "metadata": {
+                        "ARROW:extension:name": "arrow.json"
+                    }
+                },
+                {
+                    "name": "b",
+                    "format": "+l",
+                    "flags": ["nullable"],
+                    "children": [
+                        {
+                            "name": "item",
+                            "format": "u",
+                            "flags": ["nullable"],
+                            "metadata": {
+                                "ARROW:extension:name": "arrow.json"
+                            }
+                        }
+                    ]
+                }
+            ]
         }
     ]
 }

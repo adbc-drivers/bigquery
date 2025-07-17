@@ -894,7 +894,19 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	}
 
 	if schema.Repeated {
-		field.Type = arrow.ListOf(field.Type)
+		// Keep most of the metadata on the top level field, but the
+		// extension has to go on the child
+		var childMetadata map[string]string
+		if ext, ok := metadata["ARROW:extension:name"]; ok {
+			childMetadata = map[string]string{"ARROW:extension:name": ext}
+			delete(metadata, "ARROW:extension:name")
+		}
+		field.Type = arrow.ListOfField(arrow.Field{
+			Name:     "item",
+			Type:     field.Type,
+			Nullable: !schema.Required,
+			Metadata: arrow.MetadataFrom(childMetadata),
+		})
 	}
 
 	if level == 0 {

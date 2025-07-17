@@ -1,7 +1,9 @@
 DROP TABLE IF EXISTS test_table_schema;
 
 CREATE TABLE test_table_schema (
-    res JSON
+    res JSON,
+    res2 ARRAY<JSON>,
+    res3 STRUCT<a JSON, b ARRAY<JSON>>
 );
 
 INSERT INTO test_table_schema (res)

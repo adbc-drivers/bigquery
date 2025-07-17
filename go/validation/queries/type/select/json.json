@@ -1,11 +1,11 @@
-{"res": "{}"}
-{"res": "{\"a\":1,\"b\":2}"}
-{"res": "{\"a\":[1,2,3],\"b\":{\"c\":\"d\"}}"}
-{"res": "{\"x\":null,\"y\":true,\"z\":false}"}
-{"res": "{\"nested\":{\"array\":[1,2,3]}}"}
-{"res": "[1,2,{\"key\":\"value\"}]"}
-{"res": "null"}
-{"res": "true"}
-{"res": "false"}
-{"res": "\"string value\""}
-{"res": "12345"}
+{"res": "{}", "res2": ["{}"], "res3": {"a": "{}", "b": ["{}"]}}
+{"res": "{\"a\":1,\"b\":2}", "res2": ["{\"a\":1,\"b\":2}"], "res3": {"a": "{\"a\":1,\"b\":2}", "b": ["{\"a\":1,\"b\":2}"]}}
+{"res": "{\"a\":[1,2,3],\"b\":{\"c\":\"d\"}}", "res2": ["{\"a\":[1,2,3],\"b\":{\"c\":\"d\"}}"], "res3": {"a": "{\"a\":[1,2,3],\"b\":{\"c\":\"d\"}}", "b": ["{\"a\":[1,2,3],\"b\":{\"c\":\"d\"}}"]}}
+{"res": "{\"x\":null,\"y\":true,\"z\":false}", "res2": ["{\"x\":null,\"y\":true,\"z\":false}"], "res3": {"a": "{\"x\":null,\"y\":true,\"z\":false}", "b": ["{\"x\":null,\"y\":true,\"z\":false}"]}}
+{"res": "{\"nested\":{\"array\":[1,2,3]}}", "res2": ["{\"nested\":{\"array\":[1,2,3]}}"], "res3": {"a": "{\"nested\":{\"array\":[1,2,3]}}", "b": ["{\"nested\":{\"array\":[1,2,3]}}"]}}
+{"res": "[1,2,{\"key\":\"value\"}]", "res2": ["[1,2,{\"key\":\"value\"}]"], "res3": {"a": "[1,2,{\"key\":\"value\"}]", "b": ["[1,2,{\"key\":\"value\"}]"]}}
+{"res": "null", "res2": ["null"], "res3": {"a": "null", "b": ["null"]}}
+{"res": "true", "res2": ["true"], "res3": {"a": "true", "b": ["true"]}}
+{"res": "false", "res2": ["false"], "res3": {"a": "false", "b": ["false"]}}
+{"res": "\"string value\"", "res2": ["\"string value\""], "res3": {"a": "\"string value\"", "b": ["\"string value\""]}}
+{"res": "12345", "res2": ["12345"], "res3": {"a": "12345", "b": ["12345"]}}
