@@ -2,7 +2,7 @@ DROP TABLE IF EXISTS test_struct;
 
 CREATE TABLE test_struct (
     idx INTEGER,
-    res STRUCT<BOOL, INT64, STRING, ARRAY<INT64>>
+    res STRUCT<a BOOL, b INT64, c STRING, d ARRAY<INT64>>
 );
 
 INSERT INTO test_struct (idx, res)

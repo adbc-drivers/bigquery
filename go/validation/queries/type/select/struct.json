@@ -1,1 +1,1 @@
-{"res": {"_field_1": false, "_field_2": null, "_field_3": "foobar", "_field_4": [1, 2]}}
+{"res": {"a": false, "b": null, "c": "foobar", "d": [1, 2]}}

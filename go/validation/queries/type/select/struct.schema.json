@@ -7,22 +7,22 @@
             "flags": ["nullable"],
             "children": [
                 {
-                    "name": "_field_1",
+                    "name": "a",
                     "format": "b",
                     "flags": ["nullable"]
                 },
                 {
-                    "name": "_field_2",
+                    "name": "b",
                     "format": "l",
                     "flags": ["nullable"]
                 },
                 {
-                    "name": "_field_3",
+                    "name": "c",
                     "format": "u",
                     "flags": ["nullable"]
                 },
                 {
-                    "name": "_field_4",
+                    "name": "d",
                     "format": "+l",
                     "flags": ["nullable"],
                     "children": [
