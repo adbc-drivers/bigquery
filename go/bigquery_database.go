@@ -25,6 +25,8 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -38,6 +40,12 @@ type databaseImpl struct {
 	clientID     string
 	clientSecret string
 	refreshToken string
+
+	impersonateTargetPrincipal string
+	impersonateDelegates       []string
+	impersonateScopes          []string
+	impersonateLifetime        time.Duration
+
 	// projectID is the catalog
 	projectID string
 	// datasetID is the schema
@@ -47,17 +55,21 @@ type databaseImpl struct {
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 	conn := &connectionImpl{
-		ConnectionImplBase:     driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
-		authType:               d.authType,
-		credentials:            d.credentials,
-		clientID:               d.clientID,
-		clientSecret:           d.clientSecret,
-		refreshToken:           d.refreshToken,
-		tableID:                d.tableID,
-		catalog:                d.projectID,
-		dbSchema:               d.datasetID,
-		resultRecordBufferSize: defaultQueryResultBufferSize,
-		prefetchConcurrency:    defaultQueryPrefetchConcurrency,
+		ConnectionImplBase:         driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
+		authType:                   d.authType,
+		credentials:                d.credentials,
+		clientID:                   d.clientID,
+		clientSecret:               d.clientSecret,
+		refreshToken:               d.refreshToken,
+		impersonateTargetPrincipal: d.impersonateTargetPrincipal,
+		impersonateDelegates:       d.impersonateDelegates,
+		impersonateScopes:          d.impersonateScopes,
+		impersonateLifetime:        d.impersonateLifetime,
+		tableID:                    d.tableID,
+		catalog:                    d.projectID,
+		dbSchema:                   d.datasetID,
+		resultRecordBufferSize:     defaultQueryResultBufferSize,
+		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 	}
 
 	err := conn.newClient(ctx)
@@ -93,6 +105,15 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 		return d.datasetID, nil
 	case OptionStringTableID:
 		return d.tableID, nil
+	case OptionStringImpersonateLifetime:
+		if d.impersonateLifetime == 0 {
+			// If no lifetime is set but impersonation is enabled, return the default
+			if d.hasImpersonationOptions() {
+				return (3600 * time.Second).String(), nil
+			}
+			return "", nil
+		}
+		return d.impersonateLifetime.String(), nil
 	default:
 		return d.DatabaseImplBase.GetOption(key)
 	}
@@ -108,17 +129,21 @@ func (d *databaseImpl) SetOptions(options map[string]string) error {
 	return nil
 }
 
+func (d *databaseImpl) hasImpersonationOptions() bool {
+	return d.impersonateTargetPrincipal != "" ||
+		len(d.impersonateDelegates) > 0 ||
+		len(d.impersonateScopes) > 0
+}
+
 func (d *databaseImpl) SetOption(key string, value string) error {
 	switch key {
 	case OptionStringAuthType:
 		switch value {
-		case OptionValueAuthTypeDefault:
-			d.authType = value
-		case OptionValueAuthTypeJSONCredentialFile:
-			d.authType = value
-		case OptionValueAuthTypeJSONCredentialString:
-			d.authType = value
-		case OptionValueAuthTypeUserAuthentication:
+		case OptionValueAuthTypeDefault,
+			OptionValueAuthTypeJSONCredentialFile,
+			OptionValueAuthTypeJSONCredentialString,
+			OptionValueAuthTypeUserAuthentication,
+			OptionValueAuthTypeAppDefaultCredentials:
 			d.authType = value
 		default:
 			return adbc.Error{
@@ -134,6 +159,21 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		d.clientSecret = value
 	case OptionStringAuthRefreshToken:
 		d.refreshToken = value
+	case OptionStringImpersonateTargetPrincipal:
+		d.impersonateTargetPrincipal = value
+	case OptionStringImpersonateDelegates:
+		d.impersonateDelegates = strings.Split(value, ",")
+	case OptionStringImpersonateScopes:
+		d.impersonateScopes = strings.Split(value, ",")
+	case OptionStringImpersonateLifetime:
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("invalid impersonate lifetime value `%s`: %v", value, err),
+			}
+		}
+		d.impersonateLifetime = duration
 	case OptionStringProjectID:
 		d.projectID = value
 	case OptionStringDatasetID:
