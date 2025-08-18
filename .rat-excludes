@@ -12,5 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[tags]
-sql-type-name = "STRING"
+.github/pull_request_template.md
+*/go.sum
+pixi.lock
+validation/pixi.lock
+validation/queries/*/*.json
+validation/queries/*/*.sql
