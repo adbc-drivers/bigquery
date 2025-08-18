@@ -57,6 +57,9 @@ class BigQueryQuirks(model.DriverQuirks):
     def is_table_not_found(self, table_name: str, error: Exception) -> bool:
         return "Not found: Table" in str(error) and table_name in str(error)
 
+    def quote_one_identifier(self, identifier: str) -> str:
+        return f"`{identifier}`"
+
     @property
     def sample_ddl_constraints(self) -> list[str]:
         return [

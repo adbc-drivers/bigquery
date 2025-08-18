@@ -1,8 +1,7 @@
 # Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
-name = "Columnar ADBC Driver for Google BigQuery"
+name = "ADBC Driver Foundry Driver for Google BigQuery"
 publisher = "Columnar Technologies"
 license = "Proprietary"
-version = "v0.1.0"
 
 [ADBC]
 version = "v1.1.0"

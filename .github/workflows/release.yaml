@@ -1,20 +1,22 @@
 # Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
 
-name: Build & Test
+name: Release
 
+# We have to duplicate this workflow because it has access to the GitHub
+# token, so we only want it active on tag pushes.  Unfortunately that does
+# mean the build/test will happen twice.
 on:
-  pull_request: {}
   push:
-    branches:
-      - main
+    tags:
+      - "bigquery/**"
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
   packages: read
 
 jobs:
-  lint:
+  test:
     uses: adbc-drivers/dev/.github/workflows/test.yaml@c8f3674fdc11a0cb611f18d7385baf630bda5473
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
@@ -24,3 +26,9 @@ jobs:
       nightly_signing_private_key_password: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_PASSWORD }}
     with:
       driver: bigquery
+
+  release:
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@c8f3674fdc11a0cb611f18d7385baf630bda5473
+    needs: test
+    secrets:
+      dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}

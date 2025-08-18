@@ -931,13 +931,13 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	}
 	defer impl.Close()
 	manager := &driverbase.BulkIngestManager{
-		Impl:       impl,
-		DriverName: "bq",
-		Logger:     logger,
-		Alloc:      st.alloc,
-		Ctx:        ctx,
-		Options:    st.ingest,
-		Data:       rdr,
+		Impl:        impl,
+		ErrorHelper: &st.cnxn.ErrorHelper,
+		Logger:      logger,
+		Alloc:       st.alloc,
+		Ctx:         ctx,
+		Options:     st.ingest,
+		Data:        rdr,
 	}
 	st.streamBinding = nil
 	defer manager.Close()

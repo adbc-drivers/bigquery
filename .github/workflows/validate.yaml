@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   validate:
-    uses: adbc-drivers/dev/.github/workflows/validate.yaml@613e69437a93e0ddabcdae7773a3ee12c7a0bc38
+    uses: adbc-drivers/dev/.github/workflows/validate.yaml@c8f3674fdc11a0cb611f18d7385baf630bda5473
     secrets:
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
       validation_private_key: ${{ secrets.VALIDATION_DEPLOY_KEY }}

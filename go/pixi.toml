@@ -1,0 +1,18 @@
+# Copyright (c) 2025 Columnar Technologies, Inc.  All rights reserved.
+
+[workspace]
+authors = ["ADBC Drivers Contributors"]
+channels = ["conda-forge"]
+name = "build"
+platforms = ["linux-64", "osx-arm64", "win-64"]
+version = "0.1.0"
+
+[tasks]
+make = "adbc-make run build DRIVER=bigquery VERBOSE=true"
+release = "adbc-release"
+
+[dependencies]
+python = ">=3.13.5,<3.14"
+
+[pypi-dependencies]
+adbc-drivers-dev = { git = "ssh://git@github.com/adbc-drivers/dev", rev = "c8f3674fdc11a0cb611f18d7385baf630bda5473" }

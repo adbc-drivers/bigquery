@@ -40,7 +40,8 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/69/e0/552843e0d356fbb5256d21449fa957fa4eff3bbc135a74a691ee70c7c5da/typing_extensions-4.14.0-py3-none-any.whl
-      - pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=d16222c8a323b6d98288d3ebfea778aa01c3ee30#d16222c8a323b6d98288d3ebfea778aa01c3ee30
+      - pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=166db8c39c2d39307034b9666fc363b92421437f#166db8c39c2d39307034b9666fc363b92421437f
+      - pypi: https://files.pythonhosted.org/packages/c7/61/b5e123dd98e90caeedd8ed3ede06b52ca0e18d8d16dfad8133c954702451/whenever-0.8.8-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
   sha256: fe51de6107f9edc7aa4f786a70f4a883943bc9d39b3bb7307c04c41410990726
@@ -76,7 +77,7 @@ packages:
   - pyarrow>=14.0.1 ; extra == 'test'
   - pytest ; extra == 'test'
   requires_python: '>=3.9'
-- pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=d16222c8a323b6d98288d3ebfea778aa01c3ee30#d16222c8a323b6d98288d3ebfea778aa01c3ee30
+- pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=166db8c39c2d39307034b9666fc363b92421437f#166db8c39c2d39307034b9666fc363b92421437f
   name: adbc-drivers-validation
   version: '0.1'
   requires_dist:
@@ -85,6 +86,7 @@ packages:
   - jinja2>=3.1.6,<4
   - pyarrow>=20.0.0,<21
   - pytest>=8.4.1,<9
+  - whenever>=0.8.8,<0.9
   requires_python: '>=3.13'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-h4bc722e_7.conda
   sha256: 5ced96500d945fb286c9c838e54fa759aa04a7129c59800f0846b4335cee770d
@@ -402,3 +404,10 @@ packages:
   purls: []
   size: 122968
   timestamp: 1742727099393
+- pypi: https://files.pythonhosted.org/packages/c7/61/b5e123dd98e90caeedd8ed3ede06b52ca0e18d8d16dfad8133c954702451/whenever-0.8.8-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+  name: whenever
+  version: 0.8.8
+  sha256: f1abba00ed463689d2d062eec36e5ea5f0d195d3fe6702121744592d5a234b09
+  requires_dist:
+  - tzdata>=2020.1 ; sys_platform == 'win32'
+  requires_python: '>=3.9'
