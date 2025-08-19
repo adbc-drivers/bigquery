@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   test:
-    uses: adbc-drivers/dev/.github/workflows/test.yaml@c8f3674fdc11a0cb611f18d7385baf630bda5473
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@c5a1526d4b0a41df17ff39cb94ce6224fe6e0d05
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
@@ -40,7 +40,7 @@ jobs:
       driver: bigquery
 
   release:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@c8f3674fdc11a0cb611f18d7385baf630bda5473
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@c5a1526d4b0a41df17ff39cb94ce6224fe6e0d05
     needs: test
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
