@@ -27,4 +27,4 @@ gendocs = "python -m tests.generate_documentation"
 python = ">=3.13,<4"
 
 [pypi-dependencies]
-adbc-drivers-validation = { git = "ssh://git@github.com/adbc-drivers/validation", rev = "166db8c39c2d39307034b9666fc363b92421437f" }
+adbc-drivers-validation = { git = "ssh://git@github.com/adbc-drivers/validation", rev = "5c524cc6def1f7d659878f763f142b8b843873f2" }
