@@ -14,3 +14,8 @@
 
 [tags]
 sql-type-name = "NUMERIC"
+caveats = [
+  "Negative scales are not supported",
+  "Scale must be in [0, 9]",
+  "The declared precision/scale is ignored in queries: it will always be decimal128(38, 9)",
+]

@@ -173,6 +173,9 @@ func (s *SchemaSuite) TestNumeric() {
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.True(field.Nullable)
 
+	// Ignore precision/scale because in terms of Arrow, we only ever get
+	// back data as decimal128(38, 9).  BigQuery's precision/scale is only
+	// used to validate incoming data.
 	field, err = buildField(&bigquery.FieldSchema{
 		Name:      "decimals",
 		Type:      bigquery.NumericFieldType,
@@ -180,7 +183,7 @@ func (s *SchemaSuite) TestNumeric() {
 		Scale:     2,
 		Required:  true,
 	}, 0)
-	expectedType = &arrow.Decimal128Type{Precision: 10, Scale: 2}
+	expectedType = &arrow.Decimal128Type{Precision: 38, Scale: 9}
 	s.NoError(err)
 	s.Equal("decimals", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())

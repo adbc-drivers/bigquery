@@ -931,17 +931,11 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	case bigquery.DateTimeFieldType:
 		field.Type = &arrow.TimestampType{Unit: arrow.Microsecond}
 	case bigquery.NumericFieldType:
-		if schema.Precision == 0 && schema.Scale == 0 {
-			// BigQuery appears to punt, fill in default
-			field.Type = &arrow.Decimal128Type{
-				Precision: 38,
-				Scale:     9,
-			}
-		} else {
-			field.Type = &arrow.Decimal128Type{
-				Precision: int32(schema.Precision),
-				Scale:     int32(schema.Scale),
-			}
+		// The declared precision/scale aren't really used so be
+		// consistent with queries
+		field.Type = &arrow.Decimal128Type{
+			Precision: 38,
+			Scale:     9,
 		}
 	case bigquery.RangeFieldType:
 		var childType arrow.DataType
