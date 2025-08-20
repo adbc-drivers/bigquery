@@ -1,3 +1,4 @@
+---
 # Copyright (c) 2025 ADBC Drivers Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+{}
+---
 
-[tags]
-sql-type-name = "STRING"
+# Google BigQuery
+
+{{ version_header }}
+
+This driver provides access to [Google BigQuery][bigquery], a data warehouse
+offered by Google Cloud.
+
+## Installation & Quickstart
+
+## Feature & Type Support
+{{ features|safe }}
+
+### Types
+{{ types|safe }}
+
+[bigquery]: https://cloud.google.com/bigquery/

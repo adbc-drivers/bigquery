@@ -23,8 +23,12 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
+    template = Path(__file__).parent.parent.parent / "docs/bigquery.md"
+    template = template.resolve()
+
     generate_documentation.generate(
         BigQueryQuirks(),
         Path("validation-report.xml").resolve(),
+        template,
         args.output.resolve(),
     )

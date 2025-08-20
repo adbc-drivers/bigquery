@@ -20,6 +20,7 @@ from adbc_drivers_validation.tests.conftest import (  # noqa: F401
     conn,
     conn_factory,
     manual_test,
+    pytest_addoption,
     pytest_collection_modifyitems,
 )
 

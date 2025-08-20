@@ -15,3 +15,5 @@
 # pixi environments
 .pixi
 *.egg-info
+
+validation-report.xml
