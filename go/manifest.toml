@@ -13,7 +13,7 @@
 # limitations under the License.
 name = "ADBC Driver Foundry Driver for Google BigQuery"
 publisher = "Columnar Technologies"
-license = "Proprietary"
+license = "Apache-2.0"
 
 [ADBC]
 version = "v1.1.0"

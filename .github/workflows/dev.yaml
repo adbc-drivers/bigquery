@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   lint:
-    uses: adbc-drivers/dev/.github/workflows/dev.yaml@86b7c7c7da6d6cc2b9ffa604988aeeca18ce6a49
+    uses: adbc-drivers/dev/.github/workflows/dev.yaml@457bd8a4b35844697899a3b1fac2d7fa2d3e2b6f
     secrets:
       pre_commit_ssh_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       ssh_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}

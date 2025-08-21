@@ -22,12 +22,19 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   validate:
-    uses: adbc-drivers/dev/.github/workflows/validate.yaml@86b7c7c7da6d6cc2b9ffa604988aeeca18ce6a49
+    uses: adbc-drivers/dev/.github/workflows/validate.yaml@457bd8a4b35844697899a3b1fac2d7fa2d3e2b6f
     secrets:
+      dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
       validation_private_key: ${{ secrets.VALIDATION_DEPLOY_KEY }}
+      environment: ${{ secrets.BIGQUERY_ENV }}
+      gcloud_service_account: ${{ secrets.GCLOUD_SERVICE_ACCOUNT }}
+      gcloud_workload_identity_provider: ${{ secrets.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
     with:
       driver: bigquery
+      environment: "BigQuery CI"
+      gcloud: true
