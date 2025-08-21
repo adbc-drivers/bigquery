@@ -21,6 +21,12 @@ on:
   push:
     tags:
       - "bigquery/**"
+  workflow_dispatch:
+    inputs:
+      dry_run_tag:
+        description: "Dry run with this tag"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -29,18 +35,53 @@ permissions:
 
 jobs:
   test:
-    uses: adbc-drivers/dev/.github/workflows/test.yaml@457bd8a4b35844697899a3b1fac2d7fa2d3e2b6f
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
       nightly_signing_private_key: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY }}
       nightly_signing_private_key_id: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_ID }}
       nightly_signing_private_key_password: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_PASSWORD }}
+      environment: ${{ secrets.BIGQUERY_ENV }}
+      gcloud_service_account: ${{ secrets.GCLOUD_SERVICE_ACCOUNT }}
+      gcloud_workload_identity_provider: ${{ secrets.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
     with:
       driver: bigquery
+      environment: "BigQuery CI"
+      gcloud: true
+      release: ${{ github.event_name == 'push' }}
 
-  release:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@457bd8a4b35844697899a3b1fac2d7fa2d3e2b6f
-    needs: test
+  validate:
+    uses: adbc-drivers/dev/.github/workflows/validate.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
+      driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
+      validation_private_key: ${{ secrets.VALIDATION_DEPLOY_KEY }}
+      environment: ${{ secrets.BIGQUERY_ENV }}
+      gcloud_service_account: ${{ secrets.GCLOUD_SERVICE_ACCOUNT }}
+      gcloud_workload_identity_provider: ${{ secrets.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
+    with:
+      driver: bigquery
+      environment: "BigQuery CI"
+      gcloud: true
+
+  release:
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
+    needs:
+      - test
+      - validate
+    if: github.event_name != 'workflow_dispatch'
+    secrets:
+      dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
+
+  release-dry-run:
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
+    needs:
+      - test
+      - validate
+    if: github.event_name == 'workflow_dispatch'
+    secrets:
+      dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
+    with:
+      dry_run: true
+      tag: ${{ inputs.dry_run_tag }}
