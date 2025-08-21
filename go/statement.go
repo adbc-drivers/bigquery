@@ -53,8 +53,7 @@ type statement struct {
 
 	queryConfig            bigquery.QueryConfig
 	parameterMode          string
-	paramBinding           arrow.Record
-	streamBinding          array.RecordReader
+	params                 array.RecordReader
 	resultRecordBufferSize int
 	prefetchConcurrency    int
 	ingest                 driverbase.BulkIngestOptions
@@ -347,12 +346,9 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
-	rdr, err := st.getBoundParameterReader()
-	if err != nil {
-		return nil, -1, err
-	}
-
-	return newRecordReader(ctx, st.query(), rdr, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
+	rr, totalRows, err := newRecordReader(ctx, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
+	st.params = nil
+	return rr, totalRows, err
 }
 
 // ExecuteUpdate executes a statement that does not generate a result
@@ -363,12 +359,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 		return n, err
 	}
 
-	boundParameters, err := st.getBoundParameterReader()
-	if err != nil {
-		return -1, err
-	}
-
-	if boundParameters == nil {
+	if st.params == nil {
 		_, totalRows, err := runQuery(ctx, st.query(), true)
 		if err != nil {
 			return -1, err
@@ -376,8 +367,12 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 		return totalRows, nil
 	} else {
 		totalRows := int64(0)
-		for boundParameters.Next() {
-			values := boundParameters.Record()
+		defer func() {
+			st.params.Release()
+			st.params = nil
+		}()
+		for st.params.Next() {
+			values := st.params.Record()
 			for i := range int(values.NumRows()) {
 				parameters, err := getQueryParameter(values, i, st.parameterMode)
 				if err != nil {
@@ -786,29 +781,10 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 	return parameter, nil
 }
 
-func (st *statement) getBoundParameterReader() (array.RecordReader, error) {
-	if st.paramBinding != nil {
-		rdr, err := array.NewRecordReader(st.paramBinding.Schema(), []arrow.Record{st.paramBinding})
-		if err != nil {
-			return nil, err
-		}
-		st.streamBinding = rdr
-		return st.streamBinding, nil
-	} else if st.streamBinding != nil {
-		return st.streamBinding, nil
-	} else {
-		return nil, nil
-	}
-}
-
 func (st *statement) clearParameters() {
-	if st.paramBinding != nil {
-		st.paramBinding.Release()
-		st.paramBinding = nil
-	}
-	if st.streamBinding != nil {
-		st.streamBinding.Release()
-		st.streamBinding = nil
+	if st.params != nil {
+		st.params.Release()
+		st.params = nil
 	}
 }
 
@@ -821,10 +797,7 @@ func (st *statement) clearParameters() {
 // PreparedStatement.
 func (st *statement) SetParameters(binding arrow.Record) {
 	st.clearParameters()
-	st.paramBinding = binding
-	if st.paramBinding != nil {
-		st.paramBinding.Retain()
-	}
+	st.params, _ = array.NewRecordReader(binding.Schema(), []arrow.Record{binding})
 }
 
 // SetRecordReader takes a RecordReader to send as the parameter bindings when
@@ -836,8 +809,7 @@ func (st *statement) SetParameters(binding arrow.Record) {
 // PreparedStatement.
 func (st *statement) SetRecordReader(binding array.RecordReader) {
 	st.clearParameters()
-	st.streamBinding = binding
-	st.streamBinding.Retain()
+	st.params = binding
 }
 
 // Bind uses an arrow record batch to bind parameters to the query.
@@ -906,11 +878,7 @@ func (st *statement) ExecutePartitions(ctx context.Context) (*arrow.Schema, adbc
 func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	logger := st.cnxn.Logger.With("op", "bulkingest")
 
-	rdr, err := st.getBoundParameterReader()
-	if err != nil {
-		return -1, err
-	}
-	if rdr == nil {
+	if st.params == nil {
 		return -1, adbc.Error{
 			Msg:  "[bq] no data bound for bulk ingest",
 			Code: adbc.StatusInvalidState,
@@ -937,9 +905,9 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 		Alloc:       st.alloc,
 		Ctx:         ctx,
 		Options:     st.ingest,
-		Data:        rdr,
+		Data:        st.params,
 	}
-	st.streamBinding = nil
+	st.params = nil
 	defer manager.Close()
 
 	if err := manager.Init(); err != nil {

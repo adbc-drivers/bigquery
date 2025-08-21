@@ -737,7 +737,6 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 
 	stream, err := array.NewRecordReader(input, []arrow.Record{rec})
 	suite.Require().NoError(err)
-	defer stream.Release()
 
 	err = suite.Quirks.CreateSampleTableWithStreams(bulkInsertTableName, stream)
 	suite.Require().NoError(err)
