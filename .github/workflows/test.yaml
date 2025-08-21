@@ -26,13 +26,18 @@ permissions:
   packages: read
 
 jobs:
-  lint:
-    uses: adbc-drivers/dev/.github/workflows/test.yaml@c5a1526d4b0a41df17ff39cb94ce6224fe6e0d05
+  test:
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@86b7c7c7da6d6cc2b9ffa604988aeeca18ce6a49
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
       nightly_signing_private_key: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY }}
       nightly_signing_private_key_id: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_ID }}
       nightly_signing_private_key_password: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_PASSWORD }}
+      environment: ${{ secrets.BIGQUERY_ENV }}
+      gcloud_service_account: ${{ secrets.GCLOUD_SERVICE_ACCOUNT }}
+      gcloud_workload_identity_provider: ${{ secrets.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
     with:
       driver: bigquery
+      environment: "BigQuery CI"
+      gcloud: true

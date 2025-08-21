@@ -37,7 +37,7 @@ class BigQueryQuirks(model.DriverQuirks):
         # statement" queries which is not very useful to us
         statement_bulk_ingest_temporary=False,
         statement_execute_schema=True,
-        current_catalog=model.FromEnv("BIGQUERY_PROJECT_ID"),
+        current_catalog=model.FromEnv("GOOGLE_CLOUD_PROJECT"),
         current_schema=model.FromEnv("BIGQUERY_DATASET_ID"),
         secondary_schema=model.FromEnv("BIGQUERY_SECONDARY_DATASET_ID"),
         supported_xdbc_fields=[
@@ -55,7 +55,7 @@ class BigQueryQuirks(model.DriverQuirks):
     )
     setup = model.DriverSetup(
         database={
-            "adbc.bigquery.sql.project_id": model.FromEnv("BIGQUERY_PROJECT_ID"),
+            "adbc.bigquery.sql.project_id": model.FromEnv("GOOGLE_CLOUD_PROJECT"),
             "adbc.bigquery.sql.dataset_id": model.FromEnv("BIGQUERY_DATASET_ID"),
         },
         connection={},

@@ -412,13 +412,13 @@ func (q *BigQueryQuirks) SampleTableSchemaMetadata(tblName string, dt arrow.Data
 
 func createTempSchema(ctx context.Context, client *bigquery.Client) string {
 	schemaName := strings.ToUpper("ADBC_TESTING_" + strings.ReplaceAll(uuid.New().String(), "-", "_"))
-
 	dataset := client.Dataset(schemaName)
 	err := dataset.Create(ctx, nil)
 	if err != nil {
 		panic(err)
 	}
 
+	fmt.Printf("Created temp schema %s\n", schemaName)
 	return schemaName
 }
 
@@ -426,6 +426,7 @@ func dropTempSchema(ctx context.Context, client *bigquery.Client, schemaName str
 	if err := client.Dataset(schemaName).DeleteWithContents(ctx); err != nil {
 		panic(err)
 	}
+	fmt.Printf("Dropped temp schema %s\n", schemaName)
 }
 
 func samplePrimitiveTypeFields() []arrow.Field {
@@ -586,12 +587,14 @@ func TestValidation(t *testing.T) {
 		suite.Run(t, &validation.DatabaseTests{Quirks: q})
 		suite.Run(t, &validation.ConnectionTests{Quirks: q})
 		suite.Run(t, &validation.StatementTests{Quirks: q})
-	})
-}
 
-func TestBigQuery(t *testing.T) {
-	withQuirks(t, func(q *BigQueryQuirks) {
 		suite.Run(t, &BigQueryTests{Quirks: q})
+		suite.Run(t, &ErrorTestSuite{
+			BigQueryTestSuite{
+				project: q.catalogName,
+				dataset: q.schemaName,
+			},
+		})
 	})
 }
 
@@ -1605,13 +1608,6 @@ type BigQueryTestSuite struct {
 
 func (s *BigQueryTestSuite) SetupSuite() {
 	var err error
-
-	s.project = os.Getenv("BIGQUERY_PROJECT_ID")
-	s.dataset = os.Getenv("BIGQUERY_DATASET_ID")
-
-	if s.project == "" || s.dataset == "" {
-		s.T().Skip("BIGQUERY_PROJECT_ID and BIGQUERY_DATASET_ID must be set")
-	}
 
 	s.ctx = context.Background()
 	s.mem = memory.NewCheckedAllocator(memory.DefaultAllocator)

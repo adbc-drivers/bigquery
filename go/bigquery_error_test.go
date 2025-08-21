@@ -16,15 +16,9 @@ package bigquery_test
 
 import (
 	"context"
-	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/stretchr/testify/suite"
 )
-
-func TestErrorMapping(t *testing.T) {
-	suite.Run(t, &ErrorTestSuite{})
-}
 
 type ErrorTestSuite struct {
 	BigQueryTestSuite
