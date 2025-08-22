@@ -35,13 +35,10 @@ permissions:
 
 jobs:
   test:
-    uses: adbc-drivers/dev/.github/workflows/test.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
-      nightly_signing_private_key: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY }}
-      nightly_signing_private_key_id: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_ID }}
-      nightly_signing_private_key_password: ${{ secrets.NIGHTLY_SIGNING_PRIVATE_KEY_PASSWORD }}
       environment: ${{ secrets.BIGQUERY_ENV }}
       gcloud_service_account: ${{ secrets.GCLOUD_SERVICE_ACCOUNT }}
       gcloud_workload_identity_provider: ${{ secrets.GCLOUD_WORKLOAD_IDENTITY_PROVIDER }}
@@ -52,7 +49,7 @@ jobs:
       release: ${{ github.event_name == 'push' }}
 
   validate:
-    uses: adbc-drivers/dev/.github/workflows/validate.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
+    uses: adbc-drivers/dev/.github/workflows/validate.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
@@ -66,7 +63,7 @@ jobs:
       gcloud: true
 
   release:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
     needs:
       - test
       - validate
@@ -75,7 +72,7 @@ jobs:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
 
   release-dry-run:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@1c53adccb4ced5c2733e9e6b6fb5a4e21d8634ef
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
     needs:
       - test
       - validate
