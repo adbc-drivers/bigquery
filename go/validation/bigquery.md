@@ -15,14 +15,24 @@
 {}
 ---
 
-# Google BigQuery
+{{ cross_reference|safe }}
+# Google BigQuery {{ version }}
 
-{{ version_header }}
+{{ version_header|safe }}
 
 This driver provides access to [Google BigQuery][bigquery], a data warehouse
 offered by Google Cloud.
 
 ## Installation & Quickstart
+
+The BigQuery driver can be installed with `dbc`.
+
+To use the driver:
+
+1. Authenticate with Google Cloud (e.g. via `gcloud auth application-default
+   login`).
+1. Provide the database options `adbc.bigquery.sql.project_id` and
+   `adbc.bigquery.sql.dataset_id`.
 
 ## Feature & Type Support
 {{ features|safe }}
