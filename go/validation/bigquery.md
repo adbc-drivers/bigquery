@@ -16,7 +16,7 @@
 ---
 
 {{ cross_reference|safe }}
-# Google BigQuery {{ version }}
+# Google BigQuery Driver {{ version }}
 
 {{ version_header|safe }}
 
@@ -25,7 +25,7 @@ offered by Google Cloud.
 
 ## Installation & Quickstart
 
-The BigQuery driver can be installed with `dbc`.
+The driver can be installed with `dbc`.
 
 To use the driver:
 

@@ -19,9 +19,11 @@ from adbc_drivers_validation import model
 
 class BigQueryQuirks(model.DriverQuirks):
     name = "bigquery"
-    driver = "columnar_driver_bigquery"
-    driver_name = "Columnar ADBC Driver for Google BigQuery"
+    driver = "adbc_driver_bigquery"
+    driver_name = "ADBC Driver Foundry Driver for Google BigQuery"
     vendor_name = "Google BigQuery"
+    # BigQuery doesn't really have a public facing version
+    vendor_version = "cloud.google.com/go/bigquery v1.69.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         # TODO(lidavidm): this is a bit weird; it does work, but we'd need two

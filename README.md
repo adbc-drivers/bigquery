@@ -20,3 +20,17 @@ Not affiliated with Google.
 
 This repository contains [ADBC drivers](https://arrow.apache.org/adbc/) for
 Google products, currently Google BigQuery.
+
+## Installation
+
+Pre-packaged builds of the drivers in this repo have been made available for various platforms from the [Columnar](https://columnar.tech) CDN. These can be installed by any tool that supports [ADBC](https://arrow.apache.org/adbc/) Driver Manifests, such as [dbc](https://columnar.tech/dbc).
+
+See [Building](#building) if you would rather build the drivers yourself.
+
+## Building
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).

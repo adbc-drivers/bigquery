@@ -126,7 +126,7 @@ func init() {
 		for _, dep := range info.Deps {
 			switch dep.Path {
 			case "cloud.google.com/go/bigquery":
-				infoVendorVersion = dep.Version
+				infoVendorVersion = fmt.Sprintf("cloud.google.com/go/bigquery %s", dep.Version)
 			}
 		}
 	}
@@ -139,7 +139,7 @@ type driverImpl struct {
 // NewDriver creates a new BigQuery driver using the given Arrow allocator.
 func NewDriver(alloc memory.Allocator) adbc.Driver {
 	info := driverbase.DefaultDriverInfo("Google BigQuery")
-	err := info.RegisterInfoCode(adbc.InfoDriverName, "Columnar ADBC Driver for Google BigQuery")
+	err := info.RegisterInfoCode(adbc.InfoDriverName, "ADBC Driver Foundry Driver for Google BigQuery")
 	if err != nil {
 		panic(err)
 	}
