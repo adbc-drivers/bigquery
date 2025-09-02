@@ -17,8 +17,8 @@ from adbc_drivers_validation.tests.statement import (
     generate_tests,
 )
 
-from .bigquery import BigQueryQuirks
+from . import bigquery
 
 
 def pytest_generate_tests(metafunc) -> None:
-    return generate_tests(BigQueryQuirks(), metafunc)
+    return generate_tests(bigquery.QUIRKS, metafunc)

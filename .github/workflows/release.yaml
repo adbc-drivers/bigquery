@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   test:
-    uses: adbc-drivers/dev/.github/workflows/test.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@fe64eee5e66ddf6465460fd9ea0209550067757e
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
@@ -49,7 +49,7 @@ jobs:
       release: ${{ github.event_name == 'push' }}
 
   validate:
-    uses: adbc-drivers/dev/.github/workflows/validate.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
+    uses: adbc-drivers/dev/.github/workflows/validate.yaml@fe64eee5e66ddf6465460fd9ea0209550067757e
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
@@ -63,7 +63,7 @@ jobs:
       gcloud: true
 
   release:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@fe64eee5e66ddf6465460fd9ea0209550067757e
     needs:
       - test
       - validate
@@ -72,7 +72,7 @@ jobs:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
 
   release-dry-run:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@612d5c04279c9cad606a16a29120551a7fb550cc
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@fe64eee5e66ddf6465460fd9ea0209550067757e
     needs:
       - test
       - validate

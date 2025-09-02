@@ -17,11 +17,11 @@ import time
 import adbc_driver_manager.dbapi
 import adbc_drivers_validation.tests.query as query_tests
 
-from .bigquery import BigQueryQuirks
+from . import bigquery
 
 
 def pytest_generate_tests(metafunc) -> None:
-    return query_tests.generate_tests(BigQueryQuirks(), metafunc)
+    return query_tests.generate_tests(bigquery.QUIRKS, metafunc)
 
 
 class TestQuery(query_tests.TestQuery):
@@ -30,6 +30,19 @@ class TestQuery(query_tests.TestQuery):
         for i in range(5):
             try:
                 super().test_execute_schema(driver, conn, query)
+            except adbc_driver_manager.dbapi.ProgrammingError as e:
+                if "Exceeded rate limits" in str(e):
+                    time.sleep(min(15, 2 ** (i + 2)))
+                    continue
+                else:
+                    raise
+            else:
+                break
+
+    def test_get_table_schema(self, driver, conn_factory, query) -> None:
+        for i in range(5):
+            try:
+                super().test_get_table_schema(driver, conn_factory, query)
             except adbc_driver_manager.dbapi.ProgrammingError as e:
                 if "Exceeded rate limits" in str(e):
                     time.sleep(min(15, 2 ** (i + 2)))

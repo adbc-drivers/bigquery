@@ -30,11 +30,12 @@ from .bigquery import BigQueryQuirks
 @pytest.fixture(scope="session")
 def driver(request) -> adbc_drivers_validation.model.DriverQuirks:
     driver = request.param
-    assert driver == "bigquery"
+    assert driver.startswith("bigquery")
     return BigQueryQuirks()
 
 
 @pytest.fixture(scope="session")
 def driver_path(driver: adbc_drivers_validation.model.DriverQuirks) -> str:
-    # Assume shared library is in the repo root
-    return str(Path(__file__).parent.parent.parent / f"libadbc_driver_{driver.name}.so")
+    return str(
+        Path(__file__).parent.parent.parent / f"build/libadbc_driver_{driver.name}.so"
+    )

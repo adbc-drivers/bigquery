@@ -18,6 +18,10 @@
 {{ cross_reference|safe }}
 # Google BigQuery Driver {{ version }}
 
+:::{note}
+This project is not associated with Google.
+:::
+
 {{ version_header|safe }}
 
 This driver provides access to [Google BigQuery][bigquery], a data warehouse
@@ -35,9 +39,13 @@ To use the driver:
    `adbc.bigquery.sql.dataset_id`.
 
 ## Feature & Type Support
+
 {{ features|safe }}
 
 ### Types
+
 {{ types|safe }}
+
+{{ footnotes|safe }}
 
 [bigquery]: https://cloud.google.com/bigquery/

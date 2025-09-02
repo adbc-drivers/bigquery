@@ -22,8 +22,10 @@ class BigQueryQuirks(model.DriverQuirks):
     driver = "adbc_driver_bigquery"
     driver_name = "ADBC Driver Foundry Driver for Google BigQuery"
     vendor_name = "Google BigQuery"
-    # BigQuery doesn't really have a public facing version
-    vendor_version = "cloud.google.com/go/bigquery v1.69.0"
+    # BigQuery doesn't really have a public facing version, so use the client
+    # version instead
+    vendor_version = "cloud.google.com/go/bigquery v1.70.0"
+    short_version = "gcloud"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         # TODO(lidavidm): this is a bit weird; it does work, but we'd need two
@@ -65,8 +67,8 @@ class BigQueryQuirks(model.DriverQuirks):
     )
 
     @property
-    def queries_path(self) -> Path:
-        return Path(__file__).parent.parent / "queries"
+    def queries_paths(self) -> tuple[Path]:
+        return (Path(__file__).parent.parent / "queries",)
 
     def is_table_not_found(self, table_name: str, error: Exception) -> bool:
         return "Not found: Table" in str(error) and table_name in str(error)
@@ -89,3 +91,6 @@ class BigQueryQuirks(model.DriverQuirks):
             "ALTER TABLE constraint_foreign DROP COLUMN z",
             "ALTER TABLE constraint_foreign_multi DROP COLUMN z",
         ]
+
+
+QUIRKS = [BigQueryQuirks()]
