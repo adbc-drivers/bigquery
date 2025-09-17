@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-
-import adbc_driver_manager.dbapi
 import adbc_drivers_validation.tests.query as query_tests
 
-from . import bigquery
+from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
@@ -25,29 +22,10 @@ def pytest_generate_tests(metafunc) -> None:
 
 
 class TestQuery(query_tests.TestQuery):
+    @utils.retry_rate_limit
     def test_execute_schema(self, driver, conn, query) -> None:
-        # BigQuery tends to be flaky when we reuse the same table
-        for i in range(5):
-            try:
-                super().test_execute_schema(driver, conn, query)
-            except adbc_driver_manager.dbapi.ProgrammingError as e:
-                if "Exceeded rate limits" in str(e):
-                    time.sleep(min(15, 2 ** (i + 2)))
-                    continue
-                else:
-                    raise
-            else:
-                break
+        super().test_execute_schema(driver, conn, query)
 
+    @utils.retry_rate_limit
     def test_get_table_schema(self, driver, conn_factory, query) -> None:
-        for i in range(5):
-            try:
-                super().test_get_table_schema(driver, conn_factory, query)
-            except adbc_driver_manager.dbapi.ProgrammingError as e:
-                if "Exceeded rate limits" in str(e):
-                    time.sleep(min(15, 2 ** (i + 2)))
-                    continue
-                else:
-                    raise
-            else:
-                break
+        super().test_get_table_schema(driver, conn_factory, query)

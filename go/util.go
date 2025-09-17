@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/auth"
+	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
@@ -47,6 +48,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	msg.WriteString(": ")
 
 	var apiErr *apierror.APIError
+	var bqErr *bigquery.Error
 	var httpErr *googleapi.Error
 	var urlErr *url.Error
 	statusCode := -1
@@ -68,6 +70,29 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 		msg.WriteString(fmt.Sprintf("failed to %s %s", urlErr.Op, cleanURL))
 		if urlErr.Err != nil {
 			msg.WriteString(fmt.Sprintf(": %s", urlErr.Err.Error()))
+		}
+	} else if errors.As(err, &bqErr) {
+		msg.WriteString(fmt.Sprintf("%s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location))
+
+		switch bqErr.Reason {
+		case "accessDenied", "billingNotEnabled", "blocked":
+			adbcErr.Code = adbc.StatusUnauthorized
+		case "attributeError", "badRequest", "billingTierLimitExceeded", "invalid", "invalidQuery", "invalidUser":
+			adbcErr.Code = adbc.StatusInvalidArgument
+		case "backendError", "jobBackendError", "jobInternalError", "jobRateLimitExceeded", "quotaExceeded", "rateLimitExceeded", "resourceInUse", "resourcesExceeded":
+			adbcErr.Code = adbc.StatusInternal
+		case "duplicate":
+			adbcErr.Code = adbc.StatusAlreadyExists
+		case "notFound", "tableUnavailable":
+			adbcErr.Code = adbc.StatusNotFound
+		case "notImplemented":
+			adbcErr.Code = adbc.StatusNotImplemented
+		case "proxyAuthenticationRequired", "responseTooLarge":
+			adbcErr.Code = adbc.StatusIO
+		case "stopped":
+			adbcErr.Code = adbc.StatusCancelled
+		case "timeout":
+			adbcErr.Code = adbc.StatusTimeout
 		}
 	} else {
 		msg.WriteString(err.Error())

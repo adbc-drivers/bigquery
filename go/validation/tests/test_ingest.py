@@ -12,13 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from adbc_drivers_validation.tests.ingest import (
-    TestIngest,  # noqa: F401
-    generate_tests,
-)
+import adbc_drivers_validation.tests.ingest
 
-from . import bigquery
+from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
-    return generate_tests(bigquery.QUIRKS, metafunc)
+    return adbc_drivers_validation.tests.ingest.generate_tests(
+        bigquery.QUIRKS, metafunc
+    )
+
+
+class TestIngest(adbc_drivers_validation.tests.ingest.TestIngest):
+    @utils.retry_rate_limit
+    def test_create(self, driver, conn, query) -> None:
+        super().test_create(driver, conn, query)
+
+    @utils.retry_rate_limit
+    def test_append(self, driver, conn, query) -> None:
+        super().test_create(driver, conn, query)
+
+    @utils.retry_rate_limit
+    def test_append_fail(self, driver, conn, query) -> None:
+        super().test_append_fail(driver, conn, query)
+
+    @utils.retry_rate_limit
+    def test_createappend(self, driver, conn, query) -> None:
+        super().test_createappend(driver, conn, query)
+
+    @utils.retry_rate_limit
+    def test_replace(self, driver, conn, query) -> None:
+        super().test_replace(driver, conn, query)
+
+    @utils.retry_rate_limit
+    def test_replace_noop(self, driver, conn, query) -> None:
+        super().test_replace_noop(driver, conn, query)
+
+    @utils.retry_rate_limit
+    def test_not_null(self, driver, conn) -> None:
+        super().test_not_null(driver, conn)
+
+    @utils.retry_rate_limit
+    def test_schema(self, driver, conn) -> None:
+        super().test_schema(driver, conn)
+
+    @utils.retry_rate_limit
+    def test_catalog(self, driver, conn) -> None:
+        super().test_catalog(driver, conn)

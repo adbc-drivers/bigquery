@@ -32,7 +32,7 @@ func (s *ErrorTestSuite) TestBadQuery() {
 	var adbcError adbc.Error
 	s.ErrorAs(err, &adbcError)
 
-	s.Equal(adbc.StatusInvalidArgument, adbcError.Code)
+	s.Equal(adbc.StatusInvalidArgument, adbcError.Code, adbcError.Error())
 }
 
 func (s *ErrorTestSuite) TestNonexistentTable() {
@@ -43,5 +43,5 @@ func (s *ErrorTestSuite) TestNonexistentTable() {
 	var adbcError adbc.Error
 	s.ErrorAs(err, &adbcError)
 
-	s.Equal(adbc.StatusNotFound, adbcError.Code)
+	s.Equal(adbc.StatusNotFound, adbcError.Code, adbcError.Error())
 }

@@ -58,7 +58,7 @@ type BigQueryQuirks struct {
 	schemaName string
 }
 
-func (q *BigQueryQuirks) CreateSampleTable(tableName string, r arrow.Record) (err error) {
+func (q *BigQueryQuirks) CreateSampleTable(tableName string, r arrow.RecordBatch) (err error) {
 	var buf bytes.Buffer
 
 	w, err := pqarrow.NewFileWriter(
@@ -157,7 +157,7 @@ func (q *BigQueryQuirks) quoteTblName(name string) string {
 	return fmt.Sprintf("`%s.%s`", q.schemaName, strings.ReplaceAll(name, "\"", "\"\""))
 }
 
-func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.Record) error {
+func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.RecordBatch) error {
 	var b strings.Builder
 	b.WriteString("CREATE OR REPLACE TABLE ")
 	b.WriteString(q.quoteTblName(tableName))
@@ -501,7 +501,7 @@ func samplePrimitiveTypeSchema() (*arrow.Schema, *arrow.Schema) {
 	return input, expected
 }
 
-func buildSamplePrimitiveTypeRecord(mem memory.Allocator, schema, bigquery *arrow.Schema) (arrow.Record, arrow.Record) {
+func buildSamplePrimitiveTypeRecord(mem memory.Allocator, schema, bigquery *arrow.Schema) (arrow.RecordBatch, arrow.RecordBatch) {
 	bldr := array.NewRecordBuilder(mem, schema)
 	defer bldr.Release()
 
@@ -551,7 +551,7 @@ func buildSamplePrimitiveTypeRecord(mem memory.Allocator, schema, bigquery *arro
 	bldr2.Field(11).(*array.TimestampBuilder).AppendValues(bigQueryTimestamps, nil)
 	bldr2.Field(12).(*array.TimestampBuilder).AppendValues(bigQueryTimestamps, nil)
 
-	return bldr.NewRecord(), bldr2.NewRecord()
+	return bldr.NewRecordBatch(), bldr2.NewRecordBatch()
 }
 
 func withQuirks(t *testing.T, fn func(quirks *BigQueryQuirks)) {
@@ -587,6 +587,10 @@ type bigQueryConnectionTests struct {
 
 // Skip these tests: they're flaky and redundant with the validation suite
 func (t *bigQueryConnectionTests) TestMetadataGetObjectsColumns() {
+	t.T().SkipNow()
+}
+
+func (t *bigQueryConnectionTests) TestMetadataGetObjectsColumnsXdbc() {
 	t.T().SkipNow()
 }
 
@@ -705,7 +709,7 @@ func (suite *BigQueryTests) TestEmptyResultSet() {
 
 	recv := int64(0)
 	for rdr.Next() {
-		recv += rdr.Record().NumRows()
+		recv += rdr.RecordBatch().NumRows()
 	}
 
 	// verify that we got the expected number of rows if we sum up
@@ -731,7 +735,7 @@ func (suite *BigQueryTests) TestSqlBulkInsertRecords() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	resultBind := rdr.Record()
+	resultBind := rdr.RecordBatch()
 
 	suite.Truef(array.RecordEqual(expectedRec, resultBind), "expected: %s\ngot: %s", expectedRec, resultBind)
 	suite.False(rdr.Next())
@@ -746,7 +750,7 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 	defer rec.Release()
 	defer expectedRec.Release()
 
-	stream, err := array.NewRecordReader(input, []arrow.Record{rec})
+	stream, err := array.NewRecordReader(input, []arrow.RecordBatch{rec})
 	suite.Require().NoError(err)
 
 	err = suite.Quirks.CreateSampleTableWithStreams(bulkInsertTableName, stream)
@@ -759,7 +763,7 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	resultBindStream := rdr.Record()
+	resultBindStream := rdr.RecordBatch()
 
 	suite.Truef(array.RecordEqual(expectedRec, resultBindStream), "expected: %s\ngot: %s", expectedRec, resultBindStream)
 	suite.False(rdr.Next())
@@ -813,7 +817,7 @@ func (suite *BigQueryTests) TestSqlIngestTimestampTypes() {
 	bldr.Field(5).(*array.TimestampBuilder).AppendValues([]arrow.Timestamp{1, 2, 3}, nil)
 	bldr.Field(6).(*array.TimestampBuilder).AppendValues([]arrow.Timestamp{1, 2, 3}, nil)
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
@@ -826,7 +830,7 @@ func (suite *BigQueryTests) TestSqlIngestTimestampTypes() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	result := rdr.Record()
+	result := rdr.RecordBatch()
 
 	expectedSchema := arrow.NewSchema([]arrow.Field{
 		{
@@ -923,7 +927,7 @@ func (suite *BigQueryTests) TestSqlIngestDate64Type() {
 	bldr.Field(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, nil)
 	bldr.Field(1).(*array.Date64Builder).AppendValues([]arrow.Date64{86400000, 172800000, 259200000}, nil) // 1,2,3 days of milliseconds
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
@@ -936,7 +940,7 @@ func (suite *BigQueryTests) TestSqlIngestDate64Type() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	result := rdr.Record()
+	result := rdr.RecordBatch()
 
 	expectedSchema := arrow.NewSchema([]arrow.Field{
 		{
@@ -1028,7 +1032,7 @@ func (suite *BigQueryTests) TestSqlIngestDecimal() {
 	suite.Require().NoError(err)
 	bldr.Field(5).(*array.Decimal256Builder).AppendValues([]decimal256.Num{d256num1, d256num2, d256num3}, nil)
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	err = suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
@@ -1041,7 +1045,7 @@ func (suite *BigQueryTests) TestSqlIngestDecimal() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	result := rdr.Record()
+	result := rdr.RecordBatch()
 
 	expectedSchema := arrow.NewSchema([]arrow.Field{
 		{
@@ -1108,7 +1112,7 @@ func (suite *BigQueryTests) TestSqlIngestDecimal() {
 	suite.Require().NoError(err)
 	bldr2.Field(5).(*array.Decimal256Builder).AppendValues([]decimal256.Num{expectedD256Num1, expectedD256Num2, expectedD256Num3}, nil)
 
-	expectedRec := bldr2.NewRecord()
+	expectedRec := bldr2.NewRecordBatch()
 	defer expectedRec.Release()
 
 	suite.Truef(array.RecordEqual(expectedRec, result), "expected: %s\ngot: %s", expectedRec, result)
@@ -1163,7 +1167,7 @@ func (suite *BigQueryTests) TestSqlIngestListType() {
 	listvalbldr.AppendValues(strRow3, nil)
 	listbldr.AppendValues(offsets, valid)
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
@@ -1176,7 +1180,7 @@ func (suite *BigQueryTests) TestSqlIngestListType() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	result := rdr.Record()
+	result := rdr.RecordBatch()
 
 	// Array cannot be NULL
 	expectedSchema := arrow.NewSchema([]arrow.Field{
@@ -1271,7 +1275,7 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 	struct3bldr.FieldBuilder(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, nil)
 	struct3bldr.FieldBuilder(1).(*array.BooleanBuilder).AppendValues([]bool{true, false, false}, nil)
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
@@ -1284,7 +1288,7 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 
 	suite.EqualValues(3, n)
 	suite.True(rdr.Next())
-	result := rdr.Record()
+	result := rdr.RecordBatch()
 
 	expectedRecord, _, err := array.RecordFromJSON(suite.Quirks.Alloc(), sc, bytes.NewReader([]byte(`
 	[
@@ -1359,7 +1363,7 @@ func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 	bldr.Field(2).(*array.StringBuilder).AppendValues([]string{"foo", "", ""}, []bool{true, false, true})
 	bldr.Field(3).(*array.TimestampBuilder).AppendValues([]arrow.Timestamp{arrow.Timestamp(1), arrow.Timestamp(2), arrow.Timestamp(3)}, nil)
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	suite.Require().NoError(suite.Quirks.CreateSampleTable("bulk_ingest", rec))
@@ -1421,7 +1425,7 @@ func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 
 	suite.Truef(adbc.GetObjectsSchema.Equal(rdr.Schema()), "expected: %s\ngot: %s", adbc.GetObjectsSchema, rdr.Schema())
 	suite.True(rdr.Next())
-	rec = rdr.Record()
+	rec = rdr.RecordBatch()
 	suite.Greater(rec.NumRows(), int64(0))
 	suite.True(rec.Schema().Equal(adbc.GetObjectsSchema))
 	var (

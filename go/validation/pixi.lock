@@ -41,7 +41,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/69/e0/552843e0d356fbb5256d21449fa957fa4eff3bbc135a74a691ee70c7c5da/typing_extensions-4.14.0-py3-none-any.whl
-      - pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=db4b557881bb992e17a09538f9590f248e9fb90c#db4b557881bb992e17a09538f9590f248e9fb90c
+      - pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=b975c3a5aceee3c67f156636c87331406224e7d0#b975c3a5aceee3c67f156636c87331406224e7d0
       - pypi: https://files.pythonhosted.org/packages/c7/61/b5e123dd98e90caeedd8ed3ede06b52ca0e18d8d16dfad8133c954702451/whenever-0.8.8-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
@@ -78,7 +78,7 @@ packages:
   - pyarrow>=14.0.1 ; extra == 'test'
   - pytest ; extra == 'test'
   requires_python: '>=3.9'
-- pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=db4b557881bb992e17a09538f9590f248e9fb90c#db4b557881bb992e17a09538f9590f248e9fb90c
+- pypi: git+ssh://git@github.com/adbc-drivers/validation?rev=b975c3a5aceee3c67f156636c87331406224e7d0#b975c3a5aceee3c67f156636c87331406224e7d0
   name: adbc-drivers-validation
   version: '0.1'
   requires_dist:

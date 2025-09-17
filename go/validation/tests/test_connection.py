@@ -15,7 +15,7 @@
 
 import adbc_drivers_validation.tests.connection as connection_tests
 
-from . import bigquery
+from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
@@ -23,4 +23,22 @@ def pytest_generate_tests(metafunc) -> None:
 
 
 class TestConnection(connection_tests.TestConnection):
-    pass
+    @utils.retry_rate_limit
+    def test_get_objects_catalog(self, conn, driver) -> None:
+        super().test_get_objects_catalog(conn, driver)
+
+    @utils.retry_rate_limit
+    def test_get_objects_schema(self, conn, driver) -> None:
+        super().test_get_objects_schema(conn, driver)
+
+    @utils.retry_rate_limit
+    def test_get_objects_table(self, conn, driver) -> None:
+        super().test_get_objects_table(conn, driver)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column(self, conn, driver) -> None:
+        super().test_get_objects_column(conn, driver)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_xdbc(self, conn, driver) -> None:
+        super().test_get_objects_column_xdbc(conn, driver)

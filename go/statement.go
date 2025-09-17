@@ -372,7 +372,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 			st.params = nil
 		}()
 		for st.params.Next() {
-			values := st.params.Record()
+			values := st.params.RecordBatch()
 			for i := range int(values.NumRows()) {
 				parameters, err := getQueryParameter(values, i, st.parameterMode)
 				if err != nil {
@@ -795,9 +795,9 @@ func (st *statement) clearParameters() {
 // from under the statement. Release will be called on a previous binding
 // record or reader if it existed, and will be called upon calling Close on the
 // PreparedStatement.
-func (st *statement) SetParameters(binding arrow.Record) {
+func (st *statement) SetParameters(binding arrow.RecordBatch) {
 	st.clearParameters()
-	st.params, _ = array.NewRecordReader(binding.Schema(), []arrow.Record{binding})
+	st.params, _ = array.NewRecordReader(binding.Schema(), []arrow.RecordBatch{binding})
 }
 
 // SetRecordReader takes a RecordReader to send as the parameter bindings when
@@ -818,7 +818,7 @@ func (st *statement) SetRecordReader(binding array.RecordReader) {
 // The driver will call release on the passed in Record when it is done,
 // but it may not do this until the statement is closed or another
 // record is bound.
-func (st *statement) Bind(_ context.Context, values arrow.Record) error {
+func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
 	st.SetParameters(values)
 	return nil
 }
