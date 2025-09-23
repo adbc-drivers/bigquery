@@ -30,8 +30,10 @@ Potential security vulnerabilities should be reported to
 
 ## Build and Test
 
+### Golang
+
 For basic development, the driver can be built and tested like any Go project.
-From the `bigquery/` subdirectory:
+From the `go/` subdirectory:
 
 ```shell
 $ go build ./...
@@ -40,7 +42,7 @@ $ go test -tags assert -v ./...
 
 This will not produce a shared library, however; that requires invoking the
 full build script.  You will need [pixi](https://pixi.sh/) installed.  From
-the repository root:
+the `go/` subdirectory:
 
 ```shell
 $ pixi run make
@@ -48,7 +50,7 @@ $ pixi run make
 
 To run the validation suite, you will first need to build the shared library.
 You will also need to set up a BigQuery instance (see [the validation
-README](./validation/README.md)).  Finally, from the `validation/`
+README](./validation/README.md)).  Finally, from the `go/validation/`
 subdirectory:
 
 ```shell
@@ -82,14 +84,14 @@ When writing the pull request description:
 
 - Ensure the title follows [Conventional
   Commits](https://www.conventionalcommits.org/en/v1.0.0/) format.  The
-  component should be `bigquery` if it affects the driver, or it can be
-  omitted for general maintenance (in general: it should be a directory path
-  relative to the repo root, e.g. `bigquery/auth` would also be valid if that
-  directory existed).  Example titles:
+  component should be `go` if it affects the Go driver, or it can be omitted
+  for general maintenance (in general: it should be a directory path relative
+  to the repo root, e.g. `go/auth` would also be valid if that directory
+  existed).  Example titles:
 
-  - `feat(google): support GEOGRAPHY data type`
+  - `feat(go): support GEOGRAPHY data type`
   - `chore: update action versions`
-  - `fix!(google): return us instead of ms`
+  - `fix!(go): return us instead of ms`
 
   Ensure that breaking changes are appropriately flagged with a `!` as seen
   in the last example above.
