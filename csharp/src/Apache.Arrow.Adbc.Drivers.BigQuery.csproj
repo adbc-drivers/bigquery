@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net472;net8.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(IsWindows)'=='true'">netstandard2.0;net472;net8.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TargetFrameworks)'==''">netstandard2.0;net8.0</TargetFrameworks>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
+    <LangVersion>9.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Net.Http.WinHttpHandler" Version="8.0.3" Condition="'$(TargetFrameworkIdentifier)' == '.NETStandard'" />
@@ -12,7 +15,7 @@
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj" />
+    <PackageReference Include="Apache.Arrow.Adbc" Version="0.20.0" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="readme.md">
@@ -20,5 +23,8 @@
       <PackagePath>\</PackagePath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Extensions/IArrowArrayExtensions.cs" />
   </ItemGroup>
 </Project>

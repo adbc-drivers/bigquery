@@ -1,14 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="..\Build.props" />
+  <Import Project="Build.props" />
   <PropertyGroup>
     <TargetFrameworks Condition="'$(IsWindows)'=='true'">net8.0;net472</TargetFrameworks>
     <TargetFrameworks Condition="'$(TargetFrameworks)'==''">net8.0</TargetFrameworks>
   </PropertyGroup>
     <ItemGroup>
-      <Compile Include="..\..\Drivers\BigQuery\BigQueryData.cs" Link="BigQueryData.cs" />
-      <Compile Include="..\..\Drivers\BigQuery\BigQueryTestConfiguration.cs" Link="BigQueryTestConfiguration.cs" />
-      <Compile Include="..\..\Drivers\BigQuery\BigQueryTestingUtils.cs" Link="BigQueryTestingUtils.cs" />
-      <Compile Include="..\..\Drivers\BigQuery\ClientTests.cs" Link="ClientTests.cs" />
+      <Compile Include="..\BigQueryData.cs" Link="BigQueryData.cs" />
+      <Compile Include="..\BigQueryTestConfiguration.cs" Link="BigQueryTestConfiguration.cs" />
+      <Compile Include="..\BigQueryTestingUtils.cs" Link="BigQueryTestingUtils.cs" />
+      <Compile Include="..\ClientTests.cs" Link="ClientTests.cs" />
     </ItemGroup>
     <ItemGroup>
      <PackageReference Include="Apache.Arrow.Adbc.Drivers.BigQuery" Version="[$(ApacheArrowAdbcDriversBigQueryVersion)]" />
@@ -24,11 +24,8 @@
       <Folder Include="Resources\" />
     </ItemGroup>
     <ItemGroup>
-      <None Include="..\..\Drivers\BigQuery\Resources\BigQueryData.sql" Link="Resources\BigQueryData.sql">
+      <None Include="..\Resources\BigQueryData.sql" Link="Resources\BigQueryData.sql">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
-    </ItemGroup>
-    <ItemGroup>
-      <ProjectReference Include="..\Apache.Arrow.Adbc.SmokeTests\Apache.Arrow.Adbc.SmokeTests.csproj" />
     </ItemGroup>
  </Project>
