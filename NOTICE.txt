@@ -1,0 +1,5 @@
+ADBC Driverd for BigQuery
+Copyright 2025 ADBC Drivers Contributors
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
