@@ -1017,6 +1017,17 @@ func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption
 		authOptions = []option.ClientOption{option.WithTokenSource(tokenSource)}
 	}
 
+	// Apply the requested scopes as base OAuth scopes, mirroring the legacy
+	// arrow-adbc driver. dbt-auth always sends the default scopes (bigquery,
+	// cloud-platform, drive, userinfo.email) via the impersonate.scopes option;
+	// they are the base auth scopes for every connection, not an impersonation
+	// trigger. Without this, non-impersonation connections would silently drop
+	// them (e.g. breaking Drive-backed external tables).
+	// FIXME: separate base scopes from impersonate scopes
+	if len(c.impersonateScopes) != 0 {
+		authOptions = append(authOptions, option.WithScopes(c.impersonateScopes...))
+	}
+
 	return authOptions, nil
 }
 
@@ -1101,9 +1112,10 @@ func (c *connectionImpl) getOrCreateStorageApiDisabledClient(ctx context.Context
 }
 
 func (c *connectionImpl) hasImpersonationOptions() bool {
+	// Mirror the legacy arrow-adbc driver fork
+	// FIXME: separate base scopes from impersonate scopes, then fix this divergence from the upstream
 	return c.impersonateTargetPrincipal != "" ||
-		len(c.impersonateDelegates) > 0 ||
-		len(c.impersonateScopes) > 0
+		len(c.impersonateDelegates) > 0
 }
 
 var (
@@ -1456,6 +1468,9 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	params.Add("client_id", c.clientID)
 	params.Add("client_secret", c.clientSecret)
 	params.Add("refresh_token", c.refreshToken)
+	if len(c.impersonateScopes) > 0 {
+		params.Add("scope", strings.Join(c.impersonateScopes, " "))
+	}
 	endpoint := c.accessTokenEndpoint
 	if endpoint == "" {
 		endpoint = AccessTokenEndpoint

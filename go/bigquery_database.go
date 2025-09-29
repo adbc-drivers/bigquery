@@ -207,9 +207,12 @@ func (d *databaseImpl) SetOptions(ctx context.Context, options map[string]string
 }
 
 func (d *databaseImpl) hasImpersonationOptions() bool {
+	// Scopes are deliberately not counted: they are base auth scopes that
+	// callers (e.g. dbt-auth) always send, so counting them would make
+	// GetOption report an impersonation lifetime when none is configured.
+	// FIXME: separate base scopes from impersonate scopes, then fix this divergence from the upstream
 	return d.impersonateTargetPrincipal != "" ||
-		len(d.impersonateDelegates) > 0 ||
-		len(d.impersonateScopes) > 0
+		len(d.impersonateDelegates) > 0
 }
 
 func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) error {
