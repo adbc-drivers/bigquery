@@ -114,6 +114,12 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// OptionStringQueryLabels accepts a JSON object string mapping label name to value
+	// to attach to the resulting BigQuery query job.
+	OptionStringQueryLabels = "adbc.bigquery.sql.query.labels"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

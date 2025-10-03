@@ -24,6 +24,7 @@ package bigquery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -144,6 +145,12 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionStringQueryLabels:
+		encoded, err := json.Marshal(st.queryConfig.Labels)
+		if err != nil {
+			return "", err
+		}
+		return string(encoded), nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -307,6 +314,15 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		} else {
 			return err
 		}
+	case OptionStringQueryLabels:
+		var labels map[string]string
+		if err := json.Unmarshal([]byte(v), &labels); err != nil {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] parse query labels JSON: %v", err),
+			}
+		}
+		st.queryConfig.Labels = labels
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
