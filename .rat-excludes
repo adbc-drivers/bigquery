@@ -13,7 +13,12 @@
 # limitations under the License.
 
 .github/pull_request_template.md
+.gitmodules
 */go.sum
 */pixi.lock
+*/*.csproj
+*/*.sln
+csharp/src/Extensions
+csharp/test/Apache.Arrow.Adbc.Tests
 go/validation/queries/*/*.json
 go/validation/queries/*/*.sql

@@ -50,9 +50,10 @@ repos:
   - id: check-yaml
   - id: detect-private-key
   - id: end-of-file-fixer
+    exclude: '\.sln$'
   - id: mixed-line-ending
     args: [--fix=lf]
-    exclude: '\.bat$'
+    exclude: '\.(bat|sln)$'
   - id: trailing-whitespace
 
 - repo: git@github.com:adbc-drivers/dev
