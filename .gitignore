@@ -254,3 +254,4 @@ marimo/_lsp/
 __marimo__/
 
 .doit.db
+validation-report.xml
