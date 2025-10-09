@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   test:
-    uses: adbc-drivers/dev/.github/workflows/test.yaml@d64a642595b11dda832aa0d1edf2400aa0cf24c7
+    uses: adbc-drivers/dev/.github/workflows/test.yaml@fbab68dd3804ca071ee3f99dcf1a7161b4598fd4
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
@@ -47,9 +47,10 @@ jobs:
       environment: "BigQuery CI"
       gcloud: true
       release: ${{ github.event_name == 'push' }}
+      subdir: go
 
   validate:
-    uses: adbc-drivers/dev/.github/workflows/validate.yaml@d64a642595b11dda832aa0d1edf2400aa0cf24c7
+    uses: adbc-drivers/dev/.github/workflows/validate.yaml@fbab68dd3804ca071ee3f99dcf1a7161b4598fd4
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
       driverbase_private_key: ${{ secrets.DRIVERBASE_DEPLOY_KEY }}
@@ -61,9 +62,10 @@ jobs:
       driver: bigquery
       environment: "BigQuery CI"
       gcloud: true
+      subdir: go
 
   release:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@d64a642595b11dda832aa0d1edf2400aa0cf24c7
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@fbab68dd3804ca071ee3f99dcf1a7161b4598fd4
     needs:
       - test
       - validate
@@ -72,7 +74,7 @@ jobs:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
 
   release-dry-run:
-    uses: adbc-drivers/dev/.github/workflows/release.yaml@d64a642595b11dda832aa0d1edf2400aa0cf24c7
+    uses: adbc-drivers/dev/.github/workflows/release.yaml@fbab68dd3804ca071ee3f99dcf1a7161b4598fd4
     needs:
       - test
       - validate
@@ -80,5 +82,6 @@ jobs:
     secrets:
       dev_private_key: ${{ secrets.DEV_DEPLOY_KEY }}
     with:
+      driver: bigquery
       dry_run: true
       tag: ${{ inputs.dry_run_tag }}
