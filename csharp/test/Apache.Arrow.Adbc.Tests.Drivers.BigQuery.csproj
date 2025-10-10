@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks Condition="'$(IsWindows)'=='true'">net8.0;net472</TargetFrameworks>
     <TargetFrameworks Condition="'$(TargetFrameworks)'==''">net8.0</TargetFrameworks>
@@ -14,14 +14,6 @@
      </PackageReference>
      <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
      <PackageReference Include="Moq" Version="4.20.72" />
-     <PackageReference Include="OpenTelemetry" Version="1.8.1" />
-     <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.8.1" />
-
-   </ItemGroup>
-    <ItemGroup>
-     <PackageReference Include="Apache.Arrow.Adbc" Version="0.20.0" />
-     <PackageReference Include="Apache.Arrow.Adbc.Client" Version="0.20.0" />
-     <ProjectReference Include="..\src\Apache.Arrow.Adbc.Drivers.BigQuery.csproj" />
    </ItemGroup>
     <ItemGroup>
      <None Update="Resources\BigQueryData.sql">
@@ -32,11 +24,8 @@
      </None>
    </ItemGroup>
    <ItemGroup>
-     <Compile Remove="Apache.Arrow.Adbc.Tests\IArrowArrayExtensionsTests.cs" />
-     <Compile Remove="Apache.Arrow.Adbc.Tests\Client\*.cs" />
-     <Compile Remove="Apache.Arrow.Adbc.Tests\ClientTests.cs" />
-     <Compile Remove="Apache.Arrow.Adbc.Tests\DuckDbFixture.cs" />
-     <Compile Remove="Apache.Arrow.Adbc.Tests\ImportedDuckDbTests.cs" />
-     <Compile Remove="ClientTests.cs" />
+     <ProjectReference Include="..\arrow-adbc\csharp\src\Client\Apache.Arrow.Adbc.Client.csproj" />
+     <ProjectReference Include="..\arrow-adbc\csharp\test\Apache.Arrow.Adbc.Tests\Apache.Arrow.Adbc.Tests.csproj" />
+     <ProjectReference Include="..\src\Apache.Arrow.Adbc.Drivers.BigQuery.csproj" />
    </ItemGroup>
  </Project>

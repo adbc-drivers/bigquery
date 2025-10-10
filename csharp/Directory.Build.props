@@ -36,6 +36,7 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <LangVersion>latest</LangVersion>
     <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(CSharpDir)AdbcFoundry.snk</AssemblyOriginatorKeyFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
