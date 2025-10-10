@@ -2,9 +2,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.4.33403.182
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Apache.Arrow.Adbc.Drivers.BigQuery", "src\Apache.Arrow.Adbc.Drivers.BigQuery.csproj", "{A748041C-EF9A-4E88-B6FB-9F2D6CB79170}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AdbcDrivers.BigQuery", "src\AdbcDrivers.BigQuery.csproj", "{A748041C-EF9A-4E88-B6FB-9F2D6CB79170}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Apache.Arrow.Adbc.Tests.Drivers.BigQuery", "test\Apache.Arrow.Adbc.Tests.Drivers.BigQuery.csproj", "{EA43BB7C-BC00-4701-BDF4-367880C2495C}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AdbcDrivers.BigQuery.Tests", "test\AdbcDrivers.BigQuery.Tests.csproj", "{EA43BB7C-BC00-4701-BDF4-367880C2495C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Apache.Arrow.Adbc", "arrow-adbc\csharp\src\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj", "{8BFC2CBA-D9B9-C719-0617-59A21A7D7DF9}"
 EndProject

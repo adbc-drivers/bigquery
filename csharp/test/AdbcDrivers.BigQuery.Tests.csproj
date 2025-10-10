@@ -26,6 +26,6 @@
    <ItemGroup>
      <ProjectReference Include="..\arrow-adbc\csharp\src\Client\Apache.Arrow.Adbc.Client.csproj" />
      <ProjectReference Include="..\arrow-adbc\csharp\test\Apache.Arrow.Adbc.Tests\Apache.Arrow.Adbc.Tests.csproj" />
-     <ProjectReference Include="..\src\Apache.Arrow.Adbc.Drivers.BigQuery.csproj" />
+     <ProjectReference Include="..\src\AdbcDrivers.BigQuery.csproj" />
    </ItemGroup>
  </Project>
