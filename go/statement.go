@@ -62,6 +62,10 @@ type statement struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	// Wrap failed-query errors with a link to the BigQuery web console job.
+	// Currently option-storage only; see FINDINGS for the TODO.
+	linkFailedJob bool
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -151,6 +155,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 			return "", err
 		}
 		return string(encoded), nil
+	case OptionBoolQueryLinkFailedJob:
+		return strconv.FormatBool(st.linkFailedJob), nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -323,6 +329,12 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.queryConfig.Labels = labels
+	case OptionBoolQueryLinkFailedJob:
+		val, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		st.linkFailedJob = val
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -403,7 +415,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
-	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
+	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st.linkFailedJob)
 	st.params = nil
 	return rr, totalRows, err
 }
@@ -417,7 +429,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 	}
 
 	if st.params == nil {
-		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st.linkFailedJob)
 		if err != nil {
 			return -1, err
 		}
@@ -439,7 +451,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st.linkFailedJob)
 				if err != nil {
 					return -1, err
 				}
