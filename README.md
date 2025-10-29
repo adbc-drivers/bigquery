@@ -30,6 +30,15 @@ Driver Manifests, such as [dbc](https://columnar.tech/dbc).
 
 See [Building](#building) if you would rather build the drivers yourself.
 
+## Usage
+
+See examples for:
+
+- [Go](https://github.com/columnar-tech/adbc-quickstarts/tree/main/go/bigquery)
+- [Python](https://github.com/columnar-tech/adbc-quickstarts/tree/main/python/bigquery)
+- [R](https://github.com/columnar-tech/adbc-quickstarts/tree/main/r/bigquery)
+- [Rust](https://github.com/columnar-tech/adbc-quickstarts/tree/main/rust/bigquery)
+
 ## Building
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
