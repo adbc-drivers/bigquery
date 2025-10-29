@@ -18,7 +18,7 @@ go 1.24.3
 
 require (
 	cloud.google.com/go/auth v0.16.5
-	cloud.google.com/go/bigquery v1.70.0
+	cloud.google.com/go/bigquery v1.72.0
 	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20250915235221-ebe7d7223ee5
 	github.com/apache/arrow-adbc/go/adbc v1.8.0
 	github.com/apache/arrow-go/v18 v18.4.1
@@ -27,13 +27,13 @@ require (
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.31.0
 	golang.org/x/sync v0.17.0
-	google.golang.org/api v0.249.0
+	google.golang.org/api v0.250.0
 )
 
 require (
 	cloud.google.com/go v0.122.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
-	cloud.google.com/go/compute/metadata v0.8.0 // indirect
+	cloud.google.com/go/compute/metadata v0.8.4 // indirect
 	cloud.google.com/go/iam v1.5.2 // indirect
 	github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20250716025443-c34d979de31c // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
