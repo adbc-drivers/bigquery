@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Release
+name: Go
 
-# We have to duplicate this workflow because it has access to the GitHub
-# token, so we only want it active on tag pushes.  Unfortunately that does
-# mean the build/test will happen twice.
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/go.yaml"
+      - "go/**"
   push:
+    branches:
+      - main
     tags:
-      - "bigquery/**"
-  workflow_dispatch:
-    inputs:
-      dry_run_tag:
-        description: "Dry run with this tag"
-        required: true
-        type: string
+      - "go/v**"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -44,7 +44,7 @@ jobs:
       driver: bigquery
       environment: "BigQuery CI"
       gcloud: true
-      release: ${{ github.event_name == 'push' }}
+      release: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
       subdir: go
 
   validate:
@@ -61,18 +61,20 @@ jobs:
 
   release:
     uses: adbc-drivers/dev/.github/workflows/release.yaml@19b7466f3177cf978db8c7a444f8710bd850e66c
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs:
       - test
       - validate
-    if: github.event_name != 'workflow_dispatch'
+    with:
+      subdir: go
 
   release-dry-run:
     uses: adbc-drivers/dev/.github/workflows/release.yaml@19b7466f3177cf978db8c7a444f8710bd850e66c
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     needs:
       - test
       - validate
-    if: github.event_name == 'workflow_dispatch'
     with:
-      driver: bigquery
       dry_run: true
-      tag: ${{ inputs.dry_run_tag }}
+      subdir: go
+      tag: go/v1000.0.0

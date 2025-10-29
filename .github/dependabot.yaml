@@ -27,9 +27,13 @@ updates:
 
   - package-ecosystem: "gomod"
     commit-message:
-      prefix: "chore: "
+      prefix: "chore(go): "
     directory: "/go"
     groups:
+      "cloud.google.com":
+        applies-to: version-updates
+        patterns:
+          - "cloud.google.com/*"
       "golang.org/x":
         applies-to: version-updates
         patterns:
