@@ -51,11 +51,10 @@ $ pixi run make
 
 To run the validation suite, you will first need to build the shared library.
 You will also need to set up a BigQuery instance (see [the validation
-README](./validation/README.md)).  Finally, from the `go/validation/`
-subdirectory:
+README](./go/validation/README.md)).  Finally, from the `go/` subdirectory:
 
 ```shell
-$ pixi run test
+$ pixi run validate
 ```
 
 This will produce a test report, which can be rendered into a documentation

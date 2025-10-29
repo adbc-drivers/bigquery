@@ -28,6 +28,7 @@ updates:
   - package-ecosystem: "gomod"
     commit-message:
       prefix: "chore: "
+    directory: "/go"
     groups:
       "golang.org/x":
         applies-to: version-updates
@@ -39,5 +40,22 @@ updates:
           - "go.opentelemetry.io/otel"
           - "go.opentelemetry.io/otel/*"
     open-pull-requests-limit: 5
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "nuget"
+    commit-message:
+      prefix: "chore(csharp): "
+    directory: "/csharp/"
+    ignore:
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "Microsoft.Bcl.*"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "System.*"
+        update-types:
+          - "version-update:semver-major"
     schedule:
       interval: "weekly"
