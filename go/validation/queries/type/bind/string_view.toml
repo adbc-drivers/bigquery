@@ -12,17 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Dev
+sort-keys = [["res", "ascending"]]
 
-on:
-  pull_request: {}
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-
-jobs:
-  lint:
-    uses: adbc-drivers/dev/.github/workflows/dev.yaml@19b7466f3177cf978db8c7a444f8710bd850e66c
+[tags]
+sql-type-name = "STRING"
