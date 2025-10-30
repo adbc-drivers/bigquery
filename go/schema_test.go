@@ -39,6 +39,7 @@ func (s *SchemaSuite) TestInt64() {
 	s.Equal("ints", field.Name)
 	s.Equal(arrow.INT64, field.Type.ID())
 	s.True(field.Nullable)
+	s.Equal("INTEGER", field.Metadata.ToMap()["BIGQUERY:type"])
 
 	field, err = buildField(&bigquery.FieldSchema{
 		Name:     "ints",
@@ -49,6 +50,7 @@ func (s *SchemaSuite) TestInt64() {
 	s.Equal("ints", field.Name)
 	s.Equal(arrow.INT64, field.Type.ID())
 	s.False(field.Nullable)
+	s.Equal("INTEGER", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestListInt64() {
@@ -62,6 +64,7 @@ func (s *SchemaSuite) TestListInt64() {
 	s.Equal("ints", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.True(field.Nullable)
+	s.Equal("ARRAY<INTEGER>", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestListGeography() {
@@ -83,6 +86,7 @@ func (s *SchemaSuite) TestListGeography() {
 	s.True(ok)
 	s.Equal("geoarrow.wkt", ext)
 	s.True(field.Nullable)
+	s.Equal("ARRAY<GEOGRAPHY>", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestStruct() {
@@ -131,6 +135,7 @@ func (s *SchemaSuite) TestStruct() {
 
 	ext, _ = record.Field(1).Type.(*arrow.ListType).ElemField().Metadata.GetValue("ARROW:extension:name")
 	s.Equal("arrow.json", ext)
+	s.Equal("STRUCT<`geo` GEOGRAPHY, `json` ARRAY<JSON>>", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestStructList() {
@@ -157,6 +162,7 @@ func (s *SchemaSuite) TestStructList() {
 	s.Equal("record", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.True(field.Nullable)
+	s.Equal("ARRAY<STRUCT<`ints` INTEGER>>", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestNumeric() {
@@ -172,6 +178,7 @@ func (s *SchemaSuite) TestNumeric() {
 	s.Equal("decimals", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.True(field.Nullable)
+	s.Equal("ARRAY<NUMERIC>", field.Metadata.ToMap()["BIGQUERY:type"])
 
 	// Ignore precision/scale because in terms of Arrow, we only ever get
 	// back data as decimal128(38, 9).  BigQuery's precision/scale is only
@@ -188,4 +195,5 @@ func (s *SchemaSuite) TestNumeric() {
 	s.Equal("decimals", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.False(field.Nullable)
+	s.Equal("NUMERIC", field.Metadata.ToMap()["BIGQUERY:type"])
 }
