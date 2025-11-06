@@ -88,6 +88,10 @@ func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.Bul
 	pendingFile := chunk.(*bigqueryBulkIngestSink)
 
 	source := bigquery.NewReaderSource(pendingFile.f)
+	source.ParquetOptions = &bigquery.ParquetOptions{
+		// Needed for ARRAY to work
+		EnableListInference: true,
+	}
 	source.SourceFormat = bigquery.Parquet
 
 	var dataset *bigquery.Dataset
@@ -184,6 +188,77 @@ func (bi *bigqueryBulkIngestImpl) Delete(ctx context.Context, chunk driverbase.B
 	return nil
 }
 
+func writeFields(b *strings.Builder, fields []arrow.Field, skipName bool) error {
+	for i, field := range fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+
+		if !skipName {
+			b.WriteString(quoteIdentifier(field.Name))
+		}
+
+		switch field.Type.ID() {
+		case arrow.BINARY, arrow.LARGE_BINARY, arrow.BINARY_VIEW, arrow.FIXED_SIZE_BINARY:
+			b.WriteString(" BYTES")
+		case arrow.BOOL:
+			b.WriteString(" BOOLEAN")
+		case arrow.DATE32:
+			b.WriteString(" DATE")
+		case arrow.DECIMAL128, arrow.DECIMAL256:
+			dec := field.Type.(arrow.DecimalType)
+			fmt.Fprintf(b, "NUMERIC(%d, %d)", dec.GetPrecision(), dec.GetScale())
+		case arrow.FLOAT32:
+			b.WriteString(" FLOAT64")
+		case arrow.FLOAT64:
+			b.WriteString(" FLOAT64")
+		case arrow.INT16, arrow.INT32, arrow.INT64:
+			b.WriteString(" INT64")
+		case arrow.STRING, arrow.LARGE_STRING, arrow.STRING_VIEW:
+			b.WriteString(" STRING")
+		case arrow.TIME32, arrow.TIME64:
+			b.WriteString(" TIME")
+		case arrow.TIMESTAMP:
+			ts := field.Type.(*arrow.TimestampType)
+			if ts.TimeZone != "" {
+				b.WriteString(" TIMESTAMP")
+			} else {
+				b.WriteString(" DATETIME")
+			}
+		case arrow.LIST, arrow.LARGE_LIST, arrow.LIST_VIEW, arrow.FIXED_SIZE_LIST:
+			child := field.Type.(arrow.NestedType).Fields()[0]
+			if child.Type.ID() == arrow.LIST || child.Type.ID() == arrow.LARGE_LIST || child.Type.ID() == arrow.LIST_VIEW || child.Type.ID() == arrow.FIXED_SIZE_LIST {
+				return adbc.Error{
+					Msg:  "[bigquery] nested lists are not supported",
+					Code: adbc.StatusNotImplemented,
+				}
+			}
+
+			b.WriteString(" ARRAY<")
+			if err := writeFields(b, []arrow.Field{child}, true); err != nil {
+				return err
+			}
+			b.WriteString(">")
+		case arrow.STRUCT:
+			b.WriteString(" STRUCT<")
+			if err := writeFields(b, field.Type.(*arrow.StructType).Fields(), false); err != nil {
+				return err
+			}
+			b.WriteString(">")
+		default:
+			return adbc.Error{
+				Msg:  fmt.Sprintf("[bigquery] Unsupported type %s", field.Type),
+				Code: adbc.StatusNotImplemented,
+			}
+		}
+
+		if !field.Nullable {
+			b.WriteString(" NOT NULL")
+		}
+	}
+	return nil
+}
+
 func createTableStatement(options *driverbase.BulkIngestOptions, schema *arrow.Schema, ifTableExists driverbase.BulkIngestTableExistsBehavior, ifTableMissing driverbase.BulkIngestTableMissingBehavior) (string, error) {
 	var b strings.Builder
 
@@ -217,50 +292,8 @@ func createTableStatement(options *driverbase.BulkIngestOptions, schema *arrow.S
 		b.WriteString(quoteIdentifier(options.TableName))
 		b.WriteString(" (")
 
-		for i, field := range schema.Fields() {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-
-			b.WriteString(quoteIdentifier(field.Name))
-
-			switch field.Type.ID() {
-			case arrow.BINARY:
-				b.WriteString(" BYTES")
-			case arrow.BOOL:
-				b.WriteString(" BOOLEAN")
-			case arrow.DATE32:
-				b.WriteString(" DATE")
-			case arrow.DECIMAL128, arrow.DECIMAL256:
-				dec := field.Type.(arrow.DecimalType)
-				b.WriteString(fmt.Sprintf("NUMERIC(%d, %d)", dec.GetPrecision(), dec.GetScale()))
-			case arrow.FLOAT32:
-				b.WriteString(" FLOAT64")
-			case arrow.FLOAT64:
-				b.WriteString(" FLOAT64")
-			case arrow.INT16, arrow.INT32, arrow.INT64:
-				b.WriteString(" INT64")
-			case arrow.STRING:
-				b.WriteString(" STRING")
-			case arrow.TIME32, arrow.TIME64:
-				b.WriteString(" TIME")
-			case arrow.TIMESTAMP:
-				ts := field.Type.(*arrow.TimestampType)
-				if ts.TimeZone != "" {
-					b.WriteString(" TIMESTAMP")
-				} else {
-					b.WriteString(" DATETIME")
-				}
-			default:
-				return "", adbc.Error{
-					Msg:  fmt.Sprintf("[bigquery] Unsupported type %s", field.Type),
-					Code: adbc.StatusNotImplemented,
-				}
-			}
-
-			if !field.Nullable {
-				b.WriteString(" NOT NULL")
-			}
+		if err := writeFields(&b, schema.Fields(), false); err != nil {
+			return "", err
 		}
 
 		b.WriteString(")")

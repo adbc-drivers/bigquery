@@ -23,6 +23,10 @@ def pytest_generate_tests(metafunc) -> None:
 
 class TestQuery(query_tests.TestQuery):
     @utils.retry_rate_limit
+    def test_query(self, driver, conn, query) -> None:
+        super().test_query(driver, conn, query)
+
+    @utils.retry_rate_limit
     def test_execute_schema(self, driver, conn, query) -> None:
         super().test_execute_schema(driver, conn, query)
 

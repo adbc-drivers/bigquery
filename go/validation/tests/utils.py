@@ -35,3 +35,5 @@ def retry_rate_limit(f):
                     raise
             else:
                 break
+
+    return retried
