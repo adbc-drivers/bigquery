@@ -890,6 +890,8 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	field.Nullable = !schema.Required
 	metadata["Type"] = string(schema.Type)
 
+	richSqlType := string(schema.Type)
+
 	if schema.PolicyTags != nil {
 		policyTagList, err := json.Marshal(schema.PolicyTags)
 		if err != nil {
@@ -920,14 +922,21 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		field.Type = arrow.FixedWidthTypes.Timestamp_us
 	case bigquery.RecordFieldType:
 		nestedFields := make([]arrow.Field, len(schema.Schema))
+		nestedRichSqlTypes := make([]string, len(schema.Schema))
 		for i, nestedSchema := range schema.Schema {
 			f, err := buildField(nestedSchema, level+1)
 			if err != nil {
 				return arrow.Field{}, err
 			}
 			nestedFields[i] = f
+
+			fieldRichSqlType, found := f.Metadata.GetValue("BIGQUERY:type")
+			if found {
+				nestedRichSqlTypes[i] = fmt.Sprintf("%s %s", quoteIdentifier(f.Name), fieldRichSqlType)
+			}
 		}
 		structType := arrow.StructOf(nestedFields...)
+		richSqlType = fmt.Sprintf("STRUCT<%s>", strings.Join(nestedRichSqlTypes, ", "))
 		if structType == nil {
 			return arrow.Field{}, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
@@ -1004,7 +1013,11 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 			Nullable: !schema.Required,
 			Metadata: arrow.MetadataFrom(childMetadata),
 		})
+		richSqlType = fmt.Sprintf("ARRAY<%s>", richSqlType)
 	}
+
+	// derive the standard type string from the field
+	metadata["BIGQUERY:type"] = richSqlType
 
 	if level == 0 {
 		metadata["DefaultValueExpression"] = schema.DefaultValueExpression

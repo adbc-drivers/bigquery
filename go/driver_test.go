@@ -403,8 +403,10 @@ func (q *BigQueryQuirks) SampleTableSchemaMetadata(tblName string, dt arrow.Data
 		metadata["Collation"] = ""
 		metadata["MaxLength"] = "0"
 		metadata["Type"] = "STRING"
+		metadata["BIGQUERY:type"] = "STRING"
 	case arrow.INT64:
 		metadata["Type"] = "INTEGER"
+		metadata["BIGQUERY:type"] = "INTEGER"
 	}
 
 	return arrow.MetadataFrom(metadata)
