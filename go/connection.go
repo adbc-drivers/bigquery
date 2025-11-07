@@ -54,6 +54,7 @@ type connectionImpl struct {
 	clientID     string
 	clientSecret string
 	refreshToken string
+	quotaProject string
 
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
@@ -563,6 +564,8 @@ func (c *connectionImpl) GetOption(key string) (string, error) {
 		return c.clientSecret, nil
 	case OptionStringAuthRefreshToken:
 		return c.refreshToken, nil
+	case OptionStringAuthQuotaProject:
+		return c.quotaProject, nil
 	case OptionStringProjectID:
 		return c.catalog, nil
 	case OptionStringDatasetID:
@@ -595,6 +598,8 @@ func (c *connectionImpl) SetOption(key string, value string) error {
 		c.clientSecret = value
 	case OptionStringAuthRefreshToken:
 		c.refreshToken = value
+	case OptionStringAuthQuotaProject:
+		c.quotaProject = value
 	case OptionStringImpersonateTargetPrincipal:
 		c.impersonateTargetPrincipal = value
 	case OptionStringImpersonateDelegates:
@@ -684,6 +689,11 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("[bq] unknown auth type: %s", c.authType),
 		}
+	}
+
+	// Set quota project id if configured
+	if c.quotaProject != "" {
+		authOptions = append(authOptions, option.WithQuotaProject(c.quotaProject))
 	}
 
 	// Then, apply impersonation if configured (as a credential transformation layer)
