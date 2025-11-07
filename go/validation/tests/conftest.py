@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import adbc_drivers_validation.model
 import pytest
@@ -42,5 +42,6 @@ def driver_path(driver: adbc_drivers_validation.model.DriverQuirks) -> str:
         "darwin": "dylib",
     }.get(sys.platform, "so")
     return str(
-        Path(__file__).parent.parent.parent / f"build/libadbc_driver_{driver.name}.{ext}"
+        Path(__file__).parent.parent.parent
+        / f"build/libadbc_driver_{driver.name}.{ext}"
     )
