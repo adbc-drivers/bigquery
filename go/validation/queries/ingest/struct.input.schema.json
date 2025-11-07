@@ -1,0 +1,37 @@
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "idx",
+            "format": "l",
+            "flags": ["nullable"]
+        },
+        {
+            "name": "value",
+            "format": "+s",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "key",
+                    "format": "U",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "num",
+                    "format": "g",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "row",
+                    "format": "g",
+                    "flags": ["nullable"]
+                },
+                {
+                    "name": "active",
+                    "format": "b",
+                    "flags": ["nullable"]
+                }
+            ]
+        }
+    ]
+}
