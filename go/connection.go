@@ -952,8 +952,10 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	case bigquery.DateTimeFieldType:
 		field.Type = &arrow.TimestampType{Unit: arrow.Microsecond}
 	case bigquery.NumericFieldType:
-		// The declared precision/scale aren't really used so be
-		// consistent with queries
+		// While BigQuery tracks precision/scale, in practice the data
+		// only ever has precision 38 and scale 9.  Hardcode those to
+		// be accurate.
+		// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#decimal_types
 		field.Type = &arrow.Decimal128Type{
 			Precision: 38,
 			Scale:     9,
@@ -980,9 +982,10 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		field.Type = arrow.BinaryTypes.String
 		metadata["ARROW:extension:name"] = "geoarrow.wkt"
 	case bigquery.BigNumericFieldType:
+		// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#decimal_types
 		field.Type = &arrow.Decimal256Type{
-			Precision: int32(schema.Precision),
-			Scale:     int32(schema.Scale),
+			Precision: 76,
+			Scale:     38,
 		}
 	case bigquery.JSONFieldType:
 		field.Type = arrow.BinaryTypes.String

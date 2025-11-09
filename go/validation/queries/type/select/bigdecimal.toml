@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+[setup]
+drop = "test_bigdecimal"
+
 [tags]
 show-arrow-type-parameters = true
-sql-type-name = "NUMERIC"
+sql-type-name = "BIGNUMERIC"
