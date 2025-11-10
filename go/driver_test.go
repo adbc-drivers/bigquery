@@ -34,7 +34,7 @@ import (
 	"testing"
 
 	"cloud.google.com/go/bigquery"
-	driver "github.com/adbc-drivers/google/bigquery"
+	driver "github.com/adbc-drivers/bigquery/go"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-adbc/go/adbc/validation"
 	"github.com/apache/arrow-go/v18/arrow"

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-module github.com/adbc-drivers/google/bigquery
+module github.com/adbc-drivers/bigquery/go
 
-go 1.24.3
+go 1.25.0
 
 require (
 	cloud.google.com/go/auth v0.17.0
