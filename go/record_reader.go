@@ -42,6 +42,10 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
+// MetadataKeyBigqueryQueryID is the Arrow schema metadata key under which the
+// driver publishes the BigQuery job ID that produced the result set.
+const MetadataKeyBigqueryQueryID = "BIGQUERY:query_id"
+
 type reader struct {
 	refCount   int64
 	schema     *arrow.Schema
@@ -146,10 +150,13 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		arrowIterator = emptyArrowIterator{iter.Schema}
 	}
 	totalRows := int64(iter.TotalRows)
+	// Publish the job ID on the query so callers can surface it (e.g.
+	// via schema metadata) without reaching for the *bigquery.Job.
+	query.JobID = job.ID()
 	return arrowIterator, js, totalRows, nil
 }
 
-func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatistics *bigquery.JobStatistics, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
+func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatistics *bigquery.JobStatistics, jobID string, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
 	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
 
@@ -165,7 +172,7 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatist
 		return nil, nil, err
 	}
 
-	metadata, err := metadataFromJobStatistics(jobStatistics)
+	metadata, err := metadataFromJobStatistics(jobStatistics, jobID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -189,8 +196,8 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 	return parameters, nil
 }
 
-func makeDryRunReader(js *bigquery.JobStatus) (array.RecordReader, error) {
-	metadata, err := metadataFromJobStatistics(js.Statistics)
+func makeDryRunReader(js *bigquery.JobStatus, jobID string) (array.RecordReader, error) {
+	metadata, err := metadataFromJobStatistics(js.Statistics, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,14 +229,14 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Que
 		return nil, -1, err
 	} else if query.DryRun || arrowIterator == nil {
 		// Dry run queries don't have an arrow iterator, so return an empty reader
-		rdr, err := makeDryRunReader(jobStatus)
+		rdr, err := makeDryRunReader(jobStatus, query.JobID)
 		if err != nil {
 			return nil, -1, err
 		}
 		return rdr, totalRows, nil
 	}
 
-	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, query.JobID, alloc)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -286,7 +293,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			return -1, err
 		} else if arrowIterator == nil {
 			// Dry run
-			rdr, err := makeDryRunReader(jobStatus)
+			rdr, err := makeDryRunReader(jobStatus, query.JobID)
 			if err != nil {
 				return -1, err
 			}
@@ -295,7 +302,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			continue
 		}
 		totalRows = rows
-		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, alloc)
+		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, query.JobID, alloc)
 		if err != nil {
 			return -1, err
 		}
