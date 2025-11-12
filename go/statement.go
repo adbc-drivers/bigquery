@@ -492,7 +492,7 @@ func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
 		fields[i] = f
 	}
 
-	metadata, err := metadataFromJobStatistics(status.Statistics)
+	metadata, err := metadataFromJobStatistics(status.Statistics, job.ID())
 	if err != nil {
 		return nil, err
 	}
