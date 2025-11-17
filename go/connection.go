@@ -795,9 +795,15 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 	case OptionImpersonateTargetPrincipal:
 		c.impersonateTargetPrincipal = value
 	case OptionImpersonateDelegates:
-		c.impersonateDelegates = strings.Split(value, ",")
+		// Guard against strings.Split("", ",") yielding [""], which would look
+		// like one empty delegate/scope rather than none.
+		if value != "" {
+			c.impersonateDelegates = strings.Split(value, ",")
+		}
 	case OptionImpersonateScopes:
-		c.impersonateScopes = strings.Split(value, ",")
+		if value != "" {
+			c.impersonateScopes = strings.Split(value, ",")
+		}
 	case OptionImpersonateLifetime:
 		dur, err := time.ParseDuration(value)
 		if err != nil {
