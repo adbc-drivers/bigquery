@@ -18,11 +18,11 @@
 {{ cross_reference|safe }}
 # Google BigQuery Driver {{ version }}
 
+{{ heading|safe }}
+
 :::{note}
 This project is not associated with Google.
 :::
-
-{{ version_header|safe }}
 
 This driver provides access to [Google BigQuery][bigquery], a data warehouse
 offered by Google Cloud.
@@ -49,3 +49,7 @@ To use the driver:
 {{ footnotes|safe }}
 
 [bigquery]: https://cloud.google.com/bigquery/
+
+## Versions Tested
+
+{{ version_detail|safe }}
