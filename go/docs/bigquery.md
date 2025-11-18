@@ -27,16 +27,41 @@ This project is not associated with Google.
 This driver provides access to [Google BigQuery][bigquery], a data warehouse
 offered by Google Cloud.
 
-## Installation & Quickstart
+## Installation
 
-The driver can be installed with `dbc`.
+The BigQuery driver can be installed with [dbc](https://docs.columnar.tech/dbc):
 
-To use the driver:
+```bash
+dbc install bigquery
+```
 
-1. Authenticate with Google Cloud (e.g. via `gcloud auth application-default
-   login`).
-1. Provide the database options `adbc.bigquery.sql.project_id` and
-   `adbc.bigquery.sql.dataset_id`.
+## Pre-requisites
+
+Using the BigQuery driver requires some setup before you can connect:
+
+1. Create a [Google Cloud account](http://console.cloud.google.com)
+1. Install the [Google Cloud CLI](https://cloud.google.com/cli) (for managing credentials)
+1. Authenticate with Google Cloud
+    - Run `gcloud auth application-default login`
+1. Create, find, or re-use a project and dataset (record these for later)
+
+## Connecting
+
+To connect, replace `my-gcp-project` and `my-gcp-dataset` below with the appropriate values for your situation and run the following:
+
+```python
+from adbc_driver_manager import dbapi
+
+conn = dbapi.connect(
+  driver="bigquery",
+  db_kwargs={
+      "adbc.bigquery.sql.project_id": "my-gcp-project",
+      "adbc.bigquery.sql.dataset_id": "my-gcp-datase"
+  }
+)
+```
+
+Note: The example above is for Python using the [adbc-driver-manager](https://pypi.org/project/adbc-driver-manager) package but the process will be similar for other driver managers.
 
 ## Feature & Type Support
 
