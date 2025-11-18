@@ -43,7 +43,7 @@ Using the BigQuery driver requires some setup before you can connect:
 1. Install the [Google Cloud CLI](https://cloud.google.com/cli) (for managing credentials)
 1. Authenticate with Google Cloud
     - Run `gcloud auth application-default login`
-1. Create, find, or re-use a project and dataset (record these for later)
+1. Create, find, or reuse a project and dataset (record these for later)
 
 ## Connecting
 
