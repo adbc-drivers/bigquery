@@ -71,10 +71,12 @@ Note: The example above is for Python using the [adbc-driver-manager](https://py
 
 {{ types|safe }}
 
+## Previous Versions
+
+To see documentation for previous versions of this driver, see the following:
+
+- [v0.1.1](./v0.1.1.md)
+
 {{ footnotes|safe }}
 
 [bigquery]: https://cloud.google.com/bigquery/
-
-## Versions Tested
-
-{{ version_detail|safe }}
