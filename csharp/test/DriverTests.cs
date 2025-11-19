@@ -1,16 +1,9 @@
 /*
 * Copyright (c) 2025 ADBC Drivers Contributors
 *
-* This file has been modified from its original version, which is
-* under the Apache License:
-*
-* Licensed to the Apache Software Foundation (ASF) under one
-* or more contributor license agreements.  See the NOTICE file
-* distributed with this work for additional information
-* regarding copyright ownership.  The ASF licenses this file
-* to you under the Apache License, Version 2.0 (the
-* "License"); you may not use this file except in compliance
-* with the License.  You may obtain a copy of the License at
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
 *
 *    http://www.apache.org/licenses/LICENSE-2.0
 *
@@ -25,14 +18,17 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Apache.Arrow.Adbc.Drivers.BigQuery;
+using Apache.Arrow;
+using Apache.Arrow.Adbc;
+using Apache.Arrow.Adbc.Tests;
 using Apache.Arrow.Adbc.Tests.Metadata;
 using Apache.Arrow.Adbc.Tests.Xunit;
 using Apache.Arrow.Ipc;
 using Xunit;
 using Xunit.Abstractions;
+using AdbcTests = Apache.Arrow.Adbc.Tests;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     /// <summary>
     /// Class for testing the Snowflake ADBC driver connection tests.
@@ -301,7 +297,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
 
                 QueryResult queryResult = statement.ExecuteQuery();
 
-                Tests.DriverTests.CanExecuteQuery(queryResult, environment.ExpectedResultsCount, environment.Name);
+                AdbcTests.DriverTests.CanExecuteQuery(queryResult, environment.ExpectedResultsCount, environment.Name);
             }
         }
 
@@ -328,7 +324,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
 
                             _outputHelper?.WriteLine($"({i}) {DateTime.Now.Ticks} - {queryResult.RowCount} results for {pq.Query}");
 
-                            Tests.DriverTests.CanExecuteQuery(queryResult, pq.ExpectedResultsCount, environment.Name);
+                            AdbcTests.DriverTests.CanExecuteQuery(queryResult, pq.ExpectedResultsCount, environment.Name);
                         }
                     });
                 });
@@ -402,7 +398,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
                 string combinedQuery = query1 + ";" + query2 + ";";
                 statement.SqlQuery = combinedQuery;
                 QueryResult queryResult = statement.ExecuteQuery();
-                Tests.DriverTests.CanExecuteQuery(queryResult, 61900, environment.Name);
+                AdbcTests.DriverTests.CanExecuteQuery(queryResult, 61900, environment.Name);
             }
         }
     }

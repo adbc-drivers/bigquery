@@ -1,16 +1,9 @@
 /*
 * Copyright (c) 2025 ADBC Drivers Contributors
 *
-* This file has been modified from its original version, which is
-* under the Apache License:
-*
-* Licensed to the Apache Software Foundation (ASF) under one
-* or more contributor license agreements.  See the NOTICE file
-* distributed with this work for additional information
-* regarding copyright ownership.  The ASF licenses this file
-* to you under the Apache License, Version 2.0 (the
-* "License"); you may not use this file except in compliance
-* with the License.  You may obtain a copy of the License at
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
 *
 *    http://www.apache.org/licenses/LICENSE-2.0
 *
@@ -23,8 +16,9 @@
 
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Apache.Arrow.Adbc.Tests;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     /// <summary>
     /// Configuration settings for working with BigQuery.
@@ -90,6 +84,9 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         [JsonPropertyName("includePublicProjectId")]
         public bool IncludePublicProjectId { get; set; } = false;
 
+        [JsonPropertyName("largeDecimalAsString")]
+        public bool LargeDecimalAsString { get; set; } = true;
+
         /// <summary>
         /// Sets the query timeout (in minutes).
         /// </summary>
@@ -125,6 +122,9 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
 
         [JsonPropertyName("evaluationKind")]
         public string EvaluationKind { get; set; } = string.Empty;
+
+        [JsonPropertyName("location")]
+        public string? ClientLocation { get; set; }
 
         /// <summary>
         /// How structs should be handled by the ADO.NET client for this environment.

@@ -2,16 +2,9 @@
 
  Copyright (c) 2025 ADBC Drivers Contributors
 
- This file has been modified from its original version, which is
- under the Apache License:
-
- Licensed to the Apache Software Foundation (ASF) under one
- or more contributor license agreements.  See the NOTICE file
- distributed with this work for additional information
- regarding copyright ownership.  The ASF licenses this file
- to you under the Apache License, Version 2.0 (the
- "License"); you may not use this file except in compliance
- with the License.  You may obtain a copy of the License at
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
 
@@ -29,7 +22,7 @@
 ![Implementation: C#](https://img.shields.io/badge/language-C%23-violet?style=flat-square)
 ![Status: Beta](https://img.shields.io/badge/status-beta-yellow?style=flat-square)
 
-[![NuGet: Apache.Arrow.Adbc.Drivers.BigQuery](https://img.shields.io/nuget/v/Apache.Arrow.Adbc.Drivers.BigQuery)](https://www.nuget.org/packages/Apache.Arrow.Adbc.Drivers.BigQuery)
+[![NuGet: AdbcDrivers.BigQuery](https://img.shields.io/nuget/v/Apache.Arrow.Adbc.Drivers.BigQuery)](https://www.nuget.org/packages/Apache.Arrow.Adbc.Drivers.BigQuery)
 
 The BigQuery ADBC driver wraps a [BigQueryClient](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.V2/latest/Google.Cloud.BigQuery.V2.BigQueryClient) object for working with [Google BigQuery](https://cloud.google.com/bigquery/) data.
 
@@ -210,3 +203,34 @@ Some environments may also require:
 - [Running jobs programmatically | BigQuery | Google Cloud](https://cloud.google.com/bigquery/docs/running-jobs)
 - [Create datasets | BigQuery | Google Cloud](https://cloud.google.com/bigquery/docs/datasets#required_permissions)
 - [Use the BigQuery Storage Read API to read table data |  Google Cloud](https://cloud.google.com/bigquery/docs/reference/storage/#permissions)
+
+## Tracing
+
+### Tracing Exporters
+
+To enable tracing messages to be observed, a tracing exporter needs to be activated.
+Use either the environment variable `OTEL_TRACES_EXPORTER` or the parameter `adbc.traces.exporter` to select one of the
+supported exporters. The parameter has precedence over the environment variable. The parameter must be set before
+the connection is initialized.
+
+The following exporters are supported:
+
+| Exporter | Description |
+| --- | --- |
+| `adbcfile` | Exports traces to rotating files in a folder. |
+
+#### File Exporter (adbcfile)
+
+Rotating trace files are written to a folder. The file names are created with the following pattern:
+`apache.arrow.adbc.drivers.bigquery-<YYYY-MM-DD-HH-mm-ss-fff>-<process-id>.log`.
+
+The folder used depends on the platform.
+
+| Platform | Folder |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%/Apache.Arrow.Adbc/Traces` |
+| macOS   | `$HOME/Library/Application Support/Apache.Arrow.Adbc/Traces` |
+| Linux   | `$HOME/.local/share/Apache.Arrow.Adbc/Traces` |
+
+By default, up to 999 files of maximum size 1024 KB are written to
+the trace folder.

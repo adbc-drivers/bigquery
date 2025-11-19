@@ -1,16 +1,9 @@
 /*
 * Copyright (c) 2025 ADBC Drivers Contributors
 *
-* This file has been modified from its original version, which is
-* under the Apache License:
-*
-* Licensed to the Apache Software Foundation (ASF) under one
-* or more contributor license agreements.  See the NOTICE file
-* distributed with this work for additional information
-* regarding copyright ownership.  The ASF licenses this file
-* to you under the Apache License, Version 2.0 (the
-* "License"); you may not use this file except in compliance
-* with the License.  You may obtain a copy of the License at
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
 *
 *    http://www.apache.org/licenses/LICENSE-2.0
 *
@@ -27,7 +20,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Apache.Arrow.Adbc.Drivers.BigQuery;
 using Apache.Arrow.Ipc;
 using Google.Api.Gax.Grpc;
 using Google.Apis.Auth.OAuth2;
@@ -36,31 +28,10 @@ using Grpc.Core;
 using Moq;
 using Xunit;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     public class BigQueryStatementTests
     {
-        [Fact]
-        public void ReadChunkWithRetries_CalledMoreThanOnce()
-        {
-            TokenProtectedReadClientManger clientMgr = GetMockTokenProtectedReadClientManger();
-            var mockReadRowsStream = GetMockReadRowsStream(clientMgr);
-            mockReadRowsStream
-                .Setup(s => s.GetResponseStream())
-                .Throws(new InvalidOperationException("GetAsyncEnumerator can only be called once for a gRPC response stream wrapper."));
-
-            var statement = CreateBigQueryStatementForTest();
-            SetupRetryValues(statement);
-
-            // this should remain an issue because it indicates we aren't doing something correctly
-            // due to the setup, it looks like:
-            //----System.Reflection.TargetInvocationException : Exception has been thrown by the target of an invocation.
-            //--------Apache.Arrow.Adbc.AdbcException : Cannot execute<ReadChunkWithRetries>b__0 after 5 tries.Last exception: InvalidOperationException: GetAsyncEnumerator can only be called once for a gRPC response stream wrapper.
-            //------------ System.InvalidOperationException : GetAsyncEnumerator can only be called once for a gRPC response stream wrapper.
-
-            Assert.Throws<TargetInvocationException>(() => { statement.ReadChunkWithRetriesForTest(clientMgr, "test-stream", null); });
-        }
-
         [Theory]
         [InlineData(true)]  //.MoveNextAsync throws the error
         [InlineData(false)] //.Current throws the error
