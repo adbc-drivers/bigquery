@@ -55,8 +55,8 @@ Components:
 - Host: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`)
 - Port: TCP port (optional, defaults to 443)
 - ProjectID: Google Cloud Project ID (required)
-- OAuthType: Authentication type number (required, must be first query parameter)
-  - `0` - Application Default Credentials
+- OAuthType: Authentication type number (optional, defaults to `0`)
+  - `0` - Application Default Credentials (default)
   - `1` - Service Account JSON File
   - `2` - Service Account JSON String
   - `3` - User Authentication (OAuth)
@@ -68,6 +68,7 @@ Reserved characters in URI elements must be URI-encoded. For example, `@` become
 :::
 
 Examples:
+- bigquery:///my-project-123 (uses Application Default Credentials)
 - bigquery://bigquery.googleapis.com/my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json
 - bigquery:///my-project-123?OAuthType=3&AuthClientId=123.apps.googleusercontent.com&AuthClientSecret=secret&AuthRefreshToken=token
 - bigquery://bigquery.googleapis.com/my-project-123?OAuthType=0&DatasetId=analytics&Location=US
