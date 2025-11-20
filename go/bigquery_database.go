@@ -25,6 +25,8 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -145,6 +147,18 @@ func (d *databaseImpl) hasImpersonationOptions() bool {
 
 func (d *databaseImpl) SetOption(key string, value string) error {
 	switch key {
+	case "uri", "url":
+		params, err := ParseBigQueryURIToParams(value)
+		if err != nil {
+			return err
+		}
+		// Apply all parsed parameters
+		for paramKey, paramValue := range params {
+			if err := d.SetOption(paramKey, paramValue); err != nil {
+				return err
+			}
+		}
+		return nil
 	case OptionStringAuthType:
 		switch value {
 		case OptionValueAuthTypeDefault,
@@ -196,4 +210,157 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		return d.DatabaseImplBase.SetOption(key, value)
 	}
 	return nil
+}
+
+// ParseBigQueryURIToParams parses a BigQuery URI and returns the extracted parameters
+func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
+	if uri == "" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] URI cannot be empty",
+		}
+	}
+
+	// Parse the URI
+	parsedURI, err := url.Parse(uri)
+	if err != nil {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid BigQuery URI format: %v", err),
+		}
+	}
+
+	// Validate scheme
+	if parsedURI.Scheme != "bigquery" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid BigQuery URI scheme: expected 'bigquery', got '%s'", parsedURI.Scheme),
+		}
+	}
+
+	// Extract project ID from path
+	projectID := strings.TrimPrefix(parsedURI.Path, "/")
+	if projectID == "" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] project ID is required in URI path",
+		}
+	}
+
+	params := make(map[string]string)
+	params[OptionStringProjectID] = projectID
+
+	// Parse query parameters
+	queryParams := parsedURI.Query()
+
+	// OAuthType is required
+	oauthTypeStr := queryParams.Get("OAuthType")
+	if oauthTypeStr == "" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] OAuthType parameter is required",
+		}
+	}
+
+	oauthType, err := strconv.Atoi(oauthTypeStr)
+	if err != nil {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %s", oauthTypeStr),
+		}
+	}
+
+	// Map OAuthType to auth type value
+	switch oauthType {
+	case 0:
+		params[OptionStringAuthType] = OptionValueAuthTypeAppDefaultCredentials
+	case 1:
+		params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialFile
+		// Require AuthCredentials for service account file
+		authCredentials := queryParams.Get("AuthCredentials")
+		if authCredentials == "" {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  "[bq] AuthCredentials required for service account authentication",
+			}
+		}
+		// URL decode the credentials
+		decodedCreds, err := url.QueryUnescape(authCredentials)
+		if err != nil {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+			}
+		}
+		params[OptionStringAuthCredentials] = decodedCreds
+	case 2:
+		params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialString
+		// Require AuthCredentials for service account string
+		authCredentials := queryParams.Get("AuthCredentials")
+		if authCredentials == "" {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  "[bq] AuthCredentials required for service account authentication",
+			}
+		}
+		// URL decode the credentials
+		decodedCreds, err := url.QueryUnescape(authCredentials)
+		if err != nil {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+			}
+		}
+		params[OptionStringAuthCredentials] = decodedCreds
+	case 3:
+		params[OptionStringAuthType] = OptionValueAuthTypeUserAuthentication
+		// Require OAuth credentials
+		clientID := queryParams.Get("AuthClientId")
+		clientSecret := queryParams.Get("AuthClientSecret")
+		refreshToken := queryParams.Get("AuthRefreshToken")
+		if clientID == "" || clientSecret == "" || refreshToken == "" {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  "[bq] AuthClientId, AuthClientSecret and AuthRefreshToken required for OAuth authentication",
+			}
+		}
+		params[OptionStringAuthClientID] = clientID
+		params[OptionStringAuthClientSecret] = clientSecret
+		params[OptionStringAuthRefreshToken] = refreshToken
+	case 4:
+		params[OptionStringAuthType] = OptionValueAuthTypeDefault
+	default:
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %d", oauthType),
+		}
+	}
+
+	// Optional parameters
+	if datasetID := queryParams.Get("DatasetId"); datasetID != "" {
+		params[OptionStringDatasetID] = datasetID
+	}
+
+	if location := queryParams.Get("Location"); location != "" {
+		params[OptionStringLocation] = location
+	}
+
+	if tableID := queryParams.Get("TableId"); tableID != "" {
+		params[OptionStringTableID] = tableID
+	}
+
+	if quotaProject := queryParams.Get("QuotaProject"); quotaProject != "" {
+		params[OptionStringAuthQuotaProject] = quotaProject
+	}
+
+	// // Query-specific options
+	// if resultBufferSize := queryParams.Get("ResultBufferSize"); resultBufferSize != "" {
+	// 	params[OptionStringQueryResultBufferSize] = resultBufferSize
+	// }
+
+	// if prefetchConcurrency := queryParams.Get("PrefetchConcurrency"); prefetchConcurrency != "" {
+	// 	params[OptionStringQueryPrefetchConcurrency] = prefetchConcurrency
+	// }
+
+	return params, nil
 }

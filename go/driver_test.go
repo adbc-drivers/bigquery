@@ -45,6 +45,8 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -1657,4 +1659,206 @@ func (s *BigQueryTestSuite) TearDownSuite() {
 		s.NoError(s.db.Close())
 	}
 	s.mem.AssertSize(s.T(), 0)
+}
+
+// TestBigQueryURIParsing tests BigQuery URI parsing functionality
+func TestBigQueryURIParsing(t *testing.T) {
+	tests := []struct {
+		name                 string
+		uri                  string
+		expectedProjectID    string
+		expectedDatasetID    string
+		expectedAuthType     string
+		expectedCredentials  string
+		expectedClientID     string
+		expectedClientSecret string
+		expectedRefreshToken string
+		expectedLocation     string
+		shouldError          bool
+		errorContains        string
+	}{
+		// Application Default Credentials
+		{
+			name:              "application default credentials basic",
+			uri:               "bigquery:///my-project-123?OAuthType=0",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+		},
+		{
+			name:              "adc with dataset and location",
+			uri:               "bigquery:///my-project-123?OAuthType=0&DatasetId=test_dataset&Location=EU",
+			expectedProjectID: "my-project-123",
+			expectedDatasetID: "test_dataset",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			expectedLocation:  "EU",
+		},
+
+		// Service Account JSON File
+		{
+			name:                "service account json file",
+			uri:                 "bigquery://bigquery.googleapis.com/my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json",
+			expectedProjectID:   "my-project-123",
+			expectedAuthType:    driver.OptionValueAuthTypeJSONCredentialFile,
+			expectedCredentials: "/path/to/key.json",
+		},
+		{
+			name:                "service account with dataset",
+			uri:                 "bigquery:///my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json&DatasetId=prod",
+			expectedProjectID:   "my-project-123",
+			expectedDatasetID:   "prod",
+			expectedAuthType:    driver.OptionValueAuthTypeJSONCredentialFile,
+			expectedCredentials: "/path/to/key.json",
+		},
+
+		// Service Account JSON String
+		{
+			name:                "service account json string",
+			uri:                 "bigquery:///my-project-123?OAuthType=2&AuthCredentials=%7B%22type%22%3A%22service_account%22%7D",
+			expectedProjectID:   "my-project-123",
+			expectedAuthType:    driver.OptionValueAuthTypeJSONCredentialString,
+			expectedCredentials: `{"type":"service_account"}`,
+		},
+
+		// User OAuth
+		{
+			name:                 "user oauth authentication",
+			uri:                  "bigquery:///my-project-123?OAuthType=3&AuthClientId=client_id&AuthClientSecret=secret&AuthRefreshToken=token",
+			expectedProjectID:    "my-project-123",
+			expectedAuthType:     driver.OptionValueAuthTypeUserAuthentication,
+			expectedClientID:     "client_id",
+			expectedClientSecret: "secret",
+			expectedRefreshToken: "token",
+		},
+
+		// Default Auth
+		{
+			name:              "default auth type",
+			uri:               "bigquery:///my-project-123?OAuthType=4",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeDefault,
+		},
+
+		// Custom host and port
+		{
+			name:              "custom endpoint",
+			uri:               "bigquery://custom-endpoint.googleapis.com:443/my-project-123?OAuthType=0",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+		},
+
+		// Complex parameter combinations
+		{
+			name:              "multiple parameters",
+			uri:               "bigquery:///my-project-123?OAuthType=0&DatasetId=analytics&Location=US",
+			expectedProjectID: "my-project-123",
+			expectedDatasetID: "analytics",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			expectedLocation:  "US",
+		},
+
+		// Error cases
+		{
+			name:          "missing project id",
+			uri:           "bigquery:///?OAuthType=0",
+			shouldError:   true,
+			errorContains: "project ID is required in URI path",
+		},
+		{
+			name:          "missing oauth type",
+			uri:           "bigquery:///my-project-123",
+			shouldError:   true,
+			errorContains: "OAuthType parameter is required",
+		},
+		{
+			name:          "invalid oauth type",
+			uri:           "bigquery:///my-project-123?OAuthType=999",
+			shouldError:   true,
+			errorContains: "invalid OAuthType value",
+		},
+		{
+			name:          "missing auth credentials for service account file",
+			uri:           "bigquery:///my-project-123?OAuthType=1",
+			shouldError:   true,
+			errorContains: "AuthCredentials required for service account authentication",
+		},
+		{
+			name:          "missing auth credentials for service account string",
+			uri:           "bigquery:///my-project-123?OAuthType=2",
+			shouldError:   true,
+			errorContains: "AuthCredentials required for service account authentication",
+		},
+		{
+			name:          "missing oauth credentials",
+			uri:           "bigquery:///my-project-123?OAuthType=3&AuthClientId=client",
+			shouldError:   true,
+			errorContains: "AuthClientId, AuthClientSecret and AuthRefreshToken required for OAuth authentication",
+		},
+		{
+			name:          "invalid scheme",
+			uri:           "mysql://localhost/db",
+			shouldError:   true,
+			errorContains: "invalid BigQuery URI scheme",
+		},
+		{
+			name:          "malformed uri",
+			uri:           "bigquery://[invalid",
+			shouldError:   true,
+			errorContains: "invalid BigQuery URI format",
+		},
+		{
+			name:          "empty project id",
+			uri:           "bigquery:///?OAuthType=0",
+			shouldError:   true,
+			errorContains: "project ID is required in URI path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test the URI parsing function directly
+			params, err := driver.ParseBigQueryURIToParams(tt.uri)
+
+			if tt.shouldError {
+				require.Error(t, err, "expected error but got none")
+				assert.Contains(t, err.Error(), tt.errorContains, "error message should contain expected text")
+				return
+			}
+
+			require.NoError(t, err, "unexpected error during URI parsing")
+			require.NotNil(t, params, "params should not be nil")
+
+			// Verify expected parameters
+			if tt.expectedProjectID != "" {
+				assert.Equal(t, tt.expectedProjectID, params[driver.OptionStringProjectID], "project ID mismatch")
+			}
+
+			if tt.expectedDatasetID != "" {
+				assert.Equal(t, tt.expectedDatasetID, params[driver.OptionStringDatasetID], "dataset ID mismatch")
+			}
+
+			if tt.expectedAuthType != "" {
+				assert.Equal(t, tt.expectedAuthType, params[driver.OptionStringAuthType], "auth type mismatch")
+			}
+
+			if tt.expectedCredentials != "" {
+				assert.Equal(t, tt.expectedCredentials, params[driver.OptionStringAuthCredentials], "credentials mismatch")
+			}
+
+			if tt.expectedClientID != "" {
+				assert.Equal(t, tt.expectedClientID, params[driver.OptionStringAuthClientID], "client ID mismatch")
+			}
+
+			if tt.expectedClientSecret != "" {
+				assert.Equal(t, tt.expectedClientSecret, params[driver.OptionStringAuthClientSecret], "client secret mismatch")
+			}
+
+			if tt.expectedRefreshToken != "" {
+				assert.Equal(t, tt.expectedRefreshToken, params[driver.OptionStringAuthRefreshToken], "refresh token mismatch")
+			}
+
+			if tt.expectedLocation != "" {
+				assert.Equal(t, tt.expectedLocation, params[driver.OptionStringLocation], "location mismatch")
+			}
+		})
+	}
 }
