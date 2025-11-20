@@ -51,6 +51,7 @@ bigquery://[Host]:[Port]/ProjectID?OAuthType=[AuthValue]&[Key]=[Value]&[Key]=[Va
 The format follows a similar approach to the [Simba BigQuery JDBC Connection String Format](https://storage.googleapis.com/simba-bq-release/jdbc/Simba%20Google%20BigQuery%20JDBC%20Connector%20Install%20and%20Configuration%20Guide_1.6.3.1004.pdf).
 
 Components:
+
 - Scheme: `bigquery://` (required)
 - Host: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`)
 - Port: TCP port (optional, defaults to 443)
