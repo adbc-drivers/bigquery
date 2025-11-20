@@ -250,117 +250,133 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	params := make(map[string]string)
 	params[OptionStringProjectID] = projectID
 
+	// Parameter mapping - allows short names in URI to map to full option names
+	parameterMap := map[string]string{
+		"DatasetId":    OptionStringDatasetID,
+		"Location":     OptionStringLocation,
+		"TableId":      OptionStringTableID,
+		"QuotaProject": OptionStringAuthQuotaProject,
+
+		"ImpersonateTargetPrincipal": OptionStringImpersonateTargetPrincipal,
+		"ImpersonateDelegates":       OptionStringImpersonateDelegates,
+		"ImpersonateScopes":          OptionStringImpersonateScopes,
+		"ImpersonateLifetime":        OptionStringImpersonateLifetime,
+
+		// Auth parameters (handled by OAuthType switch)
+		"AuthCredentials":  OptionStringAuthCredentials,
+		"AuthClientId":     OptionStringAuthClientID,
+		"AuthClientSecret": OptionStringAuthClientSecret,
+		"AuthRefreshToken": OptionStringAuthRefreshToken,
+	}
+
 	// Parse query parameters
 	queryParams := parsedURI.Query()
 
-	// OAuthType is required
+	// OAuthType is optional, defaults to Application Default Credentials
 	oauthTypeStr := queryParams.Get("OAuthType")
-	if oauthTypeStr == "" {
-		return nil, adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  "[bq] OAuthType parameter is required",
-		}
-	}
-
-	oauthType, err := strconv.Atoi(oauthTypeStr)
-	if err != nil {
-		return nil, adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %s", oauthTypeStr),
-		}
-	}
-
-	// Map OAuthType to auth type value
-	switch oauthType {
-	case 0:
-		params[OptionStringAuthType] = OptionValueAuthTypeAppDefaultCredentials
-	case 1:
-		params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialFile
-		// Require AuthCredentials for service account file
-		authCredentials := queryParams.Get("AuthCredentials")
-		if authCredentials == "" {
-			return nil, adbc.Error{
-				Code: adbc.StatusInvalidArgument,
-				Msg:  "[bq] AuthCredentials required for service account authentication",
-			}
-		}
-		// URL decode the credentials
-		decodedCreds, err := url.QueryUnescape(authCredentials)
+	if oauthTypeStr != "" {
+		// Only process OAuthType if it's explicitly provided
+		oauthType, err := strconv.Atoi(oauthTypeStr)
 		if err != nil {
 			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+				Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %s", oauthTypeStr),
 			}
 		}
-		params[OptionStringAuthCredentials] = decodedCreds
-	case 2:
-		params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialString
-		// Require AuthCredentials for service account string
-		authCredentials := queryParams.Get("AuthCredentials")
-		if authCredentials == "" {
+
+		// Map OAuthType to auth type value
+		switch oauthType {
+		case 0:
+			params[OptionStringAuthType] = OptionValueAuthTypeAppDefaultCredentials
+		case 1:
+			params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialFile
+			// Require AuthCredentials for service account file
+			if authCredentials := queryParams.Get("AuthCredentials"); authCredentials != "" {
+				// URL decode the credentials
+				if decodedCreds, err := url.QueryUnescape(authCredentials); err != nil {
+					return nil, adbc.Error{
+						Code: adbc.StatusInvalidArgument,
+						Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+					}
+				} else {
+					if optionName, exists := parameterMap["AuthCredentials"]; exists {
+						params[optionName] = decodedCreds
+					}
+				}
+			} else {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  "[bq] AuthCredentials required for service account authentication",
+				}
+			}
+		case 2:
+			params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialString
+			// Require AuthCredentials for service account string
+			if authCredentials := queryParams.Get("AuthCredentials"); authCredentials != "" {
+				// URL decode the credentials
+				if decodedCreds, err := url.QueryUnescape(authCredentials); err != nil {
+					return nil, adbc.Error{
+						Code: adbc.StatusInvalidArgument,
+						Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+					}
+				} else {
+					if optionName, exists := parameterMap["AuthCredentials"]; exists {
+						params[optionName] = decodedCreds
+					}
+				}
+			} else {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  "[bq] AuthCredentials required for service account authentication",
+				}
+			}
+		case 3:
+			params[OptionStringAuthType] = OptionValueAuthTypeUserAuthentication
+			// Require OAuth credentials - use parameter map
+			requiredAuthParams := []string{"AuthClientId", "AuthClientSecret", "AuthRefreshToken"}
+			for _, paramName := range requiredAuthParams {
+				value := queryParams.Get(paramName)
+				if value == "" {
+					return nil, adbc.Error{
+						Code: adbc.StatusInvalidArgument,
+						Msg:  fmt.Sprintf("[bq] %s required for OAuth authentication", paramName),
+					}
+				}
+				if optionName, exists := parameterMap[paramName]; exists {
+					params[optionName] = value
+				}
+			}
+		case 4:
+			params[OptionStringAuthType] = OptionValueAuthTypeDefault
+		default:
 			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  "[bq] AuthCredentials required for service account authentication",
+				Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %d", oauthType),
 			}
 		}
-		// URL decode the credentials
-		decodedCreds, err := url.QueryUnescape(authCredentials)
-		if err != nil {
+	}
+	// When OAuthType is not provided, don't set authType at all
+	// This leaves it as empty string, which triggers ADC in newClient()
+
+	// Process all other query parameters using the mapping
+	for paramName, paramValues := range queryParams {
+		if paramName == "OAuthType" ||
+			paramName == "AuthCredentials" ||
+			paramName == "AuthClientId" ||
+			paramName == "AuthClientSecret" ||
+			paramName == "AuthRefreshToken" {
+			continue // Already processed by OAuthType switch
+		}
+
+		if optionName, exists := parameterMap[paramName]; exists {
+			params[optionName] = paramValues[0]
+		} else {
 			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+				Msg:  fmt.Sprintf("[bq] unknown parameter '%s' in URI", paramName),
 			}
 		}
-		params[OptionStringAuthCredentials] = decodedCreds
-	case 3:
-		params[OptionStringAuthType] = OptionValueAuthTypeUserAuthentication
-		// Require OAuth credentials
-		clientID := queryParams.Get("AuthClientId")
-		clientSecret := queryParams.Get("AuthClientSecret")
-		refreshToken := queryParams.Get("AuthRefreshToken")
-		if clientID == "" || clientSecret == "" || refreshToken == "" {
-			return nil, adbc.Error{
-				Code: adbc.StatusInvalidArgument,
-				Msg:  "[bq] AuthClientId, AuthClientSecret and AuthRefreshToken required for OAuth authentication",
-			}
-		}
-		params[OptionStringAuthClientID] = clientID
-		params[OptionStringAuthClientSecret] = clientSecret
-		params[OptionStringAuthRefreshToken] = refreshToken
-	case 4:
-		params[OptionStringAuthType] = OptionValueAuthTypeDefault
-	default:
-		return nil, adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %d", oauthType),
-		}
 	}
-
-	// Optional parameters
-	if datasetID := queryParams.Get("DatasetId"); datasetID != "" {
-		params[OptionStringDatasetID] = datasetID
-	}
-
-	if location := queryParams.Get("Location"); location != "" {
-		params[OptionStringLocation] = location
-	}
-
-	if tableID := queryParams.Get("TableId"); tableID != "" {
-		params[OptionStringTableID] = tableID
-	}
-
-	if quotaProject := queryParams.Get("QuotaProject"); quotaProject != "" {
-		params[OptionStringAuthQuotaProject] = quotaProject
-	}
-
-	// // Query-specific options
-	// if resultBufferSize := queryParams.Get("ResultBufferSize"); resultBufferSize != "" {
-	// 	params[OptionStringQueryResultBufferSize] = resultBufferSize
-	// }
-
-	// if prefetchConcurrency := queryParams.Get("PrefetchConcurrency"); prefetchConcurrency != "" {
-	// 	params[OptionStringQueryPrefetchConcurrency] = prefetchConcurrency
-	// }
 
 	return params, nil
 }

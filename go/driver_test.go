@@ -1738,6 +1738,29 @@ func TestBigQueryURIParsing(t *testing.T) {
 			expectedAuthType:  driver.OptionValueAuthTypeDefault,
 		},
 
+		// Default behavior (no OAuthType specified)
+		{
+			name:              "minimal uri with default auth",
+			uri:               "bigquery:///my-project-123",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  "", // Empty string triggers default ADC behavior
+		},
+		{
+			name:              "default auth with dataset",
+			uri:               "bigquery:///my-project-123?DatasetId=analytics",
+			expectedProjectID: "my-project-123",
+			expectedDatasetID: "analytics",
+			expectedAuthType:  "", // Empty string triggers default ADC behavior
+		},
+		{
+			name:              "default auth with multiple params",
+			uri:               "bigquery:///my-project-123?DatasetId=test&Location=EU",
+			expectedProjectID: "my-project-123",
+			expectedDatasetID: "test",
+			expectedAuthType:  "", // Empty string triggers default ADC behavior
+			expectedLocation:  "EU",
+		},
+
 		// Custom host and port
 		{
 			name:              "custom endpoint",
@@ -1762,12 +1785,6 @@ func TestBigQueryURIParsing(t *testing.T) {
 			uri:           "bigquery:///?OAuthType=0",
 			shouldError:   true,
 			errorContains: "project ID is required in URI path",
-		},
-		{
-			name:          "missing oauth type",
-			uri:           "bigquery:///my-project-123",
-			shouldError:   true,
-			errorContains: "OAuthType parameter is required",
 		},
 		{
 			name:          "invalid oauth type",
@@ -1819,13 +1836,11 @@ func TestBigQueryURIParsing(t *testing.T) {
 			params, err := driver.ParseBigQueryURIToParams(tt.uri)
 
 			if tt.shouldError {
-				require.Error(t, err, "expected error but got none")
-				assert.Contains(t, err.Error(), tt.errorContains, "error message should contain expected text")
+				require.ErrorContains(t, err, tt.errorContains)
 				return
 			}
 
 			require.NoError(t, err, "unexpected error during URI parsing")
-			require.NotNil(t, params, "params should not be nil")
 
 			// Verify expected parameters
 			if tt.expectedProjectID != "" {

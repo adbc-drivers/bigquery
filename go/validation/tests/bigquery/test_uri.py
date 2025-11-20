@@ -37,6 +37,24 @@ def test_application_default_credentials_uri_parsing(
 
 
 @pytest.mark.feature(group="Configuration", name="URI Parsing")
+def test_default_oauth_type_uri_parsing(
+    driver_path: str,
+    bigquery_project: str,
+    bigquery_dataset: str,
+) -> None:
+    """Test that URI without OAuthType defaults to Application Default Credentials."""
+    uri = f"bigquery:///{bigquery_project}?DatasetId={bigquery_dataset}"
+
+    # This should parse the URI successfully and default to ADC
+    # Authentication errors are expected and fine
+    with adbc_driver_manager.dbapi.connect(
+        driver=driver_path,
+        db_kwargs={"uri": uri}
+    ):
+        pass
+
+
+@pytest.mark.feature(group="Configuration", name="URI Parsing")
 def test_service_account_file_uri_parsing(
     driver_path: str,
     bigquery_project: str,
@@ -158,21 +176,20 @@ def test_missing_project_id_uri_error(
 
 
 @pytest.mark.feature(group="Configuration", name="URI Parsing")
-def test_missing_oauth_type_uri_error(
+def test_minimal_uri_parsing(
     driver_path: str,
+    bigquery_project: str,
 ) -> None:
-    """Test that missing OAuthType in URI raises error during parsing."""
-    uri = "bigquery:///my-project-123"
+    """Test that minimal URI (project only) works with default authentication."""
+    uri = f"bigquery:///{bigquery_project}"
 
-    with pytest.raises(
-        adbc_driver_manager.dbapi.ProgrammingError,
-        match="OAuthType parameter is required",
+    # This should parse successfully and use Application Default Credentials
+    # Authentication errors are expected and fine
+    with adbc_driver_manager.dbapi.connect(
+        driver=driver_path,
+        db_kwargs={"uri": uri},
     ):
-        with adbc_driver_manager.dbapi.connect(
-            driver=driver_path,
-            db_kwargs={"uri": uri},
-        ):
-            pass
+        pass
 
 
 @pytest.mark.feature(group="Configuration", name="URI Parsing")
