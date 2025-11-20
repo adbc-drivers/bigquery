@@ -20,12 +20,11 @@
 
 {{ heading|safe }}
 
-:::{note}
-This project is not associated with Google.
-:::
+This driver provides access to [BigQuery][bigquery], a data warehouse offered by Google Cloud.
 
-This driver provides access to [Google BigQuery][bigquery], a data warehouse
-offered by Google Cloud.
+:::{note}
+This project is not affiliated with Google.
+:::
 
 ## Installation
 
