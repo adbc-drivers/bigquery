@@ -38,7 +38,7 @@ To use the driver:
 1. Provide the database options `adbc.bigquery.sql.project_id` and
    `adbc.bigquery.sql.dataset_id`.
 
-The driver supports connecting with individual options or connection strings. Connection strings are the preferred format.
+The driver supports connecting with individual options or connection strings.
 
 ## Connection String Format
 
@@ -52,11 +52,11 @@ The format follows a similar approach to the [Simba BigQuery JDBC Connection Str
 
 Components:
 
-- Scheme: `bigquery://` (required)
-- Host: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`)
-- Port: TCP port (optional, defaults to 443)
-- ProjectID: Google Cloud Project ID (required)
-- OAuthType: Authentication type number (optional, defaults to `0`)
+- `Scheme`: `bigquery://` (required)
+- `Host`: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`)
+- `Port`: TCP port (optional, defaults to 443)
+- `ProjectID`: Google Cloud Project ID (required)
+- `OAuthType`: Authentication type number (optional, defaults to `0`)
   - `0` - Application Default Credentials (default)
   - `1` - Service Account JSON File
   - `2` - Service Account JSON String
@@ -70,11 +70,11 @@ Reserved characters in URI elements must be URI-encoded. For example, `@` become
 
 Examples:
 
-- bigquery:///my-project-123 (uses Application Default Credentials)
-- bigquery://bigquery.googleapis.com/my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json
-- bigquery:///my-project-123?OAuthType=3&AuthClientId=123.apps.googleusercontent.com&AuthClientSecret=secret&AuthRefreshToken=token
-- bigquery://bigquery.googleapis.com/my-project-123?OAuthType=0&DatasetId=analytics&Location=US
-- bigquery:///my-project-123?OAuthType=2&AuthCredentials=%7B%22type%22%3A%22service_account%22...%7D&DatasetId=data_warehouse
+- `bigquery:///my-project-123` (uses Application Default Credentials)
+- `bigquery://bigquery.googleapis.com/my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json`
+- `bigquery:///my-project-123?OAuthType=3&AuthClientId=123.apps.googleusercontent.com&AuthClientSecret=secret&AuthRefreshToken=token`
+- `bigquery://bigquery.googleapis.com/my-project-123?OAuthType=0&DatasetId=analytics&Location=US`
+- `bigquery:///my-project-123?OAuthType=2&AuthCredentials=%7B%22type%22%3A%22service_account%22...%7D&DatasetId=data_warehouse`
 
 ## Feature & Type Support
 
