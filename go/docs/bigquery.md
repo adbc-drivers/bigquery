@@ -69,6 +69,7 @@ Reserved characters in URI elements must be URI-encoded. For example, `@` become
 :::
 
 Examples:
+
 - bigquery:///my-project-123 (uses Application Default Credentials)
 - bigquery://bigquery.googleapis.com/my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json
 - bigquery:///my-project-123?OAuthType=3&AuthClientId=123.apps.googleusercontent.com&AuthClientSecret=secret&AuthRefreshToken=token
