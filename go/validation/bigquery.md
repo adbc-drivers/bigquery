@@ -24,7 +24,7 @@ This project is not associated with Google.
 
 {{ version_header|safe }}
 
-This driver provides access to [Google BigQuery][bigquery], a data warehouse
+This driver provides access to [BigQuery][bigquery], a data warehouse
 offered by Google Cloud.
 
 ## Installation & Quickstart

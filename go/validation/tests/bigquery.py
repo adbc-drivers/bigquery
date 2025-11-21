@@ -20,8 +20,8 @@ from adbc_drivers_validation import model
 class BigQueryQuirks(model.DriverQuirks):
     name = "bigquery"
     driver = "adbc_driver_bigquery"
-    driver_name = "ADBC Driver Foundry Driver for Google BigQuery"
-    vendor_name = "Google BigQuery"
+    driver_name = "ADBC Driver Foundry Driver for BigQuery"
+    vendor_name = "BigQuery"
     # BigQuery doesn't really have a public facing version, so use the client
     # version instead
     vendor_version = "cloud.google.com/go/bigquery v1.72.0"

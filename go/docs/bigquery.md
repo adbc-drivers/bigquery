@@ -16,7 +16,7 @@
 ---
 
 {{ cross_reference|safe }}
-# Google BigQuery Driver {{ version }}
+# BigQuery Driver {{ version }}
 
 {{ heading|safe }}
 

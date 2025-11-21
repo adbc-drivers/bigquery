@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name = "ADBC Driver Foundry Driver for Google BigQuery"
-description = "An ADBC driver for Google BigQuery developed by the ADBC Driver Foundry"
+name = "ADBC Driver Foundry Driver for BigQuery"
+description = "An ADBC driver for BigQuery developed by the ADBC Driver Foundry"
 publisher = "ADBC Drivers Contributors"
 license = "Apache-2.0"
 
