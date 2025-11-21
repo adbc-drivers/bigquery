@@ -139,9 +139,9 @@ type driverImpl struct {
 
 // NewDriver creates a new BigQuery driver using the given Arrow allocator.
 func NewDriver(alloc memory.Allocator) adbc.Driver {
-	info := driverbase.DefaultDriverInfo("Google BigQuery")
+	info := driverbase.DefaultDriverInfo("BigQuery")
 	info.MustRegister(map[adbc.InfoCode]any{
-		adbc.InfoDriverName:      "ADBC Driver Foundry Driver for Google BigQuery",
+		adbc.InfoDriverName:      "ADBC Driver Foundry Driver for BigQuery",
 		adbc.InfoVendorSql:       true,
 		adbc.InfoVendorSubstrait: false,
 		adbc.InfoVendorVersion:   infoVendorVersion,

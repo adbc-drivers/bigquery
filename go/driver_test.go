@@ -370,7 +370,7 @@ func (q *BigQueryQuirks) DBSchema() string                            { return q
 func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) any {
 	switch code {
 	case adbc.InfoDriverName:
-		return "ADBC Driver Foundry Driver for Google BigQuery"
+		return "ADBC Driver Foundry Driver for BigQuery"
 	// runtime/debug.ReadBuildInfo doesn't currently work for tests
 	// github.com/golang/go/issues/33976
 	case adbc.InfoDriverVersion:
@@ -384,7 +384,7 @@ func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) any {
 	case adbc.InfoDriverADBCVersion:
 		return adbc.AdbcVersion1_1_0
 	case adbc.InfoVendorName:
-		return "Google BigQuery"
+		return "BigQuery"
 	}
 
 	return nil

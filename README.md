@@ -14,12 +14,12 @@
   limitations under the License.
 -->
 
-# ADBC Drivers for Google BigQuery
-
-Not affiliated with Google.
+# ADBC Drivers for BigQuery
 
 This repository contains [ADBC drivers](https://arrow.apache.org/adbc/) for
-Google BigQuery, implemented in different languages.
+[BigQuery](https://cloud.google.com/bigquery), implemented in different languages.
+
+This project is not affiliated with Google.
 
 ## Installation
 
