@@ -61,7 +61,6 @@ Components:
   - `1` - Service Account JSON File
   - `2` - Service Account JSON String
   - `3` - User Authentication (OAuth)
-  - `4` - Default/Auth BigQuery
 - Additional Parameters: Connection configuration as key-value pairs. For a complete list of available parameters, see the [Simba BigQuery JDBC Connector Configuration Options](https://storage.googleapis.com/simba-bq-release/jdbc/Simba%20Google%20BigQuery%20JDBC%20Connector%20Install%20and%20Configuration%20Guide_1.6.3.1004.pdf).
 
 :::{note}
