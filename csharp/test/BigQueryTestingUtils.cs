@@ -27,11 +27,11 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using Apache.Arrow.Adbc.Drivers.BigQuery;
+using Apache.Arrow.Adbc;
 using Azure.Core;
 using Azure.Identity;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     internal class BigQueryTestingUtils
     {
@@ -147,9 +147,16 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
                 parameters.Add(BigQueryParameters.AllowLargeResults, testEnvironment.AllowLargeResults.ToString());
             }
 
+            if (!string.IsNullOrEmpty(testEnvironment.ClientLocation))
+            {
+                parameters.Add(BigQueryParameters.DefaultClientLocation, testEnvironment.ClientLocation!);
+            }
+
             parameters.Add(BigQueryParameters.IncludeConstraintsWithGetObjects, testEnvironment.IncludeTableConstraints.ToString());
 
             parameters.Add(BigQueryParameters.IncludePublicProjectId, testEnvironment.IncludePublicProjectId.ToString());
+
+            parameters.Add(BigQueryParameters.LargeDecimalsAsString, testEnvironment.LargeDecimalAsString.ToString());
 
             if (!string.IsNullOrEmpty(testEnvironment.LargeResultsDataset))
             {

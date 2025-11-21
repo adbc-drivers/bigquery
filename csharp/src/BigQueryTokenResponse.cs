@@ -23,7 +23,7 @@
 
 using System.Text.Json.Serialization;
 
-namespace Apache.Arrow.Adbc.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery
 {
     /// <summary>
     /// The token response from BigQuery

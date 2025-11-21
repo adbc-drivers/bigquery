@@ -24,7 +24,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Apache.Arrow.Adbc.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery
 {
     /// <summary>
     /// Common interface for a token protected resource.

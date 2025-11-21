@@ -23,4 +23,4 @@
 
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("Apache.Arrow.Adbc.Tests.Drivers.BigQuery")]
+[assembly: InternalsVisibleTo("AdbcDrivers.BigQuery.Tests")]

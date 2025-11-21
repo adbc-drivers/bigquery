@@ -26,9 +26,11 @@ using System.Collections.Generic;
 using System.Data.SqlTypes;
 using System.Text;
 using System.Text.Json;
+using Apache.Arrow;
+using Apache.Arrow.Adbc.Tests;
 using Apache.Arrow.Types;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     /// <summary>
     /// Gets the sample data

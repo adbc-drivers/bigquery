@@ -24,12 +24,14 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
-using Apache.Arrow.Adbc.Drivers.BigQuery;
+using Apache.Arrow.Adbc.Tests;
 using Apache.Arrow.Adbc.Tests.Xunit;
 using Xunit;
 using Xunit.Abstractions;
+using AdbcClient = Apache.Arrow.Adbc.Client;
+using AdbcTests = Apache.Arrow.Adbc.Tests;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     /// <summary>
     /// Class for testing the ADBC Client using the BigQuery ADBC driver.
@@ -62,7 +64,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         {
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                using (Adbc.Client.AdbcConnection adbcConnection = GetAdbcConnection(environment))
+                using (AdbcClient.AdbcConnection adbcConnection = GetAdbcConnection(environment))
                 {
                     adbcConnection.Open();
 
@@ -70,7 +72,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
 
                     List<int> expectedResults = new List<int>() { -1, 1, 1 };
 
-                    Tests.ClientTests.CanClientExecuteUpdate(adbcConnection, environment, queries, expectedResults);
+                    AdbcTests.ClientTests.CanClientExecuteUpdate(adbcConnection, environment, queries, expectedResults);
                 }
             }
         }
@@ -83,9 +85,9 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         {
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                using (Adbc.Client.AdbcConnection adbcConnection = GetAdbcConnection(environment))
+                using (AdbcClient.AdbcConnection adbcConnection = GetAdbcConnection(environment))
                 {
-                    Tests.ClientTests.CanClientGetSchema(adbcConnection, environment);
+                    AdbcTests.ClientTests.CanClientGetSchema(adbcConnection, environment);
                 }
             }
         }
@@ -99,9 +101,9 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         {
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                using (Adbc.Client.AdbcConnection adbcConnection = GetAdbcConnection(environment))
+                using (AdbcClient.AdbcConnection adbcConnection = GetAdbcConnection(environment))
                 {
-                    Tests.ClientTests.CanClientExecuteQuery(adbcConnection, environment, environmentName: environment.Name);
+                    AdbcTests.ClientTests.CanClientExecuteQuery(adbcConnection, environment, environmentName: environment.Name);
                 }
             }
         }
@@ -115,11 +117,11 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         {
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                using (Adbc.Client.AdbcConnection dbConnection = GetAdbcConnection(environment))
+                using (AdbcClient.AdbcConnection dbConnection = GetAdbcConnection(environment))
                 {
                     SampleDataBuilder sampleDataBuilder = BigQueryData.GetSampleData();
 
-                    Tests.ClientTests.VerifyTypesAndValues(dbConnection, sampleDataBuilder, environment.Name);
+                    AdbcTests.ClientTests.VerifyTypesAndValues(dbConnection, sampleDataBuilder, environment.Name);
                 }
             }
         }
@@ -129,7 +131,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         {
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                using (Adbc.Client.AdbcConnection adbcConnection = GetAdbcConnection(environment, includeTableConstraints: false))
+                using (AdbcClient.AdbcConnection adbcConnection = GetAdbcConnection(environment, includeTableConstraints: false))
                 {
                     adbcConnection.Open();
 
@@ -148,7 +150,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         {
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                using (Adbc.Client.AdbcConnection adbcConnection = GetAdbcConnection(environment))
+                using (AdbcClient.AdbcConnection adbcConnection = GetAdbcConnection(environment))
                 {
                     adbcConnection.Open();
 
@@ -212,7 +214,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
             }
         }
 
-        private Adbc.Client.AdbcConnection GetAdbcConnection(
+        private AdbcClient.AdbcConnection GetAdbcConnection(
             BigQueryTestEnvironment environment,
             bool includeTableConstraints = true
         )
@@ -223,7 +225,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
             {
                 Dictionary<string, string> connectionParameters = BigQueryTestingUtils.GetBigQueryParameters(environment);
 
-                return new Adbc.Client.AdbcConnection(
+                return new AdbcClient.AdbcConnection(
                     new BigQueryDriver(),
                     connectionParameters,
                     new Dictionary<string, string>()
@@ -235,7 +237,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
             }
         }
 
-        private Adbc.Client.AdbcConnection GetAdbcConnectionUsingConnectionString(
+        private AdbcClient.AdbcConnection GetAdbcConnectionUsingConnectionString(
             BigQueryTestEnvironment environment,
             bool includeTableConstraints = true
         )
@@ -252,7 +254,7 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
                 builder[key] = connectionParameters[key];
             }
 
-            return new Adbc.Client.AdbcConnection(builder.ConnectionString)
+            return new AdbcClient.AdbcConnection(builder.ConnectionString)
             {
                 AdbcDriver = new BigQueryDriver()
             };

@@ -24,9 +24,10 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Apache.Arrow;
 using Apache.Arrow.Ipc;
 
-namespace Apache.Arrow.Adbc.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery
 {
     /// <summary>
     /// Stream used for metadata calls
