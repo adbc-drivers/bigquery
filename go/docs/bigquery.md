@@ -62,6 +62,43 @@ conn = dbapi.connect(
 
 Note: The example above is for Python using the [adbc-driver-manager](https://pypi.org/project/adbc-driver-manager) package but the process will be similar for other driver managers.
 
+The driver supports connecting with individual options or connection strings.
+
+## Connection String Format
+
+BigQuery URI syntax:
+
+```
+bigquery://[Host]:[Port]/ProjectID?OAuthType=[AuthValue]&[Key]=[Value]&[Key]=[Value]...
+```
+
+The format follows a similar approach to the [Simba BigQuery JDBC Connection String Format](https://storage.googleapis.com/simba-bq-release/jdbc/Simba%20Google%20BigQuery%20JDBC%20Connector%20Install%20and%20Configuration%20Guide_1.6.3.1004.pdf).
+
+Components:
+
+- `Scheme`: `bigquery://` (required)
+- `Host`: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`)
+- `Port`: TCP port (optional, defaults to 443)
+- `ProjectID`: Google Cloud Project ID (required)
+- `OAuthType`: Authentication type number (optional, defaults to `0`)
+  - `0` - Application Default Credentials (default)
+  - `1` - Service Account JSON File
+  - `2` - Service Account JSON String
+  - `3` - User Authentication (OAuth)
+- Additional Parameters: Connection configuration as key-value pairs. For a complete list of available parameters, see the [Simba BigQuery JDBC Connector Configuration Options](https://storage.googleapis.com/simba-bq-release/jdbc/Simba%20Google%20BigQuery%20JDBC%20Connector%20Install%20and%20Configuration%20Guide_1.6.3.1004.pdf).
+
+:::{note}
+Reserved characters in URI elements must be URI-encoded. For example, `@` becomes `%40`.
+:::
+
+Examples:
+
+- `bigquery:///my-project-123` (uses Application Default Credentials)
+- `bigquery://bigquery.googleapis.com/my-project-123?OAuthType=1&AuthCredentials=/path/to/key.json`
+- `bigquery:///my-project-123?OAuthType=3&AuthClientId=123.apps.googleusercontent.com&AuthClientSecret=secret&AuthRefreshToken=token`
+- `bigquery://bigquery.googleapis.com/my-project-123?OAuthType=0&DatasetId=analytics&Location=US`
+- `bigquery:///my-project-123?OAuthType=2&AuthCredentials=%7B%22type%22%3A%22service_account%22...%7D&DatasetId=data_warehouse`
+
 ## Feature & Type Support
 
 {{ features|safe }}
