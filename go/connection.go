@@ -69,6 +69,8 @@ type connectionImpl struct {
 	dbSchema string
 	// tableID is the default table for statement
 	tableID string
+	// endpoint is the custom BigQuery API endpoint
+	endpoint string
 
 	sessionID *string
 
@@ -730,7 +732,13 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		authOptions = []option.ClientOption{option.WithTokenSource(tokenSource)}
 	}
 
-	client, err := bigquery.NewClient(ctx, c.catalog, authOptions...)
+	// Add custom endpoint if specified for BigQuery API client
+	bigQueryAuthOptions := authOptions
+	if c.endpoint != "" {
+		bigQueryAuthOptions = append(bigQueryAuthOptions, option.WithEndpoint(c.endpoint))
+	}
+
+	client, err := bigquery.NewClient(ctx, c.catalog, bigQueryAuthOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create client")
 	}
@@ -739,6 +747,8 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		client.Location = c.location
 	}
 
+	// Use original authOptions without custom endpoint for Storage Read API
+	// (Storage Read API uses bigquerystorage.googleapis.com, not bigquery.googleapis.com)
 	err = client.EnableStorageReadClient(ctx, authOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")

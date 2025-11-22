@@ -18,146 +18,206 @@ import adbc_driver_manager.dbapi
 import pytest
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_application_default_credentials_uri_parsing(
     driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
 ) -> None:
     """Test that Application Default Credentials URI is parsed correctly."""
-    uri = f"bigquery:///{bigquery_project}?OAuthType=0&DatasetId={bigquery_dataset}"
+    uri = "bigquery:///dummyproject?OAuthType=0&DatasetId=dummydataset&Location=dummylocation"
 
-    # This should parse the URI successfully without throwing parsing errors
-    # Authentication errors are expected and fine
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+    params = {
+        "uri": uri,
+    }
 
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.app_default_credentials"
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
-def test_default_oauth_type_uri_parsing(
-    driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
-) -> None:
-    """Test that URI without OAuthType defaults to Application Default Credentials."""
-    uri = f"bigquery:///{bigquery_project}?DatasetId={bigquery_dataset}"
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
 
-    # This should parse the URI successfully and default to ADC
-    # Authentication errors are expected and fine
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+        dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
+        assert dataset_id == "dummydataset"
+
+        location = db.get_option("adbc.bigquery.sql.location")
+        assert location == "dummylocation"
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_service_account_file_uri_parsing(
     driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
 ) -> None:
     """Test that service account JSON file URI is parsed correctly."""
     credentials_path = "/path/to/service-account.json"
-    uri = f"bigquery:///{bigquery_project}?OAuthType=1&AuthCredentials={credentials_path}&DatasetId={bigquery_dataset}"
+    uri = f"bigquery:///dummyproject?OAuthType=1&AuthCredentials={credentials_path}&DatasetId=dummydataset&TableId=mytable"
 
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+    params = {
+        "uri": uri,
+    }
+
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.json_credential_file"
+
+        computed_credentials = db.get_option("adbc.bigquery.sql.auth_credentials")
+        assert computed_credentials == credentials_path
+
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
+
+        dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
+        assert dataset_id == "dummydataset"
+
+        table_id = db.get_option("adbc.bigquery.sql.table_id")
+        assert table_id == "mytable"
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_service_account_string_uri_parsing(
     driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
 ) -> None:
     """Test that service account JSON string URI is parsed correctly."""
     json_credentials = '{"type":"service_account","project_id":"test"}'
     encoded_credentials = urllib.parse.quote(json_credentials)
-    uri = f"bigquery:///{bigquery_project}?OAuthType=2&AuthCredentials={encoded_credentials}&DatasetId={bigquery_dataset}"
+    uri = f"bigquery:///dummyproject?OAuthType=2&AuthCredentials={encoded_credentials}&DatasetId=dummydataset&Location=dummylocation"
 
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+    params = {
+        "uri": uri,
+    }
+
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.json_credential_string"
+
+        computed_credentials = db.get_option("adbc.bigquery.sql.auth_credentials")
+        assert computed_credentials == json_credentials
+
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
+
+        dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
+        assert dataset_id == "dummydataset"
+
+        location = db.get_option("adbc.bigquery.sql.location")
+        assert location == "dummylocation"
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_user_oauth_uri_parsing(
     driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
 ) -> None:
     """Test that User OAuth authentication URI is parsed correctly."""
     client_id = "test_client_id"
     client_secret = "test_client_secret"
     refresh_token = "test_refresh_token"
-    uri = f"bigquery:///{bigquery_project}?OAuthType=3&AuthClientId={client_id}&AuthClientSecret={client_secret}&AuthRefreshToken={refresh_token}&DatasetId={bigquery_dataset}"
+    uri = f"bigquery:///dummyproject?OAuthType=3&AuthClientId={client_id}&AuthClientSecret={client_secret}&AuthRefreshToken={refresh_token}&DatasetId=dummydataset&Location=dummylocation"
 
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+    params = {
+        "uri": uri,
+    }
 
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.user_authentication"
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
-def test_default_auth_uri_parsing(
-    driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
-) -> None:
-    """Test that Default auth type URI is parsed correctly."""
-    uri = f"bigquery:///{bigquery_project}?OAuthType=4&DatasetId={bigquery_dataset}"
+        endpoint = db.get_option("adbc.bigquery.sql.endpoint")
+        assert endpoint == "bigquery.googleapis.com:443"
 
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+        computed_client_id = db.get_option("adbc.bigquery.sql.auth.client_id")
+        assert computed_client_id == client_id
 
+        computed_client_secret = db.get_option("adbc.bigquery.sql.auth.client_secret")
+        assert computed_client_secret == client_secret
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
-def test_location_parameter_uri_parsing(
-    driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
-) -> None:
-    """Test that BigQuery location parameter is parsed correctly from URI."""
-    location = "EU"
-    uri = f"bigquery:///{bigquery_project}?OAuthType=0&DatasetId={bigquery_dataset}&Location={location}"
+        computed_refresh_token = db.get_option("adbc.bigquery.sql.auth.refresh_token")
+        assert computed_refresh_token == refresh_token
 
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
+
+        dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
+        assert dataset_id == "dummydataset"
+
+        location = db.get_option("adbc.bigquery.sql.location")
+        assert location == "dummylocation"
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_custom_endpoint_uri_parsing(
     driver_path: str,
-    bigquery_project: str,
-    bigquery_dataset: str,
 ) -> None:
     """Test that custom endpoint in URI is parsed correctly."""
-    uri = f"bigquery://bigquery.googleapis.com:443/{bigquery_project}?OAuthType=0&DatasetId={bigquery_dataset}"
+    uri = "bigquery://bigquery.dummyapis.com:445/dummyproject?DatasetId=dummydataset&QuotaProject=billing-project"
 
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri}
-    ):
-        pass
+    params = {
+        "uri": uri,
+    }
+
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.app_default_credentials"
+
+        endpoint = db.get_option("adbc.bigquery.sql.endpoint")
+        assert endpoint == "bigquery.dummyapis.com:445"
+
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
+
+        dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
+        assert dataset_id == "dummydataset"
+
+        quota_project = db.get_option("adbc.bigquery.sql.auth.quota_project")
+        assert quota_project == "billing-project"
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
+def test_custom_endpoint_without_port_uri_parsing(
+    driver_path: str,
+) -> None:
+    """Test that custom endpoint without port defaults to 443."""
+    uri = "bigquery://bigquery.dummyapis.com/dummyproject?OAuthType=0&DatasetId=dummydataset"
+
+    params = {
+        "uri": uri,
+    }
+
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.app_default_credentials"
+
+        endpoint = db.get_option("adbc.bigquery.sql.endpoint")
+        assert endpoint == "bigquery.dummyapis.com:443"
+
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
+
+        dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
+        assert dataset_id == "dummydataset"
+
+
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
+def test_port_without_host_uri_parsing(
+    driver_path: str,
+) -> None:
+    """Test that port without host in URI defaults to custom port on the default host."""
+    uri = "bigquery://:448/dummyproject?OAuthType=0"
+
+    params = {
+        "uri": uri,
+    }
+
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.app_default_credentials"
+
+        endpoint = db.get_option("adbc.bigquery.sql.endpoint")
+        assert endpoint == "bigquery.googleapis.com:448"
+
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
+
+
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_missing_project_id_uri_error(
     driver_path: str,
 ) -> None:
@@ -175,24 +235,26 @@ def test_missing_project_id_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_minimal_uri_parsing(
     driver_path: str,
-    bigquery_project: str,
 ) -> None:
     """Test that minimal URI (project only) works with default authentication."""
-    uri = f"bigquery:///{bigquery_project}"
+    uri = "bigquery:///dummyproject"
 
-    # This should parse successfully and use Application Default Credentials
-    # Authentication errors are expected and fine
-    with adbc_driver_manager.dbapi.connect(
-        driver=driver_path,
-        db_kwargs={"uri": uri},
-    ):
-        pass
+    params = {
+        "uri": uri,
+    }
+
+    with adbc_driver_manager.AdbcDatabase(driver=driver_path, **params) as db:
+        auth_type = db.get_option("adbc.bigquery.sql.auth_type")
+        assert auth_type == "adbc.bigquery.sql.auth_type.app_default_credentials"
+
+        project_id = db.get_option("adbc.bigquery.sql.project_id")
+        assert project_id == "dummyproject"
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_invalid_oauth_type_uri_error(
     driver_path: str,
 ) -> None:
@@ -210,7 +272,7 @@ def test_invalid_oauth_type_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_invalid_uri_scheme_error(
     driver_path: str,
 ) -> None:
@@ -228,7 +290,7 @@ def test_invalid_uri_scheme_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_missing_auth_credentials_service_account_uri_error(
     driver_path: str,
 ) -> None:
@@ -246,7 +308,7 @@ def test_missing_auth_credentials_service_account_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="URI Parsing")
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_missing_oauth_credentials_uri_error(
     driver_path: str,
 ) -> None:
@@ -262,3 +324,19 @@ def test_missing_oauth_credentials_uri_error(
             db_kwargs={"uri": uri},
         ):
             pass
+
+
+@pytest.mark.feature(group="Configuration", name="Connect with URI")
+def test_end_to_end_real_connection(
+    driver_path: str,
+    bigquery_project: str,
+    bigquery_dataset: str,
+) -> None:
+    """Test end-to-end connection with real BigQuery project."""
+    uri = f"bigquery://bigquery.googleapis.com/{bigquery_project}?DatasetId={bigquery_dataset}"
+
+    with adbc_driver_manager.dbapi.connect(
+        driver=driver_path, db_kwargs={"uri": uri}, autocommit=True
+    ) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")

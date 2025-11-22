@@ -42,7 +42,3 @@ def bigquery_dataset() -> str:
     if not dataset:
         pytest.skip("Must set BIGQUERY_DATASET_ID environment variable")
     return dataset
-
-
-
-
