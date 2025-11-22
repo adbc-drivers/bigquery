@@ -748,7 +748,6 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	}
 
 	// Use original authOptions without custom endpoint for Storage Read API
-	// (Storage Read API uses bigquerystorage.googleapis.com, not bigquery.googleapis.com)
 	err = client.EnableStorageReadClient(ctx, authOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")
