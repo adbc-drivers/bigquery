@@ -179,6 +179,20 @@ const (
 	OptionStringIngestPath          = "adbc.bigquery.ingest.csv_filepath"
 	OptionStringIngestSchema        = "adbc.bigquery.ingest.csv_schema"
 
+	// Dataproc / Python models options — used by the fs python-model
+	// submission path in fs/sa/crates/dbt-adapter/src/python/bigquery.
+	OptionStringDataprocReqRegion               = "adbc.bigquery.dataproc.compute_region"
+	OptionStringDataprocReqProject              = "adbc.bigquery.dataproc.project"
+	OptionIntDataprocReqPoolingTimeout          = "adbc.bigquery.dataproc.pooling_timeout"
+	OptionStringCreateBatchReqParent            = "adbc.bigquery.create_batch.parent"
+	OptionStringCreateBatchReqBatchYML          = "adbc.bigquery.create_batch.batch_yml"
+	OptionStringCreateBatchReqBatchId           = "adbc.bigquery.create_batch.batch_id"
+	OptionStringDataprocSubmitJobReqClusterName = "adbc.bigquery.dataproc.submit_job.cluster_name"
+	OptionStringDataprocSubmitJobReqGCSPath     = "adbc.bigquery.dataproc.submit_job.gcs_path"
+	OptionStringWriteGCSBucket                  = "adbc.bigquery.write_gcs.bucket"
+	OptionStringWriteGCSObjectName              = "adbc.bigquery.write_gcs.object_name"
+	OptionStringWriteGCSContent                 = "adbc.bigquery.write_gcs.content"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
