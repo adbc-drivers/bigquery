@@ -22,8 +22,9 @@
 */
 
 using System.Collections.Generic;
+using Apache.Arrow.Adbc;
 
-namespace Apache.Arrow.Adbc.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery
 {
     /// <summary>
     /// BigQuery-specific implementation of <see cref="AdbcDatabase"/>

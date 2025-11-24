@@ -24,7 +24,7 @@
 using System.Diagnostics;
 using Apache.Arrow.Adbc.Tracing;
 
-namespace Apache.Arrow.Adbc.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery
 {
     internal static class ActivityExtensions
     {

@@ -1,5 +1,4 @@
-﻿
-/*
+﻿/*
 * Copyright (c) 2025 ADBC Drivers Contributors
 *
 * This file has been modified from its original version, which is
@@ -21,12 +20,13 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
+using Apache.Arrow.Adbc;
 
-namespace Apache.Arrow.Adbc.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery
 {
     /// <summary>
     /// Class that will retry calling a method with a backoff.
@@ -38,7 +38,8 @@ namespace Apache.Arrow.Adbc.Drivers.BigQuery
             Func<Task<T>> action,
             Activity? activity,
             int maxRetries = 5,
-            int initialDelayMilliseconds = 200)
+            int initialDelayMilliseconds = 200,
+            CancellationToken cancellationToken = default)
         {
             if (action == null)
             {
@@ -55,8 +56,10 @@ namespace Apache.Arrow.Adbc.Drivers.BigQuery
                     T result = await action();
                     return result;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
+                    // Note: OperationCanceledException could be thrown from the call,
+                    // but we only want to break out when the cancellation was requested from the caller.
                     activity?.AddBigQueryTag("retry_attempt", retryCount);
                     activity?.AddException(ex);
 

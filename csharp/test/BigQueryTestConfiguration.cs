@@ -23,8 +23,9 @@
 
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Apache.Arrow.Adbc.Tests;
 
-namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
+namespace AdbcDrivers.BigQuery.Tests
 {
     /// <summary>
     /// Configuration settings for working with BigQuery.
@@ -90,6 +91,9 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
         [JsonPropertyName("includePublicProjectId")]
         public bool IncludePublicProjectId { get; set; } = false;
 
+        [JsonPropertyName("largeDecimalAsString")]
+        public bool LargeDecimalAsString { get; set; } = true;
+
         /// <summary>
         /// Sets the query timeout (in minutes).
         /// </summary>
@@ -125,6 +129,9 @@ namespace Apache.Arrow.Adbc.Tests.Drivers.BigQuery
 
         [JsonPropertyName("evaluationKind")]
         public string EvaluationKind { get; set; } = string.Empty;
+
+        [JsonPropertyName("location")]
+        public string? ClientLocation { get; set; }
 
         /// <summary>
         /// How structs should be handled by the ADO.NET client for this environment.
