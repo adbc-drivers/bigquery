@@ -40,6 +40,7 @@ const (
 	OptionStringProjectID = "adbc.bigquery.sql.project_id"
 	OptionStringDatasetID = "adbc.bigquery.sql.dataset_id"
 	OptionStringTableID   = "adbc.bigquery.sql.table_id"
+	OptionStringEndpoint  = "adbc.bigquery.sql.endpoint"
 
 	OptionValueAuthTypeDefault = "adbc.bigquery.sql.auth_type.auth_bigquery"
 
