@@ -55,7 +55,7 @@ conn = dbapi.connect(
   driver="bigquery",
   db_kwargs={
       "adbc.bigquery.sql.project_id": "my-gcp-project",
-      "adbc.bigquery.sql.dataset_id": "my-gcp-datase"
+      "adbc.bigquery.sql.dataset_id": "my-gcp-dataset"
   }
 )
 ```
