@@ -114,7 +114,8 @@ namespace AdbcDrivers.BigQuery
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
                 }
 
-                using JobCancellationContext cancellationContext = new JobCancellationContext(cancellationRegistry, job);
+                bool disableExplicitCancel = Options?.ContainsKey(BigQueryParameters.DisableExplicitCancel) == true;
+                using ICancellationContext cancellationContext = CancellationContext.New(cancellationRegistry, disableExplicitCancel, job);
 
                 // We can't checkJobStatus, Otherwise, the timeout in QueryResultsOptions is meaningless.
                 // When encountering a long-running job, it should be controlled by the timeout in the Google SDK instead of blocking in a while loop.
@@ -224,7 +225,8 @@ namespace AdbcDrivers.BigQuery
                 IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
 
                 // Note: MultiArrowReader must dispose the cancellationContext.
-                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, new CancellationContext(cancellationRegistry));
+                ICancellationContext cancellationContext1 = CancellationContext.New(cancellationRegistry, disableExplicitCancel);
+                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, cancellationContext1);
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
                 return new QueryResult(totalRows, stream);
             });
@@ -285,7 +287,9 @@ namespace AdbcDrivers.BigQuery
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
 
-                using JobCancellationContext context = new(cancellationRegistry);
+                bool disableExplicitCancel = Options?.ContainsKey(BigQueryParameters.DisableExplicitCancel) == true;
+                using ICancellationContext context = CancellationContext.New(cancellationRegistry, disableExplicitCancel);
+
                 // Cannot set destination table in jobs with DDL statements, otherwise an error will be prompted
                 Func<Task<BigQueryResults?>> getQueryResultsAsyncFunc = async () =>
                 {
@@ -574,9 +578,9 @@ namespace AdbcDrivers.BigQuery
             await RetryManager.ExecuteWithRetriesAsync<T>(this, action, activity, MaxRetryAttempts, RetryDelayMs, cancellationToken);
 
         private async Task<T> ExecuteCancellableJobAsync<T>(
-            JobCancellationContext context,
+            ICancellationContext context,
             Activity? activity,
-            Func<JobCancellationContext, Task<T>> func)
+            Func<ICancellationContext, Task<T>> func)
         {
             try
             {
@@ -610,18 +614,39 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
-        private class CancellationContext : IDisposable
+        private interface ICancellationContext : IDisposable
+        {
+            BigQueryJob? Job { get; set; }
+            CancellationToken CancellationToken { get; }
+            void Cancel();
+        }
+
+        private class CancellationContext : ICancellationContext
         {
             private readonly CancellationRegistry cancellationRegistry;
             private readonly CancellationTokenSource cancellationTokenSource;
             private bool disposed;
 
-            public CancellationContext(CancellationRegistry cancellationRegistry)
+            public static readonly ICancellationContext Null = new NullCancellationContext();
+
+            public static ICancellationContext New(CancellationRegistry cancellationRegistry, bool disableExplicitCancel = false, BigQueryJob? job = default)
+            {
+                if (disableExplicitCancel)
+                {
+                    return Null;
+                }
+                return new CancellationContext(cancellationRegistry, job);
+            }
+
+            private CancellationContext(CancellationRegistry cancellationRegistry, BigQueryJob? job = default)
             {
                 cancellationTokenSource = new CancellationTokenSource();
+                this.Job = job;
                 this.cancellationRegistry = cancellationRegistry;
                 this.cancellationRegistry.Register(this);
             }
+
+            public BigQueryJob? Job { get; set; }
 
             public CancellationToken CancellationToken => cancellationTokenSource.Token;
 
@@ -641,15 +666,15 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
-        private class JobCancellationContext : CancellationContext
+        private class NullCancellationContext : ICancellationContext
         {
-            public JobCancellationContext(CancellationRegistry cancellationRegistry, BigQueryJob? job = default)
-                : base(cancellationRegistry)
-            {
-                Job = job;
-            }
+            public BigQueryJob? Job { get; set; } = null;
 
-            public BigQueryJob? Job { get; set; }
+            public CancellationToken CancellationToken { get; } = default;
+
+            public void Cancel() { }
+
+            public void Dispose() { }
         }
 
         private sealed class CancellationRegistry : IDisposable
@@ -698,12 +723,12 @@ namespace AdbcDrivers.BigQuery
             private static readonly string s_assemblyVersion = BigQueryUtils.GetAssemblyVersion(typeof(BigQueryStatement));
 
             readonly Schema schema;
-            readonly CancellationContext cancellationContext;
+            readonly ICancellationContext cancellationContext;
             IEnumerator<IArrowReader>? readers;
             IArrowReader? reader;
             bool disposed;
 
-            public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, CancellationContext cancellationContext) : base(statement)
+            public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, ICancellationContext cancellationContext) : base(statement)
             {
                 this.schema = schema;
                 this.readers = readers.GetEnumerator();
