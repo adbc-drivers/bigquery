@@ -91,7 +91,14 @@ namespace AdbcDrivers.BigQuery
 
         public override QueryResult ExecuteQuery()
         {
-            return ExecuteQueryInternalAsync().GetAwaiter().GetResult();
+            try
+            {
+                return ExecuteQueryInternalAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex) when (BigQueryConnection.IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+            {
+                throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+            }
         }
 
         private async Task<QueryResult> ExecuteQueryInternalAsync()
@@ -252,7 +259,14 @@ namespace AdbcDrivers.BigQuery
 
         public override UpdateResult ExecuteUpdate()
         {
-            return ExecuteUpdateInternalAsync().GetAwaiter().GetResult();
+            try
+            {
+                return ExecuteUpdateInternalAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex) when (BigQueryConnection.IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+            {
+                throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+            }
         }
 
         public override void Cancel()

@@ -125,5 +125,52 @@ namespace AdbcDrivers.BigQuery.Tests
                 Assert.ThrowsAny<AdbcException>(() => statement.ExecuteQuery());
             }
         }
+
+        /// <summary>
+        /// Validates if the driver can connect to a live server and
+        /// parse the results.
+        /// </summary>
+        [SkippableFact, Order(6)]
+        public void CanDetectUnauthorizedCredentials()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                Dictionary<string, string> parameters = BigQueryTestingUtils.GetBigQueryParameters(environment);
+                switch (parameters[BigQueryParameters.AuthenticationType])
+                {
+                    case BigQueryConstants.UserAuthenticationType:
+                        parameters[BigQueryParameters.ClientSecret] = "invalid";
+                        break;
+                    case BigQueryConstants.ServiceAccountAuthenticationType:
+                        parameters[BigQueryParameters.JsonCredential] = "{ 'invalid': 'json' }";
+                        break;
+                    case BigQueryConstants.EntraIdAuthenticationType:
+                        parameters[BigQueryParameters.AccessToken] = "invalid_token";
+                        break;
+                    default:
+                        Skip.If(true, $"This test does not support authentication type: '{parameters[BigQueryParameters.AuthenticationType]}'");
+                        return;
+                }
+
+                AdbcDatabase database = new BigQueryDriver().Open(parameters);
+                AdbcConnection adbcConnection = database.Connect(new Dictionary<string, string>());
+
+                var exception = Assert.Throws<AdbcException>(() => adbcConnection.GetObjects(AdbcConnection.GetObjectsDepth.Catalogs, null, null, null, null, null));
+                Assert.Equal(AdbcStatusCode.Unauthorized, exception.Status);
+
+                exception = Assert.Throws<AdbcException>(() => adbcConnection.GetTableSchema(null, null, string.Empty));
+                Assert.Equal(AdbcStatusCode.Unauthorized, exception.Status);
+
+                AdbcStatement statement = adbcConnection.CreateStatement();
+                statement.SqlQuery = environment.Query;
+
+                exception = Assert.Throws<AdbcException>(statement.ExecuteQuery);
+                Assert.Equal(AdbcStatusCode.Unauthorized, exception.Status);
+
+                exception = Assert.Throws<AdbcException>(statement.ExecuteUpdate);
+                Assert.Equal(AdbcStatusCode.Unauthorized, exception.Status);
+
+            }
+        }
     }
 }

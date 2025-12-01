@@ -38,6 +38,7 @@ using Apache.Arrow.Adbc.Telemetry.Traces.Listeners.FileListener;
 using Apache.Arrow.Adbc.Tracing;
 using Apache.Arrow.Ipc;
 using Apache.Arrow.Types;
+using Google;
 using Google.Api.Gax;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Bigquery.v2.Data;
@@ -506,10 +507,17 @@ namespace AdbcDrivers.BigQuery
         {
             return this.TraceActivity(activity =>
             {
-                IArrowArray[] dataArrays = GetCatalogs(depth, catalogPattern, dbSchemaPattern,
-                    tableNamePattern, tableTypes, columnNamePattern);
+                try
+                {
+                    IArrowArray[] dataArrays = GetCatalogs(depth, catalogPattern, dbSchemaPattern,
+                        tableNamePattern, tableTypes, columnNamePattern);
 
-                return new BigQueryInfoArrowStream(StandardSchemas.GetObjectsSchema, dataArrays);
+                    return new BigQueryInfoArrowStream(StandardSchemas.GetObjectsSchema, dataArrays);
+                }
+                catch (Exception ex) when (IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+                {
+                    throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+                }
             });
         }
 
@@ -546,13 +554,25 @@ namespace AdbcDrivers.BigQuery
 
             return this.TraceActivity(activity =>
             {
-                activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, sql, IsSafeToTrace);
+                try
+                {
+                    activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, sql, IsSafeToTrace);
 
-                Func<Task<BigQueryResults?>> func = () => Client.ExecuteQueryAsync(sql, parameters ?? Enumerable.Empty<BigQueryParameter>(), queryOptions, resultsOptions);
-                BigQueryResults? result = ExecuteWithRetriesAsync<BigQueryResults?>(func, activity).GetAwaiter().GetResult();
+                    Func<Task<BigQueryResults?>> func = () => Client.ExecuteQueryAsync(sql, parameters ?? Enumerable.Empty<BigQueryParameter>(), queryOptions, resultsOptions);
+                    BigQueryResults? result = ExecuteWithRetriesAsync<BigQueryResults?>(func, activity).GetAwaiter().GetResult();
 
-                return result;
+                    return result;
+                }
+                catch (Exception ex) when (IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+                {
+                    throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+                }
             });
+        }
+
+        internal static bool IsUnauthorizedException(Exception ex, out GoogleApiException? googleEx)
+        {
+            return BigQueryUtils.ContainsException(ex, out googleEx) && googleEx!.Error.Code == (int)System.Net.HttpStatusCode.Unauthorized;
         }
 
         private IArrowArray[] GetCatalogs(
