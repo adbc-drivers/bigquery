@@ -20,5 +20,9 @@
 */*.sln
 csharp/src/Extensions
 csharp/test/Apache.Arrow.Adbc.Tests
+csharp/test/Resources/bigqueryconfig.json
+go/license.tpl
+# adbc.h is vendored
+go/pkg/adbc.h
 go/validation/queries/*/*.json
 go/validation/queries/*/*.sql
