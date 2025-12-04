@@ -115,9 +115,9 @@ func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.Bul
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "run loader")
 	}
-	status, err := job.Wait(ctx)
+	status, err := safeWaitForJob(ctx, job)
 	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "load data")
+		return err
 	}
 	if err := status.Err(); err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "load data")
@@ -149,9 +149,9 @@ func (bi *bigqueryBulkIngestImpl) CreateTable(ctx context.Context, schema *arrow
 		if err != nil {
 			return err
 		}
-		js, err := job.Wait(ctx)
+		js, err := safeWaitForJob(ctx, job)
 		if err != nil {
-			return errToAdbcErr(adbc.StatusInternal, err, "create table")
+			return err
 		} else if err = js.Err(); err != nil {
 			return errToAdbcErr(adbc.StatusInternal, err, "create table")
 		} else if !js.Done() {

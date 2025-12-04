@@ -32,13 +32,81 @@ class TestConnection(connection_tests.TestConnection):
         super().test_get_objects_schema(conn, driver)
 
     @utils.retry_rate_limit
-    def test_get_objects_table(self, conn, driver) -> None:
-        super().test_get_objects_table(conn, driver)
+    def test_get_objects_table_not_exist(self, conn, driver) -> None:
+        super().test_get_objects_table_not_exist(conn, driver)
 
     @utils.retry_rate_limit
-    def test_get_objects_column(self, conn, driver) -> None:
-        super().test_get_objects_column(conn, driver)
+    def test_get_objects_table_present(self, conn, driver, get_objects_table) -> None:
+        super().test_get_objects_table_present(conn, driver, get_objects_table)
 
     @utils.retry_rate_limit
-    def test_get_objects_column_xdbc(self, conn, driver) -> None:
-        super().test_get_objects_column_xdbc(conn, driver)
+    def test_get_objects_table_invalid_catalog(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_table_invalid_catalog(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_table_invalid_schema(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_table_invalid_schema(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_table_invalid_table(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_table_invalid_table(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_table_exact_table(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_table_exact_table(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_not_exist(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_column_not_exist(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_present(self, conn, driver, get_objects_table) -> None:
+        super().test_get_objects_column_present(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_filter_column_name(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_column_filter_column_name(
+            conn, driver, get_objects_table
+        )
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_filter_table_name(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_column_filter_table_name(
+            conn, driver, get_objects_table
+        )
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_filter_catalog(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_column_filter_catalog(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_filter_schema(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_column_filter_schema(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_filter_table(
+        self, conn, driver, get_objects_table
+    ) -> None:
+        super().test_get_objects_column_filter_table(conn, driver, get_objects_table)
+
+    @utils.retry_rate_limit
+    def test_get_objects_column_xdbc(self, conn, driver, get_objects_table) -> None:
+        super().test_get_objects_column_xdbc(conn, driver, get_objects_table)
