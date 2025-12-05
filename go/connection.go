@@ -323,7 +323,7 @@ func (c *connectionImpl) exec(ctx context.Context, stmt string, config func(*big
 	if err != nil {
 		return nil, err
 	}
-	status, err := job.Wait(ctx)
+	status, err := safeWaitForJob(ctx, job)
 	if err != nil {
 		return nil, err
 	} else if err := status.Err(); err != nil {

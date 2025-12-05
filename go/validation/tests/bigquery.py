@@ -41,6 +41,7 @@ class BigQueryQuirks(model.DriverQuirks):
         # statement" queries which is not very useful to us
         statement_bulk_ingest_temporary=False,
         statement_execute_schema=True,
+        statement_rows_affected=True,
         current_catalog=model.FromEnv("GOOGLE_CLOUD_PROJECT"),
         current_schema=model.FromEnv("BIGQUERY_DATASET_ID"),
         secondary_schema=model.FromEnv("BIGQUERY_SECONDARY_DATASET_ID"),

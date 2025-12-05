@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from adbc_drivers_validation.tests.statement import (
-    TestStatement,  # noqa: F401
-    generate_tests,
-)
+import adbc_drivers_validation.tests.statement as statement_tests
 
-from . import bigquery
+from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
-    return generate_tests(bigquery.QUIRKS, metafunc)
+    return statement_tests.generate_tests(bigquery.QUIRKS, metafunc)
+
+
+class TestStatement(statement_tests.TestStatement):
+    @utils.retry_rate_limit
+    def test_rows_affected(self, driver, conn) -> None:
+        super().test_rows_affected(driver, conn)

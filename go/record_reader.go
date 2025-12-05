@@ -26,13 +26,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
-	"strings"
 	"sync/atomic"
-	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -41,7 +36,6 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/api/googleapi"
 )
 
 type reader struct {
@@ -82,34 +76,9 @@ func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (b
 		// seems to be confusing "I got an error that my API request was rate
 		// limited" and "I got an error that my job was rate limited" because
 		// their internal APIs mix both errors into a single error path.)
-		var js *bigquery.JobStatus
-		for {
-			js, err = func() (*bigquery.JobStatus, error) {
-				ctxWithDeadline, cancel := context.WithTimeout(ctx, time.Minute*5)
-				defer cancel()
-				js, err := job.Status(ctxWithDeadline)
-				if err != nil {
-					return nil, err
-				}
-				return js, err
-			}()
-
-			if err != nil {
-				// Note that we do not retry cancellations because we
-				// can't differentiate between our own timeout and the
-				// user-supplied deadline. We can retry "rate limited"
-				// here because job.Status does not behave like job.Wait
-				// and does not put the job's error into the API call's
-				// error.
-				if isRetryableError(err) {
-					continue
-				}
-				return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "poll job status")
-			}
-
-			if js.Err() != nil || js.Done() {
-				break
-			}
+		js, err := safeWaitForJob(ctx, job)
+		if err != nil {
+			return nil, -1, err
 		}
 
 		if err := js.Err(); err != nil {
@@ -119,6 +88,11 @@ func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (b
 				Code: adbc.StatusInternal,
 				Msg:  "[bq] Query job did not complete",
 			}
+		}
+
+		stats, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
+		if ok {
+			return nil, stats.NumDMLAffectedRows, nil
 		}
 		return nil, -1, nil
 	}
@@ -152,53 +126,6 @@ func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (b
 	}
 	totalRows := int64(iter.TotalRows)
 	return arrowIterator, totalRows, nil
-}
-
-func isRetryableError(err error) bool {
-	// Modeled on retryableError in bigquery.go
-	switch {
-	case err == nil:
-		return false
-	case err == io.ErrUnexpectedEOF:
-		return true
-	case err.Error() == "http2: stream closed":
-		return true
-	}
-
-	retryableReasons := []string{"backendError", "internalError"}
-	switch e := err.(type) {
-	case *googleapi.Error:
-		var reason string
-		if len(e.Errors) > 0 {
-			reason = e.Errors[0].Reason
-
-			for _, r := range retryableReasons {
-				if r == reason {
-					return true
-				}
-			}
-		}
-
-		for _, code := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
-			if e.Code == code {
-				return true
-			}
-		}
-
-	case *url.Error:
-		for _, r := range []string{"connection refused", "connection reset"} {
-			if strings.Contains(e.Error(), r) {
-				return true
-			}
-		}
-
-	case interface{ Temporary() bool }:
-		if e.Temporary() {
-			return true
-		}
-	}
-
-	return isRetryableError(errors.Unwrap(err))
 }
 
 func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
