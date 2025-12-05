@@ -307,6 +307,7 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 				}
 			}
 			params[OptionStringAuthCredentials] = decodedCreds
+			queryParams.Del("AuthCredentials")
 		case 2:
 			params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialString
 
@@ -326,6 +327,7 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 				}
 			}
 			params[OptionStringAuthCredentials] = decodedCreds
+			queryParams.Del("AuthCredentials")
 		case 3:
 			params[OptionStringAuthType] = OptionValueAuthTypeUserAuthentication
 
@@ -341,12 +343,16 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 			params[OptionStringAuthClientID] = clientID
 			params[OptionStringAuthClientSecret] = clientSecret
 			params[OptionStringAuthRefreshToken] = refreshToken
+			queryParams.Del("AuthClientId")
+			queryParams.Del("AuthClientSecret")
+			queryParams.Del("AuthRefreshToken")
 		default:
 			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %d", oauthType),
 			}
 		}
+		queryParams.Del("OAuthType")
 	} else {
 		// if not provided default to ADC
 		params[OptionStringAuthType] = OptionValueAuthTypeAppDefaultCredentials
@@ -372,12 +378,6 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 
 	// Process all query parameters to convert URI params to option constants
 	for paramName, paramValues := range queryParams {
-		// Skip parameters that are already processed in OAuthType switch above
-		if paramName == "OAuthType" || paramName == "AuthCredentials" || paramName == "AuthClientId" ||
-			paramName == "AuthClientSecret" || paramName == "AuthRefreshToken" {
-			continue
-		}
-
 		if optionName, exists := parameterMap[paramName]; exists {
 			params[optionName] = paramValues[0]
 		} else {
