@@ -69,6 +69,11 @@ type statement struct {
 	execution *statementExecution
 	// Query and bulk-ingest paths wait for each job before submitting the next.
 	activeJob *jobCancellation
+
+	// Route through a secondary bigquery.Client whose Storage Read API is
+	// NOT enabled. Required for queries that reference pseudo-columns like
+	// _PARTITIONDATE or _PARTITIONTIME, which return null over Storage.
+	useStorageApiDisabledClient bool
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -159,6 +164,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionQueryUseStorageApiDisabledClient:
+		return strconv.FormatBool(st.useStorageApiDisabledClient), nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -322,6 +329,12 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		} else {
 			return err
 		}
+	case OptionQueryUseStorageApiDisabledClient:
+		val, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		st.useStorageApiDisabledClient = val
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -406,6 +419,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
+	ctx = context.WithValue(ctx, ContextKeyUseStorageApiDisabledClient, st.useStorageApiDisabledClient)
 	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
 	if err != nil {
@@ -426,6 +440,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 		return n, err
 	}
 
+	ctx = context.WithValue(ctx, ContextKeyUseStorageApiDisabledClient, st.useStorageApiDisabledClient)
 	if st.params == nil {
 		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
 		if err != nil {
@@ -530,7 +545,23 @@ func (st *statement) SetSubstraitPlan(ctx context.Context, plan []byte) error {
 }
 
 func (st *statement) query() *bigquery.Query {
-	query := st.cnxn.client.Query("")
+	var client *bigquery.Client
+	if st.useStorageApiDisabledClient {
+		// Lazily create the secondary client. If creation fails for any
+		// reason fall back to the main client; callers that strictly require
+		// pseudo-column support will surface the issue via a subsequent
+		// query error.
+		c, err := st.cnxn.getOrCreateStorageApiDisabledClient(context.Background())
+		if err != nil {
+			st.cnxn.Logger.Warn("[bq] failed to create non-storage-api client; falling back", "error", err)
+			client = st.cnxn.client
+		} else {
+			client = c
+		}
+	} else {
+		client = st.cnxn.client
+	}
+	query := client.Query("")
 	query.QueryConfig = st.queryConfig
 	if sessionId := st.cnxn.sessionID; sessionId != nil && *sessionId != "" {
 		query.ConnectionProperties = append(query.ConnectionProperties, &bigquery.ConnectionProperty{

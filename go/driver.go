@@ -95,6 +95,19 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// OptionQueryUseStorageApiDisabledClient instructs the driver to use the legacy
+	// RowIterator API instead of the Storage Read API. This is required for queries
+	// that reference pseudo-columns like _PARTITIONDATE and _PARTITIONTIME, which
+	// return null over the Storage Read API.
+	OptionQueryUseStorageApiDisabledClient = "bigquery.query.use_storage_api_disabled_client"
+
+	// ContextKeyUseStorageApiDisabledClient signals to runQuery via
+	// context that it should fall back to the row-based iterator
+	// (bigquery.RowIterator + rowsToArrowRecordBatch) instead of the
+	// Storage Read API, so pseudo-columns like _PARTITIONDATE return
+	// values instead of nulls.
+	ContextKeyUseStorageApiDisabledClient = "USE_STORAGE_API_DISABLED_CLIENT"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
@@ -137,49 +150,50 @@ var (
 
 	// Accept old option values, but document/encourage the new ones
 	optionRemapping = map[string]string{
-		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
-		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
-		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,
-		"adbc.bigquery.sql.auth.refresh_token":                OptionAuthRefreshToken,
-		"adbc.bigquery.sql.auth_credentials":                  OptionAuthCredentials,
-		"adbc.bigquery.sql.auth_type":                         OptionAuthType,
-		"adbc.bigquery.sql.auth_type.anonymous":               OptionValueAuthTypeAnonymous,
-		"adbc.bigquery.sql.auth_type.app_default_credentials": OptionValueAuthTypeAppDefaultCredentials,
-		"adbc.bigquery.sql.auth_type.auth_bigquery":           OptionValueAuthTypeDefault,
-		"adbc.bigquery.sql.auth_type.json_credential_file":    OptionValueAuthTypeJSONCredentialFile,
-		"adbc.bigquery.sql.auth_type.json_credential_string":  OptionValueAuthTypeJSONCredentialString,
-		"adbc.bigquery.sql.auth_type.json_credentials":        OptionValueAuthTypeJSONCredentials,
-		"adbc.bigquery.sql.auth_type.oauth_client_ids":        OptionValueAuthTypeOAuthClientIDs,
-		"adbc.bigquery.sql.auth_type.user_authentication":     OptionValueAuthTypeUserAuthentication,
-		"adbc.bigquery.sql.dataset_id":                        OptionDatasetID,
-		"adbc.bigquery.sql.endpoint":                          OptionEndpoint,
-		"adbc.bigquery.sql.impersonate.delegates":             OptionImpersonateDelegates,
-		"adbc.bigquery.sql.impersonate.lifetime":              OptionImpersonateLifetime,
-		"adbc.bigquery.sql.impersonate.scopes":                OptionImpersonateScopes,
-		"adbc.bigquery.sql.impersonate.target_principal":      OptionImpersonateTargetPrincipal,
-		"adbc.bigquery.sql.location":                          OptionLocation,
-		"adbc.bigquery.sql.project_id":                        OptionProjectID,
-		"adbc.bigquery.sql.query.allow_large_results":         OptionQueryAllowLargeResults,
-		"adbc.bigquery.sql.query.create_disposition":          OptionQueryCreateDisposition,
-		"adbc.bigquery.sql.query.create_session":              OptionQueryCreateSession,
-		"adbc.bigquery.sql.query.default_dataset_id":          OptionQueryDefaultDatasetID,
-		"adbc.bigquery.sql.query.default_project_id":          OptionQueryDefaultProjectID,
-		"adbc.bigquery.sql.query.destination_table":           OptionQueryDestinationTable,
-		"adbc.bigquery.sql.query.disable_flattened_results":   OptionQueryDisableFlattenedResults,
-		"adbc.bigquery.sql.query.disable_query_cache":         OptionQueryDisableQueryCache,
-		"adbc.bigquery.sql.query.dry_run":                     OptionQueryDryRun,
-		"adbc.bigquery.sql.query.job_timeout":                 OptionQueryJobTimeout,
-		"adbc.bigquery.sql.query.max_billing_tier":            OptionQueryMaxBillingTier,
-		"adbc.bigquery.sql.query.max_bytes_billed":            OptionQueryMaxBytesBilled,
-		"adbc.bigquery.sql.query.parameter_mode":              OptionQueryParameterMode,
-		"adbc.bigquery.sql.query.parameter_mode_named":        OptionValueQueryParameterModeNamed,
-		"adbc.bigquery.sql.query.parameter_mode_positional":   OptionValueQueryParameterModePositional,
-		"adbc.bigquery.sql.query.prefetch_concurrency":        OptionQueryPrefetchConcurrency,
-		"adbc.bigquery.sql.query.priority":                    OptionQueryPriority,
-		"adbc.bigquery.sql.query.result_buffer_size":          OptionQueryResultBufferSize,
-		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
-		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
-		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
+		"adbc.bigquery.sql.auth.client_id":                        OptionAuthClientID,
+		"adbc.bigquery.sql.auth.client_secret":                    OptionAuthClientSecret,
+		"adbc.bigquery.sql.auth.quota_project":                    OptionAuthQuotaProject,
+		"adbc.bigquery.sql.auth.refresh_token":                    OptionAuthRefreshToken,
+		"adbc.bigquery.sql.auth_credentials":                      OptionAuthCredentials,
+		"adbc.bigquery.sql.auth_type":                             OptionAuthType,
+		"adbc.bigquery.sql.auth_type.anonymous":                   OptionValueAuthTypeAnonymous,
+		"adbc.bigquery.sql.auth_type.app_default_credentials":     OptionValueAuthTypeAppDefaultCredentials,
+		"adbc.bigquery.sql.auth_type.auth_bigquery":               OptionValueAuthTypeDefault,
+		"adbc.bigquery.sql.auth_type.json_credential_file":        OptionValueAuthTypeJSONCredentialFile,
+		"adbc.bigquery.sql.auth_type.json_credential_string":      OptionValueAuthTypeJSONCredentialString,
+		"adbc.bigquery.sql.auth_type.json_credentials":            OptionValueAuthTypeJSONCredentials,
+		"adbc.bigquery.sql.auth_type.oauth_client_ids":            OptionValueAuthTypeOAuthClientIDs,
+		"adbc.bigquery.sql.auth_type.user_authentication":         OptionValueAuthTypeUserAuthentication,
+		"adbc.bigquery.sql.dataset_id":                            OptionDatasetID,
+		"adbc.bigquery.sql.endpoint":                              OptionEndpoint,
+		"adbc.bigquery.sql.impersonate.delegates":                 OptionImpersonateDelegates,
+		"adbc.bigquery.sql.impersonate.lifetime":                  OptionImpersonateLifetime,
+		"adbc.bigquery.sql.impersonate.scopes":                    OptionImpersonateScopes,
+		"adbc.bigquery.sql.impersonate.target_principal":          OptionImpersonateTargetPrincipal,
+		"adbc.bigquery.sql.location":                              OptionLocation,
+		"adbc.bigquery.sql.project_id":                            OptionProjectID,
+		"adbc.bigquery.sql.query.allow_large_results":             OptionQueryAllowLargeResults,
+		"adbc.bigquery.sql.query.create_disposition":              OptionQueryCreateDisposition,
+		"adbc.bigquery.sql.query.create_session":                  OptionQueryCreateSession,
+		"adbc.bigquery.sql.query.default_dataset_id":              OptionQueryDefaultDatasetID,
+		"adbc.bigquery.sql.query.default_project_id":              OptionQueryDefaultProjectID,
+		"adbc.bigquery.sql.query.destination_table":               OptionQueryDestinationTable,
+		"adbc.bigquery.sql.query.disable_flattened_results":       OptionQueryDisableFlattenedResults,
+		"adbc.bigquery.sql.query.disable_query_cache":             OptionQueryDisableQueryCache,
+		"adbc.bigquery.sql.query.dry_run":                         OptionQueryDryRun,
+		"adbc.bigquery.sql.query.job_timeout":                     OptionQueryJobTimeout,
+		"adbc.bigquery.sql.query.max_billing_tier":                OptionQueryMaxBillingTier,
+		"adbc.bigquery.sql.query.max_bytes_billed":                OptionQueryMaxBytesBilled,
+		"adbc.bigquery.sql.query.parameter_mode":                  OptionQueryParameterMode,
+		"adbc.bigquery.sql.query.parameter_mode_named":            OptionValueQueryParameterModeNamed,
+		"adbc.bigquery.sql.query.parameter_mode_positional":       OptionValueQueryParameterModePositional,
+		"adbc.bigquery.sql.query.prefetch_concurrency":            OptionQueryPrefetchConcurrency,
+		"adbc.bigquery.sql.query.priority":                        OptionQueryPriority,
+		"adbc.bigquery.sql.query.result_buffer_size":              OptionQueryResultBufferSize,
+		"adbc.bigquery.sql.query.use_legacy_sql":                  OptionQueryUseLegacySQL,
+		"adbc.bigquery.sql.query.use_storage_api_disabled_client": OptionQueryUseStorageApiDisabledClient,
+		"adbc.bigquery.sql.query.write_disposition":               OptionQueryWriteDisposition,
+		"adbc.bigquery.sql.storage_endpoint":                      OptionStorageEndpoint,
 	}
 )
 
