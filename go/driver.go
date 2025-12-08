@@ -179,6 +179,8 @@ const (
 	OptionStringIngestPath          = "adbc.bigquery.ingest.csv_filepath"
 	OptionStringIngestSchema        = "adbc.bigquery.ingest.csv_schema"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
 	// Dataproc / Python models options — used by the fs python-model
 	// submission path in fs/sa/crates/dbt-adapter/src/python/bigquery.
 	OptionStringDataprocReqRegion               = "adbc.bigquery.dataproc.compute_region"
@@ -192,6 +194,19 @@ const (
 	OptionStringWriteGCSBucket                  = "adbc.bigquery.write_gcs.bucket"
 	OptionStringWriteGCSObjectName              = "adbc.bigquery.write_gcs.object_name"
 	OptionStringWriteGCSContent                 = "adbc.bigquery.write_gcs.content"
+
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// Vertex AI Notebook execution options — used by dbt python models
+	// via bigframes.
+	OptionStringNotebookExecuteJobGscPath       = "adbc.bigquery.notebook_execute_job.gsc_path"
+	OptionStringNotebookExecuteJobModelFileName = "adbc.bigquery.notebook_execute_job.model_file_name"
+	OptionStringNotebookExecuteJobModelName     = "adbc.bigquery.notebook_execute_job.model_name"
+	OptionStringNotebookExecuteJobGscBucket     = "adbc.bigquery.notebook_execute_job.gsc_bucket"
+	OptionStringNotebookExecuteJobTemplateId    = "adbc.bigquery.notebook_execute_job.template_id"
+	OptionStringNotebookExecuteJobParent        = "adbc.bigquery.notebook_execute_job.parent"
+	OptionStringNotebookExecuteJobProject       = "adbc.bigquery.notebook_execute_job.project"
+	OptionStringNotebookExecuteJobRegion        = "adbc.bigquery.notebook_execute_job.region"
 
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10

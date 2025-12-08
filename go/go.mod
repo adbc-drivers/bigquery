@@ -18,6 +18,7 @@ go 1.26.1
 
 require (
 	cloud.google.com/go v0.123.0
+	cloud.google.com/go/aiplatform v1.125.0
 	cloud.google.com/go/auth v0.20.0
 	cloud.google.com/go/bigquery v1.77.0
 	cloud.google.com/go/dataproc/v2 v2.24.0
