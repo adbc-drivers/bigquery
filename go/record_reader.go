@@ -66,7 +66,7 @@ func checkContext(ctx context.Context, maybeErr error) error {
 	return ctx.Err()
 }
 
-func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool, linkFailedJob bool) (bigquery.ArrowIterator, *bigquery.JobStatus, int64, error) {
+func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool, linkFailedJob bool, alloc memory.Allocator) (bigquery.ArrowIterator, *bigquery.JobStatus, int64, error) {
 	job, err := query.Run(ctx)
 	if err != nil {
 		return nil, nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
@@ -140,21 +140,35 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// iter.TotalRows == 0 (this is valid as per the API: the field is not
 	// _necessarily_ populated until after a call to Next). Finally we use
 	// job statistics instead
+	// If the caller opted into the row-based (Storage-API-disabled) reader
+	// via ctx, skip Storage entirely — the Arrow iterator returned by
+	// RowIterator would silently null out pseudo-columns like
+	// _PARTITIONDATE / _PARTITIONTIME. Requires the caller to have run the
+	// query through a client without EnableStorageReadClient (see
+	// connectionImpl.getOrCreateStorageApiDisabledClient), which they'll
+	// do by consulting statement.useStorageApiDisabledClient.
+	useLegacyAPI := false
+	if v, ok := ctx.Value(ContextKeyUseStorageApiDisabledClient).(bool); ok {
+		useLegacyAPI = v
+	}
 	if isSelectOrCall {
-		// !IsAccelerated() -> failed to get Arrow stream -> we are
-		// probably lacking permissions.  readSessionUser may sound
-		// unrelated but creating a "read session" is the first step
-		// of using the Storage API.  Note that Google swallows the
-		// real error, so this is the best we can do.
-		// https://cloud.google.com/bigquery/docs/reference/storage#create_a_session
-		if !iter.IsAccelerated() {
+		if useLegacyAPI {
+			arrowIterator = newRowBasedArrowIterator(iter, alloc)
+		} else if !iter.IsAccelerated() {
+			// !IsAccelerated() -> failed to get Arrow stream -> we are
+			// probably lacking permissions.  readSessionUser may sound
+			// unrelated but creating a "read session" is the first step
+			// of using the Storage API.  Note that Google swallows the
+			// real error, so this is the best we can do.
+			// https://cloud.google.com/bigquery/docs/reference/storage#create_a_session
 			return nil, js, -1, wrap(adbc.Error{
 				Code: adbc.StatusUnauthorized,
 				Msg:  "[bq] Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282",
 			})
-		}
-		if arrowIterator, err = iter.ArrowIterator(); err != nil {
-			return nil, js, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
+		} else {
+			if arrowIterator, err = iter.ArrowIterator(); err != nil {
+				return nil, js, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
+			}
 		}
 	} else {
 		arrowIterator = emptyArrowIterator{iter.Schema}
@@ -234,7 +248,7 @@ func makeDryRunReader(js *bigquery.JobStatus, jobID string) (array.RecordReader,
 }
 
 func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, linkFailedJob bool) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
-	arrowIterator, jobStatus, totalRows, err := runQuery(ctx, logger, query, false, linkFailedJob)
+	arrowIterator, jobStatus, totalRows, err := runQuery(ctx, logger, query, false, linkFailedJob, alloc)
 	if err != nil {
 		return nil, -1, err
 	} else if query.DryRun || arrowIterator == nil {
@@ -298,7 +312,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			query.Parameters = parameters
 		}
 
-		arrowIterator, jobStatus, rows, err := runQuery(ctx, logger, query, false, linkFailedJob)
+		arrowIterator, jobStatus, rows, err := runQuery(ctx, logger, query, false, linkFailedJob, alloc)
 		if err != nil {
 			return -1, err
 		} else if arrowIterator == nil {

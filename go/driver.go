@@ -127,6 +127,21 @@ const (
 	// (Option is stored but the error-wrapping path is a TODO; see FINDINGS.)
 	OptionBoolQueryLinkFailedJob = "adbc.bigquery.sql.query.link_failed_job"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// OptionBoolUseStorageApiDisabledClient instructs the driver to use the legacy
+	// RowIterator API instead of the Storage Read API. This is required for queries
+	// that reference pseudo-columns like _PARTITIONDATE and _PARTITIONTIME, which
+	// return null over the Storage Read API.
+	OptionBoolUseStorageApiDisabledClient = "adbc.bigquery.sql.query.use_storage_api_disabled_client"
+
+	// ContextKeyUseStorageApiDisabledClient signals to runQuery via
+	// context that it should fall back to the row-based iterator
+	// (bigquery.RowIterator + rowsToArrowRecordBatch) instead of the
+	// Storage Read API, so pseudo-columns like _PARTITIONDATE return
+	// values instead of nulls.
+	ContextKeyUseStorageApiDisabledClient = "USE_STORAGE_API_DISABLED_CLIENT"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
