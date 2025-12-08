@@ -142,6 +142,15 @@ const (
 	// values instead of nulls.
 	ContextKeyUseStorageApiDisabledClient = "USE_STORAGE_API_DISABLED_CLIENT"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// Copy table options — copy_table.source and copy_table.destination each accept
+	// a `[[project.]dataset.]table` reference; write_disposition takes a standard
+	// BigQuery WRITE_TRUNCATE/WRITE_APPEND/WRITE_EMPTY value.
+	OptionStringCopyTableSource           = "adbc.bigquery.copy_table.source"
+	OptionStringCopyTableDestination      = "adbc.bigquery.copy_table.destination"
+	OptionStringCopyTableWriteDisposition = "adbc.bigquery.copy_table.write_disposition"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 

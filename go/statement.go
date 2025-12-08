@@ -71,6 +71,12 @@ type statement struct {
 	// NOT enabled. Required for queries that reference pseudo-columns like
 	// _PARTITIONDATE or _PARTITIONTIME, which return null over Storage.
 	useStorageApiDisabledClient bool
+
+	// Server-side table copy configuration. When copyTableSource is set
+	// ExecuteQuery routes through executeCopyTable instead of running SQL.
+	copyTableSource           string
+	copyTableDestination      string
+	copyTableWriteDisposition string
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -164,6 +170,12 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.linkFailedJob), nil
 	case OptionBoolUseStorageApiDisabledClient:
 		return strconv.FormatBool(st.useStorageApiDisabledClient), nil
+	case OptionStringCopyTableSource:
+		return st.copyTableSource, nil
+	case OptionStringCopyTableDestination:
+		return st.copyTableDestination, nil
+	case OptionStringCopyTableWriteDisposition:
+		return st.copyTableWriteDisposition, nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -348,6 +360,12 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			return err
 		}
 		st.useStorageApiDisabledClient = val
+	case OptionStringCopyTableSource:
+		st.copyTableSource = v
+	case OptionStringCopyTableDestination:
+		st.copyTableDestination = v
+	case OptionStringCopyTableWriteDisposition:
+		st.copyTableWriteDisposition = v
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -418,10 +436,13 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
-	if st.ingest.TableName != "" {
+	switch {
+	case st.ingest.TableName != "":
 		n, err := st.executeIngest(ctx)
 		return nil, n, err
-	} else if st.queryConfig.Q == "" {
+	case st.copyTableSource != "":
+		return st.executeCopyTable(ctx)
+	case st.queryConfig.Q == "":
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,

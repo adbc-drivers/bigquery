@@ -913,6 +913,12 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	return nil
 }
 
+// table returns a Table handle for the (project, dataset, table) triple,
+// bound to this connection's BigQuery client.
+func (c *connectionImpl) table(project, dataset, table string) *bigquery.Table {
+	return c.client.DatasetInProject(project, dataset).Table(table)
+}
+
 // getOrCreateStorageApiDisabledClient lazily constructs (and caches) a
 // BigQuery client that has NOT had its Storage Read API enabled. Required by
 // queries that select pseudo-columns like _PARTITIONDATE/_PARTITIONTIME,
