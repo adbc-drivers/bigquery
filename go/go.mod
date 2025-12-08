@@ -17,6 +17,7 @@ module github.com/adbc-drivers/bigquery/go
 go 1.27.4
 
 require (
+	cloud.google.com/go v0.123.0
 	cloud.google.com/go/auth v0.24.3
 	cloud.google.com/go/bigquery v1.86.2
 	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20261109034954-869784ceb17f
@@ -35,7 +36,6 @@ require (
 )
 
 require (
-	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.1 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	cloud.google.com/go/iam v1.15.1 // indirect
