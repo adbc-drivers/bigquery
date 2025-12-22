@@ -25,6 +25,8 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +55,7 @@ type databaseImpl struct {
 	tableID      string
 	location     string
 	quotaProject string
+	endpoint     string
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
@@ -71,6 +74,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		catalog:                    d.projectID,
 		dbSchema:                   d.datasetID,
 		location:                   d.location,
+		endpoint:                   d.endpoint,
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
@@ -113,6 +117,8 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 		return d.datasetID, nil
 	case OptionStringTableID:
 		return d.tableID, nil
+	case OptionStringEndpoint:
+		return d.endpoint, nil
 	case OptionStringImpersonateLifetime:
 		if d.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
@@ -145,6 +151,18 @@ func (d *databaseImpl) hasImpersonationOptions() bool {
 
 func (d *databaseImpl) SetOption(key string, value string) error {
 	switch key {
+	case "uri":
+		params, err := ParseBigQueryURIToParams(value)
+		if err != nil {
+			return err
+		}
+
+		for paramKey, paramValue := range params {
+			if err := d.SetOption(paramKey, paramValue); err != nil {
+				return err
+			}
+		}
+		return nil
 	case OptionStringAuthType:
 		switch value {
 		case OptionValueAuthTypeDefault,
@@ -190,10 +208,185 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		d.datasetID = value
 	case OptionStringTableID:
 		d.tableID = value
+	case OptionStringEndpoint:
+		d.endpoint = value
 	case OptionStringLocation:
 		d.location = value
 	default:
 		return d.DatabaseImplBase.SetOption(key, value)
 	}
 	return nil
+}
+
+// ParseBigQueryURIToParams parses a BigQuery URI and returns the extracted parameters
+func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
+	if uri == "" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] URI cannot be empty",
+		}
+	}
+
+	parsedURI, err := url.Parse(uri)
+	if err != nil {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid BigQuery URI format: %v", err),
+		}
+	}
+
+	if parsedURI.Scheme != "bigquery" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid BigQuery URI scheme: expected 'bigquery', got '%s'", parsedURI.Scheme),
+		}
+	}
+
+	projectID := strings.TrimPrefix(parsedURI.Path, "/")
+	if projectID == "" {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] project ID is required in URI path",
+		}
+	}
+
+	params := make(map[string]string)
+	params[OptionStringProjectID] = projectID
+
+	// Handle host and port
+	var endpoint string
+	if parsedURI.Host != "" && parsedURI.Hostname() != "" {
+		// Custom endpoint specified with valid hostname
+		if parsedURI.Port() != "" {
+			endpoint = parsedURI.Host
+		} else {
+			endpoint = fmt.Sprintf("%s:443", parsedURI.Hostname())
+		}
+	} else if parsedURI.Host != "" && parsedURI.Hostname() == "" && parsedURI.Port() != "" {
+		// Port without hostname. use default host with custom port
+		endpoint = fmt.Sprintf("bigquery.googleapis.com:%s", parsedURI.Port())
+	} else {
+		// No host specified, use default BigQuery endpoint
+		endpoint = "bigquery.googleapis.com:443"
+	}
+
+	// Store endpoint as hostname:port (Google client library handles https:// internally)
+	params[OptionStringEndpoint] = endpoint
+
+	queryParams := parsedURI.Query()
+
+	oauthTypeStr := queryParams.Get("OAuthType")
+	if oauthTypeStr != "" {
+		oauthType, err := strconv.Atoi(oauthTypeStr)
+		if err != nil {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %s", oauthTypeStr),
+			}
+		}
+
+		switch oauthType {
+		case 0:
+			params[OptionStringAuthType] = OptionValueAuthTypeAppDefaultCredentials
+		case 1:
+			params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialFile
+
+			authCredentials := queryParams.Get("AuthCredentials")
+			if authCredentials == "" {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  "[bq] AuthCredentials required for service account authentication",
+				}
+			}
+
+			decodedCreds, err := url.QueryUnescape(authCredentials)
+			if err != nil {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+				}
+			}
+			params[OptionStringAuthCredentials] = decodedCreds
+			queryParams.Del("AuthCredentials")
+		case 2:
+			params[OptionStringAuthType] = OptionValueAuthTypeJSONCredentialString
+
+			authCredentials := queryParams.Get("AuthCredentials")
+			if authCredentials == "" {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  "[bq] AuthCredentials required for service account authentication",
+				}
+			}
+
+			decodedCreds, err := url.QueryUnescape(authCredentials)
+			if err != nil {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  fmt.Sprintf("[bq] invalid AuthCredentials format: %v", err),
+				}
+			}
+			params[OptionStringAuthCredentials] = decodedCreds
+			queryParams.Del("AuthCredentials")
+		case 3:
+			params[OptionStringAuthType] = OptionValueAuthTypeUserAuthentication
+
+			clientID := queryParams.Get("AuthClientId")
+			clientSecret := queryParams.Get("AuthClientSecret")
+			refreshToken := queryParams.Get("AuthRefreshToken")
+			if clientID == "" || clientSecret == "" || refreshToken == "" {
+				return nil, adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  "[bq] AuthClientId, AuthClientSecret and AuthRefreshToken required for OAuth authentication",
+				}
+			}
+			params[OptionStringAuthClientID] = clientID
+			params[OptionStringAuthClientSecret] = clientSecret
+			params[OptionStringAuthRefreshToken] = refreshToken
+			queryParams.Del("AuthClientId")
+			queryParams.Del("AuthClientSecret")
+			queryParams.Del("AuthRefreshToken")
+		default:
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid OAuthType value: %d", oauthType),
+			}
+		}
+		queryParams.Del("OAuthType")
+	} else {
+		// if not provided default to ADC
+		params[OptionStringAuthType] = OptionValueAuthTypeAppDefaultCredentials
+	}
+
+	parameterMap := map[string]string{
+		"DatasetId":    OptionStringDatasetID,
+		"Location":     OptionStringLocation,
+		"TableId":      OptionStringTableID,
+		"QuotaProject": OptionStringAuthQuotaProject,
+
+		// Auth parameters - processed in OAuthType switch above, here for consistency
+		"AuthCredentials":  OptionStringAuthCredentials,
+		"AuthClientId":     OptionStringAuthClientID,
+		"AuthClientSecret": OptionStringAuthClientSecret,
+		"AuthRefreshToken": OptionStringAuthRefreshToken,
+
+		"ImpersonateTargetPrincipal": OptionStringImpersonateTargetPrincipal,
+		"ImpersonateDelegates":       OptionStringImpersonateDelegates,
+		"ImpersonateScopes":          OptionStringImpersonateScopes,
+		"ImpersonateLifetime":        OptionStringImpersonateLifetime,
+	}
+
+	// Process all query parameters to convert URI params to option constants
+	for paramName, paramValues := range queryParams {
+		if optionName, exists := parameterMap[paramName]; exists {
+			params[optionName] = paramValues[0]
+		} else {
+			return nil, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] unknown parameter '%s' in URI", paramName),
+			}
+		}
+	}
+
+	return params, nil
 }
