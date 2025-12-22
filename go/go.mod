@@ -17,7 +17,7 @@ module github.com/adbc-drivers/bigquery/go
 go 1.25.5
 
 require (
-	cloud.google.com/go/auth v0.17.0
+	cloud.google.com/go/auth v0.18.0
 	cloud.google.com/go/bigquery v1.72.0
 	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20251215145213-df04bfe8de4f
 	github.com/apache/arrow-adbc/go/adbc v1.9.0
