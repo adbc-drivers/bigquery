@@ -35,12 +35,15 @@ import (
 )
 
 const (
-	OptionStringAuthType  = "adbc.bigquery.sql.auth_type"
-	OptionStringLocation  = "adbc.bigquery.sql.location"
-	OptionStringProjectID = "adbc.bigquery.sql.project_id"
-	OptionStringDatasetID = "adbc.bigquery.sql.dataset_id"
-	OptionStringTableID   = "adbc.bigquery.sql.table_id"
-	OptionStringEndpoint  = "adbc.bigquery.sql.endpoint"
+	OptionStringAuthType = "adbc.bigquery.sql.auth_type"
+	// https://pkg.go.dev/google.golang.org/api@v0.258.0/option#WithAuthCredentialsJSON
+	// https://pkg.go.dev/google.golang.org/api@v0.258.0/internal/credentialstype#CredType
+	OptionAuthCredentialsType = "bigquery.auth.credentials_type"
+	OptionStringLocation      = "adbc.bigquery.sql.location"
+	OptionStringProjectID     = "adbc.bigquery.sql.project_id"
+	OptionStringDatasetID     = "adbc.bigquery.sql.dataset_id"
+	OptionStringTableID       = "adbc.bigquery.sql.table_id"
+	OptionStringEndpoint      = "adbc.bigquery.sql.endpoint"
 
 	OptionValueAuthTypeDefault = "adbc.bigquery.sql.auth_type.auth_bigquery"
 
