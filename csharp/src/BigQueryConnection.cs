@@ -141,6 +141,8 @@ namespace AdbcDrivers.BigQuery
         /// <returns></returns>
         internal bool IsSafeToTrace => _fileActivityListener != null;
 
+        internal bool CreateLargeResultsDataset { get; private set; } = true;
+
         /// <summary>
         /// The function to call when updating the token.
         /// </summary>
@@ -219,6 +221,13 @@ namespace AdbcDrivers.BigQuery
                 {
                     clientTimeout = TimeSpan.FromSeconds(seconds);
                     activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, seconds);
+                }
+
+                if (this.properties.TryGetValue(BigQueryParameters.CreateLargeResultsDataset, out string? sCreateLargeResultDataset) &&
+                   bool.TryParse(sCreateLargeResultDataset, out bool createLargeResultDataset))
+                {
+                    CreateLargeResultsDataset = createLargeResultDataset;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.CreateLargeResultsDataset, createLargeResultDataset);
                 }
 
                 SetCredential();
