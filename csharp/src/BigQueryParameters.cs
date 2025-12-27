@@ -58,12 +58,18 @@ namespace AdbcDrivers.BigQuery
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
 
+        /// <summary>
+        /// Indicates whether the driver should create the dataset specified in the
+        /// <see cref="LargeResultsDataset"/> parameter if it does not already exist.
+        /// </summary>
+        public const string CreateLargeResultsDataset = "adbc.bigquery.create_large_results_dataset";
+
         // these values are safe to log any time
         private static HashSet<string> safeToLog = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
-            IncludePublicProjectId, LargeDecimalsAsString, LargeResultsDataset, LargeResultsDestinationTable,
+            IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
             StatementType, UseLegacySQL
         };

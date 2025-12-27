@@ -515,6 +515,7 @@ namespace AdbcDrivers.BigQuery
         /// Attempts to retrieve or create the specified dataset.
         /// </summary>
         /// <param name="datasetId">The name of the dataset.</param>
+        /// <param name="activity">The current activity for tracing.</param>
         /// <returns>A <see cref="TableReference"/> to a randomly generated table name in the specified dataset.</returns>
         private TableReference TryGetLargeDestinationTableReference(string datasetId, Activity? activity)
         {
@@ -535,7 +536,25 @@ namespace AdbcDrivers.BigQuery
                 }
             }
 
-            if (dataset == null)
+            if (dataset == null && !datasetId.Equals(BigQueryConstants.DefaultLargeDatasetId, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    activity?.AddBigQueryTag("large_results.dataset.try_find_default", BigQueryConstants.DefaultLargeDatasetId);
+                    dataset = this.Client.GetDataset(BigQueryConstants.DefaultLargeDatasetId);
+                    activity?.AddBigQueryTag("large_results.dataset.found_default", BigQueryConstants.DefaultLargeDatasetId);
+                }
+                catch (GoogleApiException gaEx)
+                {
+                    if (gaEx.HttpStatusCode != System.Net.HttpStatusCode.NotFound)
+                    {
+                        activity?.AddException(gaEx);
+                        throw new AdbcException($"Failure trying to retrieve dataset {BigQueryConstants.DefaultLargeDatasetId}", gaEx);
+                    }
+                }
+            }
+
+            if (dataset == null && bigQueryConnection.CreateLargeResultsDataset)
             {
                 try
                 {

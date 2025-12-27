@@ -82,6 +82,9 @@ namespace AdbcDrivers.BigQuery.Tests
         [JsonPropertyName("largeResultsDataset")]
         public string LargeResultsDataset { get; set; } = string.Empty;
 
+        [JsonPropertyName("createLargeResultsDataset")]
+        public bool CreateLargeResultsDataset { get; set; } = true;
+
         [JsonPropertyName("largeResultsDestinationTable")]
         public string LargeResultsDestinationTable { get; set; } = string.Empty;
 
