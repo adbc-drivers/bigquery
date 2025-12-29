@@ -515,6 +515,7 @@ namespace AdbcDrivers.BigQuery
         /// Attempts to retrieve or create the specified dataset.
         /// </summary>
         /// <param name="datasetId">The name of the dataset.</param>
+        /// <param name="activity">The current activity for tracing.</param>
         /// <returns>A <see cref="TableReference"/> to a randomly generated table name in the specified dataset.</returns>
         private TableReference TryGetLargeDestinationTableReference(string datasetId, Activity? activity)
         {
@@ -535,7 +536,7 @@ namespace AdbcDrivers.BigQuery
                 }
             }
 
-            if (dataset == null)
+            if (dataset == null && bigQueryConnection.CreateLargeResultsDataset)
             {
                 try
                 {

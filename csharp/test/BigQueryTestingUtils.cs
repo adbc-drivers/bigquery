@@ -158,6 +158,8 @@ namespace AdbcDrivers.BigQuery.Tests
 
             parameters.Add(BigQueryParameters.LargeDecimalsAsString, testEnvironment.LargeDecimalAsString.ToString());
 
+            parameters.Add(BigQueryParameters.CreateLargeResultsDataset, testEnvironment.CreateLargeResultsDataset.ToString());
+
             if (!string.IsNullOrEmpty(testEnvironment.LargeResultsDataset))
             {
                 parameters.Add(BigQueryParameters.LargeResultsDataset, testEnvironment.LargeResultsDataset);
