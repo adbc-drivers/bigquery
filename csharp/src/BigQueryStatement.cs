@@ -536,24 +536,6 @@ namespace AdbcDrivers.BigQuery
                 }
             }
 
-            if (dataset == null && !datasetId.Equals(BigQueryConstants.DefaultLargeDatasetId, StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    activity?.AddBigQueryTag("large_results.dataset.try_find_default", BigQueryConstants.DefaultLargeDatasetId);
-                    dataset = this.Client.GetDataset(BigQueryConstants.DefaultLargeDatasetId);
-                    activity?.AddBigQueryTag("large_results.dataset.found_default", BigQueryConstants.DefaultLargeDatasetId);
-                }
-                catch (GoogleApiException gaEx)
-                {
-                    if (gaEx.HttpStatusCode != System.Net.HttpStatusCode.NotFound)
-                    {
-                        activity?.AddException(gaEx);
-                        throw new AdbcException($"Failure trying to retrieve dataset {BigQueryConstants.DefaultLargeDatasetId}", gaEx);
-                    }
-                }
-            }
-
             if (dataset == null && bigQueryConnection.CreateLargeResultsDataset)
             {
                 try

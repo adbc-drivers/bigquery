@@ -36,7 +36,7 @@ repos:
   rev: e6ebea0145f385056bce15041d3244c0e5e15848  # frozen: v2.7.0
   hooks:
   - id: golangci-lint
-    entry: bash -c 'cd go && golangci-lint run --fix --timeout 5m; ret=$?; if [ $ret -eq 5 ]; then exit 0; else exit $ret; fi'
+    entry: bash -c 'cd go && golangci-lint run --fix --timeout 5m'
     types_or: [go, go-mod]
 
 - repo: https://github.com/pre-commit/pre-commit-hooks
