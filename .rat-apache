@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+.github/workflows/dev_issues.yaml
 csharp/.gitignore
 csharp/Directory.Build.props
 csharp/src/ActivityExtensions.cs
