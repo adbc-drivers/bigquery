@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"cloud.google.com/go/auth"
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
+	"github.com/googleapis/gax-go/v2"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
 )
@@ -45,7 +47,13 @@ func quoteIdentifier(ident string) string {
 // "I got an error that my API request was rate limited" and "I got an error
 // that my job was rate limited" because their internal APIs mix both errors
 // into a single error path.)
-func safeWaitForJob(ctx context.Context, job *bigquery.Job) (js *bigquery.JobStatus, err error) {
+func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job) (js *bigquery.JobStatus, err error) {
+	logger.DebugContext(ctx, "waiting for job", "id", job.ID())
+	backoff := gax.Backoff{
+		Initial:    50 * time.Millisecond,
+		Multiplier: 1.3,
+		Max:        60 * time.Second,
+	}
 	for {
 		js, err = func() (*bigquery.JobStatus, error) {
 			ctxWithDeadline, cancel := context.WithTimeout(ctx, time.Minute*5)
@@ -65,15 +73,26 @@ func safeWaitForJob(ctx context.Context, job *bigquery.Job) (js *bigquery.JobSta
 			// and does not put the job's error into the API call's
 			// error.
 			if isRetryableError(err) {
+				duration := backoff.Pause()
+				logger.DebugContext(ctx, "retry job", "id", job.ID(), "backoff", duration, "error", err)
+				if err := gax.Sleep(ctx, duration); err != nil {
+					return nil, err
+				}
+
 				continue
 			}
+			logger.DebugContext(ctx, "job failed", "id", job.ID(), "error", err)
 			return nil, errToAdbcErr(adbc.StatusInternal, err, "poll job status")
 		}
 
 		if js.Err() != nil || js.Done() {
 			break
 		}
+
+		duration := backoff.Pause()
+		logger.DebugContext(ctx, "job not complete", "id", job.ID(), "backoff", duration)
 	}
+	logger.DebugContext(ctx, "job complete", "id", job.ID())
 	return
 }
 
