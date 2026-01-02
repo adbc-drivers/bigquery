@@ -115,7 +115,7 @@ func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.Bul
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "run loader")
 	}
-	status, err := safeWaitForJob(ctx, job)
+	status, err := safeWaitForJob(ctx, bi.logger, job)
 	if err != nil {
 		return err
 	}
@@ -149,12 +149,15 @@ func (bi *bigqueryBulkIngestImpl) CreateTable(ctx context.Context, schema *arrow
 		if err != nil {
 			return err
 		}
-		js, err := safeWaitForJob(ctx, job)
+		js, err := safeWaitForJob(ctx, bi.logger, job)
 		if err != nil {
+			bi.logger.Debug("failed to create table", "table", bi.options.TableName, "stmt", stmt, "error", err)
 			return err
 		} else if err = js.Err(); err != nil {
+			bi.logger.Debug("failed to create table", "table", bi.options.TableName, "stmt", stmt, "error", err)
 			return errToAdbcErr(adbc.StatusInternal, err, "create table")
 		} else if !js.Done() {
+			bi.logger.Debug("failed to create table", "table", bi.options.TableName, "stmt", stmt, "error", "did not complete")
 			return adbc.Error{
 				Code: adbc.StatusInternal,
 				Msg:  "[bq] CREATE TABLE query did not complete",

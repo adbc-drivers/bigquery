@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"sync/atomic"
 
 	"cloud.google.com/go/bigquery"
@@ -60,36 +61,37 @@ func checkContext(ctx context.Context, maybeErr error) error {
 	return ctx.Err()
 }
 
-func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, int64, error) {
+func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, int64, error) {
 	job, err := query.Run(ctx)
 	if err != nil {
 		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
 	}
+
+	// XXX: Google SDK badness.  We can't use Wait here because queries that
+	// *fail* with a rateLimitExceeded (e.g. too many metadata operations)
+	// will get the *polling* retried infinitely in Google's SDK (I believe
+	// the SDK wants to retry "polling for job status" rate limit exceeded but
+	// doesn't differentiate between them because googleapi.CheckResponse
+	// appears to put the API error from the response object as an error of
+	// the API call, from digging around using a debugger.  In other words, it
+	// seems to be confusing "I got an error that my API request was rate
+	// limited" and "I got an error that my job was rate limited" because
+	// their internal APIs mix both errors into a single error path.)
+	js, err := safeWaitForJob(ctx, logger, job)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	if err := js.Err(); err != nil {
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
+	} else if !js.Done() {
+		return nil, -1, adbc.Error{
+			Code: adbc.StatusInternal,
+			Msg:  "[bq] Query job did not complete",
+		}
+	}
+
 	if executeUpdate {
-		// XXX: Google SDK badness.  We can't use Wait here because queries that
-		// *fail* with a rateLimitExceeded (e.g. too many metadata operations)
-		// will get the *polling* retried infinitely in Google's SDK (I believe
-		// the SDK wants to retry "polling for job status" rate limit exceeded but
-		// doesn't differentiate between them because googleapi.CheckResponse
-		// appears to put the API error from the response object as an error of
-		// the API call, from digging around using a debugger.  In other words, it
-		// seems to be confusing "I got an error that my API request was rate
-		// limited" and "I got an error that my job was rate limited" because
-		// their internal APIs mix both errors into a single error path.)
-		js, err := safeWaitForJob(ctx, job)
-		if err != nil {
-			return nil, -1, err
-		}
-
-		if err := js.Err(); err != nil {
-			return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
-		} else if !js.Done() {
-			return nil, -1, adbc.Error{
-				Code: adbc.StatusInternal,
-				Msg:  "[bq] Query job did not complete",
-			}
-		}
-
 		stats, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
 		if ok {
 			return nil, stats.NumDMLAffectedRows, nil
@@ -97,6 +99,8 @@ func runQuery(ctx context.Context, query *bigquery.Query, executeUpdate bool) (b
 		return nil, -1, nil
 	}
 
+	// XXX: the Google SDK badness also applies here; it makes a similar
+	// mistake with the retry, so we wait for the job above.
 	iter, err := job.Read(ctx)
 	if err != nil {
 		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "read query results")
@@ -163,8 +167,8 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 	return parameters, nil
 }
 
-func runPlainQuery(ctx context.Context, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int) (bigqueryRdr *reader, totalRows int64, err error) {
-	arrowIterator, totalRows, err := runQuery(ctx, query, false)
+func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int) (bigqueryRdr *reader, totalRows int64, err error) {
+	arrowIterator, totalRows, err := runQuery(ctx, logger, query, false)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -209,7 +213,7 @@ func runPlainQuery(ctx context.Context, query *bigquery.Query, alloc memory.Allo
 	return bigqueryRdr, totalRows, nil
 }
 
-func queryRecordWithSchemaCallback(ctx context.Context, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema)) (int64, error) {
+func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema)) (int64, error) {
 	totalRows := int64(-1)
 	for i := range int(rec.NumRows()) {
 		parameters, err := getQueryParameter(rec, i, parameterMode)
@@ -220,7 +224,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, group *errgroup.Group, q
 			query.Parameters = parameters
 		}
 
-		arrowIterator, rows, err := runQuery(ctx, query, false)
+		arrowIterator, rows, err := runQuery(ctx, logger, query, false)
 		if err != nil {
 			return -1, err
 		}
@@ -245,9 +249,9 @@ func queryRecordWithSchemaCallback(ctx context.Context, group *errgroup.Group, q
 
 // kicks off a goroutine for each endpoint and returns a reader which
 // gathers all of the records as they come in.
-func newRecordReader(ctx context.Context, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int) (bigqueryRdr *reader, totalRows int64, err error) {
+func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int) (bigqueryRdr *reader, totalRows int64, err error) {
 	if boundParameters == nil {
-		return runPlainQuery(ctx, query, alloc, resultRecordBufferSize)
+		return runPlainQuery(ctx, logger, query, alloc, resultRecordBufferSize)
 	}
 	defer boundParameters.Release()
 
@@ -283,7 +287,7 @@ func newRecordReader(ctx context.Context, query *bigquery.Query, boundParameters
 		// Each call to Record() on the record reader is allowed to release the previous record
 		// and since we're doing this sequentially
 		// we don't need to call rec.Retain() here and call call rec.Release() in queryRecordWithSchemaCallback
-		batchRows, err := queryRecordWithSchemaCallback(ctx, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
+		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
 			bigqueryRdr.schema = schema
 		})
 		if err != nil {
