@@ -326,7 +326,7 @@ func (c *connectionImpl) exec(ctx context.Context, stmt string, config func(*big
 	if err != nil {
 		return nil, err
 	}
-	status, err := safeWaitForJob(ctx, job)
+	status, err := safeWaitForJob(ctx, c.Logger, job)
 	if err != nil {
 		return nil, err
 	} else if err := status.Err(); err != nil {
