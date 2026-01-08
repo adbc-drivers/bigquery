@@ -16,11 +16,3 @@
 
 [tags]
 sql-type-name = "TIMESTAMP"
-
-// part: setup_query
-
-CREATE TABLE test_timestamptz (
-    idx INT,
-    res TIMESTAMP,
-    res2 TIMESTAMP
-);

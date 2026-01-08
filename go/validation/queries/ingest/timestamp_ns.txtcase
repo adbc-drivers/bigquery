@@ -15,12 +15,5 @@
 // part: metadata
 
 [tags]
-sql-type-name = "TIMESTAMP"
-
-// part: setup_query
-
-CREATE TABLE test_timestamptz (
-    idx INT,
-    res TIMESTAMP,
-    res2 TIMESTAMP
-);
+broken-vendor = "This is broken on Google's side, as BigQuery doesn't properly parse Parquet types. See https://github.com/googleapis/google-cloud-python/issues/6542."
+sql-type-name = "DATETIME"
