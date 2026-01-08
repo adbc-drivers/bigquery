@@ -15,12 +15,32 @@
 // part: metadata
 
 [tags]
-sql-type-name = "TIMESTAMP"
+broken-driver = "https://github.com/adbc-drivers/bigquery/issues/86"
 
 // part: setup_query
 
-CREATE TABLE test_timestamptz (
+CREATE TABLE test_time (
     idx INT,
-    res TIMESTAMP,
-    res2 TIMESTAMP
+    res TIME
 );
+
+// part: expected_schema
+
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "res",
+            "format": "ttu",
+            "flags": ["nullable"]
+        }
+    ]
+}
+
+// part: expected
+
+{"res": 0}
+{"res": null}
+{"res": 49531123456}
+{"res": 45045500000}
+{"res": 86399999999}

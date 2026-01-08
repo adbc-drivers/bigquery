@@ -24,3 +24,29 @@ CREATE TABLE test_timestamptz (
     res TIMESTAMP,
     res2 TIMESTAMP
 );
+
+// part: expected_schema
+
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "res",
+            "format": "tsu:UTC",
+            "flags": ["nullable"]
+        },
+        {
+            "name": "res2",
+            "format": "tsu:UTC",
+            "flags": ["nullable"]
+        }
+    ]
+}
+
+// part: expected
+
+{"res": null, "res2": null}
+{"res": -14182940000000, "res2": -14182940000000}
+{"res": 946684800000000, "res2": 946684800000000}
+{"res": 1684158330000000, "res2": 1684158330000000}
+{"res": 253402300799999000, "res2": 253402300799999000}
