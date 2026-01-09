@@ -69,6 +69,9 @@ namespace AdbcDrivers.BigQuery
             AdbcInfoCode.VendorName
         };
 
+
+        public bool IncludePublicProjectIds = false;
+
         public BigQueryConnection(IReadOnlyDictionary<string, string> properties) : base(properties)
         {
             if (properties == null)
