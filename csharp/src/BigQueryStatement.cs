@@ -30,6 +30,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
+using Apache.Arrow.Adbc.Extensions;
 using Apache.Arrow.Adbc.Tracing;
 using Apache.Arrow.Ipc;
 using Apache.Arrow.Types;
@@ -52,6 +53,10 @@ namespace AdbcDrivers.BigQuery
         readonly BigQueryConnection bigQueryConnection;
         readonly CancellationRegistry cancellationRegistry;
 
+        bool isMetadataCommand = false;
+        string? catalogName = null;
+        string? schemaName = null;
+        string? tableName = null;
         public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
         {
             if (bigQueryConnection == null) { throw new AdbcException($"{nameof(bigQueryConnection)} cannot be null", AdbcStatusCode.InvalidArgument); }
@@ -108,6 +113,11 @@ namespace AdbcDrivers.BigQuery
                 QueryOptions queryOptions = ValidateOptions(activity);
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
+
+                if (isMetadataCommand)
+                {
+                    return await ExecuteMetadataCommandQuery(activity);
+                }
 
                 BigQueryJob job = await Client.CreateQueryJobAsync(SqlQuery, null, queryOptions);
                 JobReference jobReference = job.Reference;
@@ -166,34 +176,34 @@ namespace AdbcDrivers.BigQuery
                     }
 
                     Func<Task<BigQueryResults>> getMultiJobResults = async () =>
+                    {
+                        // To get the results of all statements in a multi-statement query, enumerate the child jobs. Related public docs: https://cloud.google.com/bigquery/docs/multi-statement-queries#get_all_executed_statements.
+                        // Can filter by StatementType and EvaluationKind. Related public docs: https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#jobstatistics2, https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#evaluationkind
+                        ListJobsOptions listJobsOptions = new ListJobsOptions();
+                        listJobsOptions.ParentJobId = results.JobReference.JobId;
+                        var joblist = Client.ListJobs(listJobsOptions)
+                            .Select(job => Client.GetJob(job.Reference))
+                            .Where(job => string.IsNullOrEmpty(evaluationKind) || job.Statistics.ScriptStatistics.EvaluationKind.Equals(evaluationKind, StringComparison.OrdinalIgnoreCase))
+                            .Where(job => string.IsNullOrEmpty(statementType) || job.Statistics.Query.StatementType.Equals(statementType, StringComparison.OrdinalIgnoreCase))
+                            .OrderBy(job => job.Resource.Statistics.CreationTime)
+                            .ToList();
+
+                        if (joblist.Count > 0)
                         {
-                            // To get the results of all statements in a multi-statement query, enumerate the child jobs. Related public docs: https://cloud.google.com/bigquery/docs/multi-statement-queries#get_all_executed_statements.
-                            // Can filter by StatementType and EvaluationKind. Related public docs: https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#jobstatistics2, https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#evaluationkind
-                            ListJobsOptions listJobsOptions = new ListJobsOptions();
-                            listJobsOptions.ParentJobId = results.JobReference.JobId;
-                            var joblist = Client.ListJobs(listJobsOptions)
-                                .Select(job => Client.GetJob(job.Reference))
-                                .Where(job => string.IsNullOrEmpty(evaluationKind) || job.Statistics.ScriptStatistics.EvaluationKind.Equals(evaluationKind, StringComparison.OrdinalIgnoreCase))
-                                .Where(job => string.IsNullOrEmpty(statementType) || job.Statistics.Query.StatementType.Equals(statementType, StringComparison.OrdinalIgnoreCase))
-                                .OrderBy(job => job.Resource.Statistics.CreationTime)
-                                .ToList();
-
-                            if (joblist.Count > 0)
+                            if (statementIndex < 1 || statementIndex > joblist.Count)
                             {
-                                if (statementIndex < 1 || statementIndex > joblist.Count)
-                                {
-                                    throw new ArgumentOutOfRangeException($"The specified index {statementIndex} is out of range. There are {joblist.Count} jobs available.");
-                                }
-                                BigQueryJob indexedJob = joblist[statementIndex - 1];
-                                cancellationContext.Job = indexedJob;
-                                return await ExecuteCancellableJobAsync(cancellationContext, activity, async (context) =>
-                                {
-                                    return await indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-                                }).ConfigureAwait(false);
+                                throw new ArgumentOutOfRangeException($"The specified index {statementIndex} is out of range. There are {joblist.Count} jobs available.");
                             }
+                            BigQueryJob indexedJob = joblist[statementIndex - 1];
+                            cancellationContext.Job = indexedJob;
+                            return await ExecuteCancellableJobAsync(cancellationContext, activity, async (context) =>
+                            {
+                                return await indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                            }).ConfigureAwait(false);
+                        }
 
-                            throw new AdbcException($"Unable to obtain result from statement [{statementIndex}]", AdbcStatusCode.InvalidData);
-                        };
+                        throw new AdbcException($"Unable to obtain result from statement [{statementIndex}]", AdbcStatusCode.InvalidData);
+                    };
 
                     results = await ExecuteWithRetriesAsync(getMultiJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
                 }
@@ -235,6 +245,275 @@ namespace AdbcDrivers.BigQuery
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
                 return new QueryResult(totalRows, stream);
             });
+        }
+
+        private Task<QueryResult> ExecuteMetadataCommandQuery(Activity? activity)
+        {
+            const string SupportedMetadataCommands = "GetCatalogs, GetSchemas,GetTables,GetColumns,GetPrimaryKeys";
+            return SqlQuery?.ToLowerInvariant() switch
+            {
+                "getcatalogs" => GetCatalogs(activity),
+                "getschemas" => GetSchemas(activity),
+                "gettables" => GetTables(activity),
+                "getcolumns" => GetTableSchema(activity),
+                "getprimarykeys" => GetPrimaryKeys(activity),
+                null or "" => throw new ArgumentNullException(nameof(SqlQuery), $"Metadata command for property 'SqlQuery' must not be empty or null. Supported metadata commands: {SupportedMetadataCommands}"),
+                _ => throw new NotSupportedException($"Metadata command '{SqlQuery}' is not supported. Supported metadata commands: {SupportedMetadataCommands}"),
+            };
+        }
+
+        protected Task<QueryResult> GetTables(Activity? activity)
+        {
+            StringArray.Builder tableNameBuilder = new StringArray.Builder();
+            StringArray.Builder tableTypeBuilder = new StringArray.Builder();
+            List<string> tableNames = new List<string>();
+            Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
+            {
+                return Client?.ListTables(this.catalogName, this.schemaName);
+            });
+            PagedEnumerable<TableList, BigQueryTable>? tables;
+            tables = ExecuteWithRetriesAsync<PagedEnumerable<TableList, BigQueryTable>?>(func, activity).GetAwaiter().GetResult();
+            if (tables != null)
+            {
+                // Sort tables by name for consistency
+                var sortedTables = tables.OrderBy(x => x.Reference.TableId).ToList();
+
+                foreach (var table in sortedTables)
+                {
+                    tableNameBuilder.Append(table.Reference.TableId);
+
+                    // Map BigQuery types to ADBC standard types
+                    string tableType = table.Resource.Type switch
+                    {
+                        "TABLE" => "BASE TABLE",  // ADBC standard name
+                        "VIEW" => "VIEW",
+                        "EXTERNAL" => "EXTERNAL TABLE",
+                        "SNAPSHOT" => "SNAPSHOT",
+                        "CLONE" => "CLONE",
+                        _ => table.Resource.Type  // fallback to original
+                    };
+                    tableTypeBuilder.Append(tableType);
+                }
+            }
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                tableNameBuilder.Build(),
+                tableTypeBuilder.Build()
+            };
+
+            // Create schema with both columns
+            Schema schema = new Schema(
+                new Field[]
+                {
+                    new Field("table_name", StringType.Default, false),
+                    new Field("table_type", StringType.Default, false)
+                },
+                metadata: null
+            );
+
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        protected Task<QueryResult> GetPrimaryKeys(Activity? activity)
+        {
+            StringArray.Builder columnNameBuilder = new StringArray.Builder();
+            List<string> primaryKeyColumns = new List<string>();
+
+            Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
+            {
+                return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
+            });
+
+            BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
+
+            if (table?.Resource?.TableConstraints?.PrimaryKey?.Columns != null)
+            {
+                primaryKeyColumns = table.Resource.TableConstraints.PrimaryKey.Columns.ToList();
+                foreach (string columnName in primaryKeyColumns)
+                {
+                    columnNameBuilder.Append(columnName);
+                }
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                columnNameBuilder.Build()
+            };
+
+            Schema schema = new Schema(
+                new Field[] { new Field("column_name", StringType.Default, false) },
+                metadata: null
+            );
+
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        protected Task<QueryResult> GetTableSchema(Activity? activity)
+        {
+            StringArray.Builder columnNameBuilder = new StringArray.Builder();
+            StringArray.Builder columnTypeBuilder = new StringArray.Builder();
+            StringArray.Builder columnModeBuilder = new StringArray.Builder();
+            StringArray.Builder columnDescriptionBuilder = new StringArray.Builder();
+            StringArray.Builder columnMaxLengthBuilder = new StringArray.Builder();
+            StringArray.Builder columnPrecisionBuilder = new StringArray.Builder();
+            StringArray.Builder columnScaleBuilder = new StringArray.Builder();
+            StringArray.Builder columnDefaultValueExpressionBuilder = new StringArray.Builder();
+            StringArray.Builder columnCollationBuilder = new StringArray.Builder();
+            StringArray.Builder columnPolicyTagsBuilder = new StringArray.Builder();
+            StringArray.Builder columnRoundingModeBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeLowerBoundBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeUpperBoundBuilder = new StringArray.Builder();
+
+            Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
+            {
+                return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
+            });
+            BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
+            
+            if (table != null)
+            {
+                foreach (TableFieldSchema field in table.Schema.Fields)
+                {
+                    columnNameBuilder.Append(field.Name);
+                    columnTypeBuilder.Append(field.Type);
+                    columnModeBuilder.Append(field.Mode);
+                    columnDescriptionBuilder.Append(field.Description);
+                    columnMaxLengthBuilder.Append(field.MaxLength?.ToString());
+                    columnPrecisionBuilder.Append(field.Precision?.ToString());
+                    columnScaleBuilder.Append(field.Scale?.ToString());
+                    columnDefaultValueExpressionBuilder.Append(field.DefaultValueExpression);
+                    columnCollationBuilder.Append(field.Collation);
+                    columnPolicyTagsBuilder.Append(field.PolicyTags?.Names != null ? string.Join(", ", field.PolicyTags.Names) : null);
+                    columnRoundingModeBuilder.Append(field.RoundingMode);
+                    columnRangeLowerBoundBuilder.Append(field.RangeElementType?.Type);
+                    columnRangeUpperBoundBuilder.Append(field.Fields != null ? string.Join(", ", field.Fields.Select(f => f.Name)) : null);
+                }
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                columnNameBuilder.Build(),
+                columnTypeBuilder.Build(),
+                columnModeBuilder.Build(),
+                columnDescriptionBuilder.Build(),
+                columnMaxLengthBuilder.Build(),
+                columnPrecisionBuilder.Build(),
+                columnScaleBuilder.Build(),
+                columnDefaultValueExpressionBuilder.Build(),
+                columnCollationBuilder.Build(),
+                columnPolicyTagsBuilder.Build(),
+                columnRoundingModeBuilder.Build(),
+                columnRangeLowerBoundBuilder.Build(),
+                columnRangeUpperBoundBuilder.Build()
+            };
+
+            Schema schema = new Schema(
+                new Field[]
+                {
+                    new Field("column_name", StringType.Default, false),
+                    new Field("column_type", StringType.Default, false),
+                    new Field("column_mode", StringType.Default, true),
+                    new Field("column_description", StringType.Default, true),
+                    new Field("column_max_length", StringType.Default, true),
+                    new Field("column_precision", StringType.Default, true),
+                    new Field("column_scale", StringType.Default, true),
+                    new Field("column_default_value_expression", StringType.Default, true),
+                    new Field("column_collation", StringType.Default, true),
+                    new Field("column_policy_tags", StringType.Default, true),
+                    new Field("column_rounding_mode", StringType.Default, true),
+                    new Field("column_range_element_type", StringType.Default, true),
+                    new Field("column_nested_fields", StringType.Default, true)
+                },
+                metadata: null
+            );
+
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+            
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        protected Task<QueryResult> GetSchemas(Activity? activity)
+        {
+            StringArray.Builder schemaNameBuilder = new StringArray.Builder();
+            List<string> datasetIds = new List<string>();
+            Func<Task<PagedEnumerable<DatasetList, BigQueryDataset>?>> func = () => Task.Run(() =>
+            {
+                // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
+                return Client?.ListDatasets(this.catalogName);
+            });
+            PagedEnumerable<DatasetList, BigQueryDataset>? datasets;
+            datasets = ExecuteWithRetriesAsync<PagedEnumerable<DatasetList, BigQueryDataset>?>(func, activity).GetAwaiter().GetResult();
+            if (datasets != null)
+            {
+                datasetIds = datasets.Select(x => x.Reference.DatasetId).ToList();
+                datasetIds.Sort();
+                foreach (string datasetId in datasetIds)
+                {
+                    schemaNameBuilder.Append(datasetId);
+                }
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                schemaNameBuilder.Build()
+            };
+
+            Schema schema = GetObjectSchema("SchemaName");
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        protected Task<QueryResult> GetCatalogs(Activity? activity)
+        {
+            StringArray.Builder catalogNameBuilder = new StringArray.Builder();
+            List<string> projectIds = new List<string>();
+            Func<Task<PagedEnumerable<ProjectList, CloudProject>?>> func = () => Task.Run(() =>
+            {
+                // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
+                return Client?.ListProjects();
+            });
+            PagedEnumerable<ProjectList, CloudProject>? catalogs;
+            catalogs = ExecuteWithRetriesAsync<PagedEnumerable<ProjectList, CloudProject>?>(func, activity).GetAwaiter().GetResult();
+            if (catalogs != null)
+            {
+                projectIds = catalogs.Select(x => x.ProjectId).ToList();
+            }
+
+            if (this.bigQueryConnection.IncludePublicProjectIds && !projectIds.Contains(BigQueryConstants.PublicProjectId))
+            {
+                projectIds.Add(BigQueryConstants.PublicProjectId);
+            }
+
+            projectIds.Sort();
+            foreach (string projectId in projectIds)
+            {
+                catalogNameBuilder.Append(projectId);
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                catalogNameBuilder.Build()
+            };
+
+            Schema schema = GetObjectSchema("CatalogName");
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
         private async Task<IEnumerable<IArrowReader>> GetArrowReaders(
@@ -281,6 +560,16 @@ namespace AdbcDrivers.BigQuery
         {
             this.cancellationRegistry.Dispose();
             base.Dispose();
+        }
+
+        private Schema GetObjectSchema(string objectName)
+        {
+            return new Schema(
+                new Field[]
+                {
+                    new Field(objectName, StringType.Default, false)
+                },
+                metadata: null);
         }
 
         private async Task<UpdateResult> ExecuteUpdateInternalAsync()
@@ -470,7 +759,9 @@ namespace AdbcDrivers.BigQuery
                         string destinationTable = keyValuePair.Value;
 
                         if (!destinationTable.Contains("."))
+                        {
                             throw new InvalidOperationException($"{BigQueryParameters.LargeResultsDestinationTable} is invalid");
+                        }
 
                         string projectId = string.Empty;
                         string datasetId = string.Empty;
@@ -499,6 +790,19 @@ namespace AdbcDrivers.BigQuery
                     case BigQueryParameters.UseLegacySQL:
                         options.UseLegacySql = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
                         activity?.AddBigQueryParameterTag(BigQueryParameters.UseLegacySQL, options.UseLegacySql);
+                        break;
+                    case BigQueryParameters.IsMetadataCommand:
+                        isMetadataCommand = keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, isMetadataCommand);
+                        break;
+                    case BigQueryParameters.CatalogName:
+                        catalogName = keyValuePair.Value;
+                        break;
+                    case BigQueryParameters.SchemaName:
+                        schemaName = keyValuePair.Value;
+                        break;
+                    case BigQueryParameters.TableName:
+                        tableName = keyValuePair.Value;
                         break;
                 }
             }

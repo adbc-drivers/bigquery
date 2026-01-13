@@ -158,6 +158,26 @@ namespace AdbcDrivers.BigQuery.Tests
 
             parameters.Add(BigQueryParameters.LargeDecimalsAsString, testEnvironment.LargeDecimalAsString.ToString());
 
+            if (!string.IsNullOrEmpty(testEnvironment.IsMetadataCommand))
+            {
+                parameters.Add(BigQueryParameters.IsMetadataCommand, testEnvironment.IsMetadataCommand.ToString());
+            }
+
+            if (!string.IsNullOrEmpty(testEnvironment.CatalogName))
+            {
+                parameters.Add(BigQueryParameters.CatalogName, testEnvironment.CatalogName);
+            }
+
+            if (!string.IsNullOrEmpty(testEnvironment.SchemaName))
+            {
+                parameters.Add(BigQueryParameters.SchemaName, testEnvironment.SchemaName);
+            }
+
+            if (!string.IsNullOrEmpty(testEnvironment.TableName))
+            {
+                parameters.Add(BigQueryParameters.TableName, testEnvironment.TableName);
+            }
+
             parameters.Add(BigQueryParameters.CreateLargeResultsDataset, testEnvironment.CreateLargeResultsDataset.ToString());
 
             if (!string.IsNullOrEmpty(testEnvironment.LargeResultsDataset))

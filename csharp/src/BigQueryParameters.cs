@@ -43,6 +43,9 @@ namespace AdbcDrivers.BigQuery
         public const string GetQueryResultsOptionsTimeout = "adbc.bigquery.get_query_results_options.timeout";
         public const string IncludeConstraintsWithGetObjects = "adbc.bigquery.include_constraints_getobjects";
         public const string IncludePublicProjectId = "adbc.bigquery.include_public_project_id";
+        public const string CatalogName = "adbc.get_metadata.target_catalog";
+        public const string SchemaName = "adbc.get_metadata.target_db_schema";
+        public const string TableName = "adbc.get_metadata.target_table";
         public const string JsonCredential = "adbc.bigquery.auth_json_credential";
         public const string LargeDecimalsAsString = "adbc.bigquery.large_decimals_as_string";
         public const string LargeResultsDataset = "adbc.bigquery.large_results_dataset";
@@ -57,6 +60,7 @@ namespace AdbcDrivers.BigQuery
         public const string StatementIndex = "adbc.bigquery.multiple_statement.statement_index";
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
+        public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
 
         /// <summary>
         /// Indicates whether the driver should create the dataset specified in the
