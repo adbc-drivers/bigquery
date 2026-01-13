@@ -70,8 +70,6 @@ namespace AdbcDrivers.BigQuery
         };
 
 
-        public bool IncludePublicProjectIds = false;
-
         public BigQueryConnection(IReadOnlyDictionary<string, string> properties) : base(properties)
         {
             if (properties == null)
