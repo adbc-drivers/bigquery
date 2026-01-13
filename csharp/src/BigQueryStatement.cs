@@ -123,17 +123,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     return await ExecuteMetadataCommandQuery(activity);
                 }
-                queryOptions.DryRun = true;
-                BigQueryJob jobWithDryRun = await Client.CreateQueryJobAsync(SqlQuery, null, queryOptions);
-                queryOptions.DryRun = null;
-                if (jobWithDryRun.Statistics.TotalBytesProcessed > 120000000)
-                {
-                    queryOptions.AllowLargeResults = true;
-                    if (queryOptions.DestinationTable == null)
-                    {
-                        queryOptions.DestinationTable = TryGetLargeDestinationTableReference(BigQueryConstants.DefaultLargeDatasetId, activity);
-                    }
-                }
+
                 BigQueryJob job = await Client.CreateQueryJobAsync(SqlQuery, null, queryOptions);
                 JobReference jobReference = job.Reference;
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
@@ -145,7 +135,7 @@ namespace AdbcDrivers.BigQuery
                     getQueryResultsOptions.Timeout = TimeSpan.FromSeconds(seconds);
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
                 }
-                getQueryResultsOptions.PageSize = 0;
+
                 using JobCancellationContext cancellationContext = new JobCancellationContext(cancellationRegistry, job);
 
                 // We can't checkJobStatus, Otherwise, the timeout in QueryResultsOptions is meaningless.
@@ -161,6 +151,7 @@ namespace AdbcDrivers.BigQuery
                 };
 
                 BigQueryResults results = await ExecuteWithRetriesAsync(getJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
+
                 TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(Credential);
                 clientMgr.UpdateToken = () => Task.Run(() =>
                 {
@@ -265,17 +256,17 @@ namespace AdbcDrivers.BigQuery
         {
             return SqlQuery?.ToLowerInvariant() switch
             {
-                "getcatalogs" => GetCatalogsAsync(activity),
-                "getschemas" => GetSchemaAsync(activity),
-                "gettables" => GetTablesAsync(activity),
-                "getcolumns" => GetTableSchemaAsync(activity),
-                "getprimarykeys" => GetPrimaryKeysAsync(activity),
+                "getcatalogs" => GetCatalogs(activity),
+                "getschemas" => GetSchema(activity),
+                "gettables" => GetTables(activity),
+                "getcolumns" => GetTableSchema(activity),
+                "getprimarykeys" => GetPrimaryKeys(activity),
                 null or "" => throw new ArgumentNullException(nameof(SqlQuery), $"Metadata command for property 'SqlQuery' must not be empty or null. Supported metadata commands: {SupportedMetadataCommands}"),
                 _ => throw new NotSupportedException($"Metadata command '{SqlQuery}' is not supported. Supported metadata commands: {SupportedMetadataCommands}"),
             };
         }
 
-        protected virtual Task<QueryResult> GetTablesAsync(Activity? activity)
+        protected virtual Task<QueryResult> GetTables(Activity? activity)
         {
             StringArray.Builder tableNameBuilder = new StringArray.Builder();
             StringArray.Builder tableTypeBuilder = new StringArray.Builder();
@@ -318,8 +309,8 @@ namespace AdbcDrivers.BigQuery
             Schema schema = new Schema(
                 new Field[]
                 {
-            new Field("table_name", StringType.Default, false),
-            new Field("table_type", StringType.Default, false)
+                    new Field("table_name", StringType.Default, false),
+                    new Field("table_type", StringType.Default, false)
                 },
                 metadata: null
             );
@@ -332,7 +323,7 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetPrimaryKeysAsync(Activity? activity)
+        protected virtual Task<QueryResult> GetPrimaryKeys(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
             List<string> primaryKeyColumns = new List<string>();
@@ -371,51 +362,81 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetTableSchemaAsync(Activity? activity)
+        protected virtual Task<QueryResult> GetTableSchema(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
             StringArray.Builder columnTypeBuilder = new StringArray.Builder();
             StringArray.Builder columnModeBuilder = new StringArray.Builder();
-            List<string> columnNames = new List<string>();
-            List<string> columnTypes = new List<string>();
-            List<string> columnModes = new List<string>();
+            StringArray.Builder columnDescriptionBuilder = new StringArray.Builder();
+            StringArray.Builder columnMaxLengthBuilder = new StringArray.Builder();
+            StringArray.Builder columnPrecisionBuilder = new StringArray.Builder();
+            StringArray.Builder columnScaleBuilder = new StringArray.Builder();
+            StringArray.Builder columnDefaultValueExpressionBuilder = new StringArray.Builder();
+            StringArray.Builder columnCollationBuilder = new StringArray.Builder();
+            StringArray.Builder columnPolicyTagsBuilder = new StringArray.Builder();
+            StringArray.Builder columnRoundingModeBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeLowerBoundBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeUpperBoundBuilder = new StringArray.Builder();
+
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
                 return Client?.GetTable(this.CatalogName, this.SchemaName, this.TableName);
             });
             BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
+            
             if (table != null)
             {
-                columnNames = table.Schema.Fields.Select(f => f.Name).ToList();
-                columnTypes = table.Schema.Fields.Select(f => f.Type).ToList();
-                columnModes = table.Schema.Fields.Select(f => f.Mode).ToList();
+                foreach (TableFieldSchema field in table.Schema.Fields)
+                {
+                    columnNameBuilder.Append(field.Name);
+                    columnTypeBuilder.Append(field.Type);
+                    columnModeBuilder.Append(field.Mode);
+                    columnDescriptionBuilder.Append(field.Description);
+                    columnMaxLengthBuilder.Append(field.MaxLength?.ToString());
+                    columnPrecisionBuilder.Append(field.Precision?.ToString());
+                    columnScaleBuilder.Append(field.Scale?.ToString());
+                    columnDefaultValueExpressionBuilder.Append(field.DefaultValueExpression);
+                    columnCollationBuilder.Append(field.Collation);
+                    columnPolicyTagsBuilder.Append(field.PolicyTags?.Names != null ? string.Join(", ", field.PolicyTags.Names) : null);
+                    columnRoundingModeBuilder.Append(field.RoundingMode);
+                    columnRangeLowerBoundBuilder.Append(field.RangeElementType?.Type);
+                    columnRangeUpperBoundBuilder.Append(field.Fields != null ? string.Join(", ", field.Fields.Select(f => f.Name)) : null);
+                }
             }
-            foreach (string columnName in columnNames)
-            {
-                columnNameBuilder.Append(columnName);
-            }
-            foreach (string columnType in columnTypes)
-            {
-                columnTypeBuilder.Append(columnType);
-            }
-            foreach (string columnMode in columnModes)
-            {
-                columnModeBuilder.Append(columnMode);
-            }
+
             IArrowArray[] dataArrays = new IArrowArray[]
             {
                 columnNameBuilder.Build(),
                 columnTypeBuilder.Build(),
-                columnModeBuilder.Build()
+                columnModeBuilder.Build(),
+                columnDescriptionBuilder.Build(),
+                columnMaxLengthBuilder.Build(),
+                columnPrecisionBuilder.Build(),
+                columnScaleBuilder.Build(),
+                columnDefaultValueExpressionBuilder.Build(),
+                columnCollationBuilder.Build(),
+                columnPolicyTagsBuilder.Build(),
+                columnRoundingModeBuilder.Build(),
+                columnRangeLowerBoundBuilder.Build(),
+                columnRangeUpperBoundBuilder.Build()
             };
 
-            // Create schema with both columns
             Schema schema = new Schema(
                 new Field[]
                 {
                     new Field("column_name", StringType.Default, false),
                     new Field("column_type", StringType.Default, false),
-                    new Field("column_mode", StringType.Default, false)
+                    new Field("column_mode", StringType.Default, true),
+                    new Field("column_description", StringType.Default, true),
+                    new Field("column_max_length", StringType.Default, true),
+                    new Field("column_precision", StringType.Default, true),
+                    new Field("column_scale", StringType.Default, true),
+                    new Field("column_default_value_expression", StringType.Default, true),
+                    new Field("column_collation", StringType.Default, true),
+                    new Field("column_policy_tags", StringType.Default, true),
+                    new Field("column_rounding_mode", StringType.Default, true),
+                    new Field("column_range_element_type", StringType.Default, true),
+                    new Field("column_nested_fields", StringType.Default, true)
                 },
                 metadata: null
             );
@@ -428,7 +449,7 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetSchemaAsync(Activity? activity)
+        protected virtual Task<QueryResult> GetSchema(Activity? activity)
         {
             StringArray.Builder schemaNameBuilder = new StringArray.Builder();
             List<string> datasetIds = new List<string>();
@@ -464,7 +485,7 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetCatalogsAsync(Activity? activity)
+        protected virtual Task<QueryResult> GetCatalogs(Activity? activity)
         {
             StringArray.Builder catalogNameBuilder = new StringArray.Builder();
             List<string> projectIds = new List<string>();
@@ -776,10 +797,6 @@ namespace AdbcDrivers.BigQuery
                         options.UseLegacySql = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
                         activity?.AddBigQueryParameterTag(BigQueryParameters.UseLegacySQL, options.UseLegacySql);
                         break;
-                    case BigQueryParameters.IncludePublicProjectId:
-                        IncludePublicProjectId = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
-                        activity?.AddBigQueryParameterTag(BigQueryParameters.IncludePublicProjectId, IncludePublicProjectId);
-                        break;
                     case BigQueryParameters.IsMetadataCommand:
                         IsMetadataCommand = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
                         activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, IsMetadataCommand);
@@ -795,11 +812,11 @@ namespace AdbcDrivers.BigQuery
                         break;
                 }
             }
-            options.AllowLargeResults = false;
-            /*if (options.AllowLargeResults == true && options.DestinationTable == null)
+
+            if (options.AllowLargeResults == true && options.DestinationTable == null)
             {
                 options.DestinationTable = TryGetLargeDestinationTableReference(largeResultDatasetId, activity);
-            } */
+            }
 
             return options;
         }
