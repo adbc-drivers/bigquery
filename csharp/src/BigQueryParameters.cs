@@ -60,7 +60,7 @@ namespace AdbcDrivers.BigQuery
         public const string StatementIndex = "adbc.bigquery.multiple_statement.statement_index";
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
-        public const string IsMetadataCommand = "adbc.apache.statement.is_metadata_command";
+        public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
 
         /// <summary>
         /// Indicates whether the driver should create the dataset specified in the
