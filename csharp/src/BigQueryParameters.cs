@@ -68,7 +68,6 @@ namespace AdbcDrivers.BigQuery
         /// </summary>
         public const string CreateLargeResultsDataset = "adbc.bigquery.create_large_results_dataset";
 
-
         // these values are safe to log any time
         private static HashSet<string> safeToLog = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {

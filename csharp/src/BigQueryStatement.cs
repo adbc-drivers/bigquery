@@ -21,6 +21,13 @@
 * limitations under the License.
 */
 
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Adbc.Extensions;
@@ -33,13 +40,6 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Bigquery.v2.Data;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Cloud.BigQuery.V2;
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using TableFieldSchema = Google.Apis.Bigquery.v2.Data.TableFieldSchema;
 using TableSchema = Google.Apis.Bigquery.v2.Data.TableSchema;
 
@@ -53,6 +53,10 @@ namespace AdbcDrivers.BigQuery
         readonly BigQueryConnection bigQueryConnection;
         readonly CancellationRegistry cancellationRegistry;
 
+        bool isMetadataCommand = false;
+        string? catalogName = null;
+        string? schemaName = null;
+        string? tableName = null;
         public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
         {
             if (bigQueryConnection == null) { throw new AdbcException($"{nameof(bigQueryConnection)} cannot be null", AdbcStatusCode.InvalidArgument); }
@@ -102,15 +106,6 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
-        protected internal bool IsMetadataCommand = false;
-        protected internal bool IncludePublicProjectId = true;
-        protected string? CatalogName = null;
-        protected string? SchemaName = null;
-        protected string? TableName = null;
-
-        private const string SupportedMetadataCommands = "GetCatalogs, GetSchemas,GetTables,GetColumns";
-
-
         private async Task<QueryResult> ExecuteQueryInternalAsync()
         {
             return await this.TraceActivityAsync(async activity =>
@@ -119,7 +114,7 @@ namespace AdbcDrivers.BigQuery
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
 
-                if (IsMetadataCommand)
+                if (isMetadataCommand)
                 {
                     return await ExecuteMetadataCommandQuery(activity);
                 }
@@ -254,10 +249,11 @@ namespace AdbcDrivers.BigQuery
 
         private Task<QueryResult> ExecuteMetadataCommandQuery(Activity? activity)
         {
+            const string SupportedMetadataCommands = "GetCatalogs, GetSchemas,GetTables,GetColumns,GetPrimaryKeys";
             return SqlQuery?.ToLowerInvariant() switch
             {
                 "getcatalogs" => GetCatalogs(activity),
-                "getschemas" => GetSchema(activity),
+                "getschemas" => GetSchemas(activity),
                 "gettables" => GetTables(activity),
                 "getcolumns" => GetTableSchema(activity),
                 "getprimarykeys" => GetPrimaryKeys(activity),
@@ -266,14 +262,14 @@ namespace AdbcDrivers.BigQuery
             };
         }
 
-        protected virtual Task<QueryResult> GetTables(Activity? activity)
+        protected Task<QueryResult> GetTables(Activity? activity)
         {
             StringArray.Builder tableNameBuilder = new StringArray.Builder();
             StringArray.Builder tableTypeBuilder = new StringArray.Builder();
             List<string> tableNames = new List<string>();
             Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
             {
-                return Client?.ListTables(this.CatalogName, this.SchemaName);
+                return Client?.ListTables(this.catalogName, this.schemaName);
             });
             PagedEnumerable<TableList, BigQueryTable>? tables;
             tables = ExecuteWithRetriesAsync<PagedEnumerable<TableList, BigQueryTable>?>(func, activity).GetAwaiter().GetResult();
@@ -317,20 +313,19 @@ namespace AdbcDrivers.BigQuery
 
             schema.Validate(dataArrays);
 
-            RecordBatch recordBatch = new RecordBatch(schema, dataArrays, dataArrays[0].Length);
-            IArrowArrayStream stream = new SingleRecordBatchStream(schema, recordBatch);
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
 
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetPrimaryKeys(Activity? activity)
+        protected Task<QueryResult> GetPrimaryKeys(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
             List<string> primaryKeyColumns = new List<string>();
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
-                return Client?.GetTable(this.CatalogName, this.SchemaName, this.TableName);
+                return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
             });
 
             BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
@@ -338,11 +333,10 @@ namespace AdbcDrivers.BigQuery
             if (table?.Resource?.TableConstraints?.PrimaryKey?.Columns != null)
             {
                 primaryKeyColumns = table.Resource.TableConstraints.PrimaryKey.Columns.ToList();
-            }
-
-            foreach (string columnName in primaryKeyColumns)
-            {
-                columnNameBuilder.Append(columnName);
+                foreach (string columnName in primaryKeyColumns)
+                {
+                    columnNameBuilder.Append(columnName);
+                }
             }
 
             IArrowArray[] dataArrays = new IArrowArray[]
@@ -356,13 +350,13 @@ namespace AdbcDrivers.BigQuery
             );
 
             schema.Validate(dataArrays);
-            RecordBatch recordBatch = new RecordBatch(schema, dataArrays, dataArrays[0].Length);
-            IArrowArrayStream stream = new SingleRecordBatchStream(schema, recordBatch);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
 
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetTableSchema(Activity? activity)
+        protected Task<QueryResult> GetTableSchema(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
             StringArray.Builder columnTypeBuilder = new StringArray.Builder();
@@ -380,7 +374,7 @@ namespace AdbcDrivers.BigQuery
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
-                return Client?.GetTable(this.CatalogName, this.SchemaName, this.TableName);
+                return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
             });
             BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
             
@@ -443,32 +437,30 @@ namespace AdbcDrivers.BigQuery
 
             schema.Validate(dataArrays);
 
-            RecordBatch recordBatch = new RecordBatch(schema, dataArrays, dataArrays[0].Length);
-            IArrowArrayStream stream = new SingleRecordBatchStream(schema, recordBatch);
-
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+            
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetSchema(Activity? activity)
+        protected Task<QueryResult> GetSchemas(Activity? activity)
         {
             StringArray.Builder schemaNameBuilder = new StringArray.Builder();
             List<string> datasetIds = new List<string>();
             Func<Task<PagedEnumerable<DatasetList, BigQueryDataset>?>> func = () => Task.Run(() =>
             {
                 // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
-                return Client?.ListDatasets(this.CatalogName);
+                return Client?.ListDatasets(this.catalogName);
             });
             PagedEnumerable<DatasetList, BigQueryDataset>? datasets;
             datasets = ExecuteWithRetriesAsync<PagedEnumerable<DatasetList, BigQueryDataset>?>(func, activity).GetAwaiter().GetResult();
             if (datasets != null)
             {
                 datasetIds = datasets.Select(x => x.Reference.DatasetId).ToList();
-            }
-
-            datasetIds.Sort();
-            foreach (string datasetId in datasetIds)
-            {
-                schemaNameBuilder.Append(datasetId);
+                datasetIds.Sort();
+                foreach (string datasetId in datasetIds)
+                {
+                    schemaNameBuilder.Append(datasetId);
+                }
             }
 
             IArrowArray[] dataArrays = new IArrowArray[]
@@ -479,13 +471,12 @@ namespace AdbcDrivers.BigQuery
             Schema schema = GetObjectSchema("SchemaName");
             schema.Validate(dataArrays);
 
-            RecordBatch recordBatch = new RecordBatch(schema, dataArrays, dataArrays[0].Length);
-            IArrowArrayStream stream = new SingleRecordBatchStream(schema, recordBatch);
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
 
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-        protected virtual Task<QueryResult> GetCatalogs(Activity? activity)
+        protected Task<QueryResult> GetCatalogs(Activity? activity)
         {
             StringArray.Builder catalogNameBuilder = new StringArray.Builder();
             List<string> projectIds = new List<string>();
@@ -501,8 +492,10 @@ namespace AdbcDrivers.BigQuery
                 projectIds = catalogs.Select(x => x.ProjectId).ToList();
             }
 
-            if (this.IncludePublicProjectId && !projectIds.Contains(BigQueryConstants.PublicProjectId))
+            if (this.bigQueryConnection.IncludePublicProjectIds && !projectIds.Contains(BigQueryConstants.PublicProjectId))
+            {
                 projectIds.Add(BigQueryConstants.PublicProjectId);
+            }
 
             projectIds.Sort();
             foreach (string projectId in projectIds)
@@ -518,8 +511,7 @@ namespace AdbcDrivers.BigQuery
             Schema schema = GetObjectSchema("CatalogName");
             schema.Validate(dataArrays);
 
-            RecordBatch recordBatch = new RecordBatch(schema, dataArrays, dataArrays[0].Length);
-            IArrowArrayStream stream = new SingleRecordBatchStream(schema, recordBatch);
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
 
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
@@ -573,11 +565,11 @@ namespace AdbcDrivers.BigQuery
         private Schema GetObjectSchema(string objectName)
         {
             return new Schema(
-            new Field[]
-            {
-                new Field(objectName, StringType.Default, false)
-            },
-            metadata: null);
+                new Field[]
+                {
+                    new Field(objectName, StringType.Default, false)
+                },
+                metadata: null);
         }
 
         private async Task<UpdateResult> ExecuteUpdateInternalAsync()
@@ -767,7 +759,9 @@ namespace AdbcDrivers.BigQuery
                         string destinationTable = keyValuePair.Value;
 
                         if (!destinationTable.Contains("."))
+                        {
                             throw new InvalidOperationException($"{BigQueryParameters.LargeResultsDestinationTable} is invalid");
+                        }
 
                         string projectId = string.Empty;
                         string datasetId = string.Empty;
@@ -798,17 +792,17 @@ namespace AdbcDrivers.BigQuery
                         activity?.AddBigQueryParameterTag(BigQueryParameters.UseLegacySQL, options.UseLegacySql);
                         break;
                     case BigQueryParameters.IsMetadataCommand:
-                        IsMetadataCommand = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
-                        activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, IsMetadataCommand);
+                        isMetadataCommand = keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, isMetadataCommand);
                         break;
                     case BigQueryParameters.CatalogName:
-                        CatalogName = keyValuePair.Value;
+                        catalogName = keyValuePair.Value;
                         break;
                     case BigQueryParameters.SchemaName:
-                        SchemaName = keyValuePair.Value;
+                        schemaName = keyValuePair.Value;
                         break;
                     case BigQueryParameters.TableName:
-                        TableName = keyValuePair.Value;
+                        tableName = keyValuePair.Value;
                         break;
                 }
             }
@@ -1144,43 +1138,6 @@ namespace AdbcDrivers.BigQuery
                 if (!this.disposed)
                 {
                     this.response.DisposeAsync().GetAwaiter().GetResult();
-                    this.disposed = true;
-                }
-            }
-        }
-
-        private sealed class SingleRecordBatchStream : IArrowArrayStream
-        {
-            private readonly Schema schema;
-            private RecordBatch? recordBatch;
-            private bool disposed;
-
-            public SingleRecordBatchStream(Schema schema, RecordBatch recordBatch)
-            {
-                this.schema = schema;
-                this.recordBatch = recordBatch;
-            }
-
-            public Schema Schema => this.schema;
-
-            public ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken = default)
-            {
-                if (this.recordBatch == null)
-                {
-                    return new ValueTask<RecordBatch?>((RecordBatch?)null);
-                }
-
-                RecordBatch result = this.recordBatch;
-                this.recordBatch = null;
-                return new ValueTask<RecordBatch?>(result);
-            }
-
-            public void Dispose()
-            {
-                if (!this.disposed)
-                {
-                    this.recordBatch?.Dispose();
-                    this.recordBatch = null;
                     this.disposed = true;
                 }
             }

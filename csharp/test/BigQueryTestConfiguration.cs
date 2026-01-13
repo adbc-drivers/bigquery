@@ -24,7 +24,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using Apache.Arrow.Adbc.Tests;
-using Castle.Components.DictionaryAdapter;
 
 namespace AdbcDrivers.BigQuery.Tests
 {

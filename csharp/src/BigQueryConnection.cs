@@ -53,7 +53,6 @@ namespace AdbcDrivers.BigQuery
     {
         readonly Dictionary<string, string> properties;
         readonly HttpClient httpClient;
-        bool includePublicProjectIds = false;
         const string infoDriverName = "ADBC BigQuery Driver";
         const string infoVendorName = "BigQuery";
         // Note: this needs to be set before the constructor runs
@@ -68,7 +67,6 @@ namespace AdbcDrivers.BigQuery
             AdbcInfoCode.DriverArrowVersion,
             AdbcInfoCode.VendorName
         };
-
 
         public BigQueryConnection(IReadOnlyDictionary<string, string> properties) : base(properties)
         {
@@ -162,6 +160,8 @@ namespace AdbcDrivers.BigQuery
         // if this value is null, the BigQuery API chooses the location (typically the `US` multi-region)
         internal string? DefaultClientLocation { get; private set; }
 
+        internal bool IncludePublicProjectIds { get; private set; } = false;
+
         public override string AssemblyVersion => BigQueryUtils.BigQueryAssemblyVersion;
 
         public override string AssemblyName => BigQueryUtils.BigQueryAssemblyName;
@@ -212,8 +212,8 @@ namespace AdbcDrivers.BigQuery
                 {
                     if (!string.IsNullOrEmpty(result))
                     {
-                        this.includePublicProjectIds = Convert.ToBoolean(result);
-                        activity?.AddBigQueryParameterTag(BigQueryParameters.IncludePublicProjectId, this.includePublicProjectIds);
+                        this.IncludePublicProjectIds = Convert.ToBoolean(result);
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.IncludePublicProjectId, this.IncludePublicProjectIds);
                     }
                 }
 
@@ -614,7 +614,7 @@ namespace AdbcDrivers.BigQuery
                     projectIds = catalogs.Select(x => x.ProjectId).ToList();
                 }
 
-                if (this.includePublicProjectIds && !projectIds.Contains(BigQueryConstants.PublicProjectId))
+                if (this.IncludePublicProjectIds && !projectIds.Contains(BigQueryConstants.PublicProjectId))
                     projectIds.Add(BigQueryConstants.PublicProjectId);
 
                 projectIds.Sort();
