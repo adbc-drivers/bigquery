@@ -57,6 +57,7 @@ namespace AdbcDrivers.BigQuery
         string? catalogName = null;
         string? schemaName = null;
         string? tableName = null;
+
         public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
         {
             if (bigQueryConnection == null) { throw new AdbcException($"{nameof(bigQueryConnection)} cannot be null", AdbcStatusCode.InvalidArgument); }
@@ -249,7 +250,7 @@ namespace AdbcDrivers.BigQuery
 
         private Task<QueryResult> ExecuteMetadataCommandQuery(Activity? activity)
         {
-            const string SupportedMetadataCommands = "GetCatalogs, GetSchemas,GetTables,GetColumns,GetPrimaryKeys";
+            const string SupportedMetadataCommands = "GetCatalogs,GetSchemas,GetTables,GetColumns,GetPrimaryKeys";
             return SqlQuery?.ToLowerInvariant() switch
             {
                 "getcatalogs" => GetCatalogs(activity),
@@ -266,7 +267,6 @@ namespace AdbcDrivers.BigQuery
         {
             StringArray.Builder tableNameBuilder = new StringArray.Builder();
             StringArray.Builder tableTypeBuilder = new StringArray.Builder();
-            List<string> tableNames = new List<string>();
             Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
             {
                 return Client?.ListTables(this.catalogName, this.schemaName);
@@ -321,7 +321,6 @@ namespace AdbcDrivers.BigQuery
         protected Task<QueryResult> GetPrimaryKeys(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
-            List<string> primaryKeyColumns = new List<string>();
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
@@ -332,6 +331,7 @@ namespace AdbcDrivers.BigQuery
 
             if (table?.Resource?.TableConstraints?.PrimaryKey?.Columns != null)
             {
+                List<string> primaryKeyColumns = new List<string>();
                 primaryKeyColumns = table.Resource.TableConstraints.PrimaryKey.Columns.ToList();
                 foreach (string columnName in primaryKeyColumns)
                 {
@@ -369,8 +369,8 @@ namespace AdbcDrivers.BigQuery
             StringArray.Builder columnCollationBuilder = new StringArray.Builder();
             StringArray.Builder columnPolicyTagsBuilder = new StringArray.Builder();
             StringArray.Builder columnRoundingModeBuilder = new StringArray.Builder();
-            StringArray.Builder columnRangeLowerBoundBuilder = new StringArray.Builder();
-            StringArray.Builder columnRangeUpperBoundBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeElementTypeBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeNestedFieldsBuilder = new StringArray.Builder();
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
@@ -393,8 +393,8 @@ namespace AdbcDrivers.BigQuery
                     columnCollationBuilder.Append(field.Collation);
                     columnPolicyTagsBuilder.Append(field.PolicyTags?.Names != null ? string.Join(", ", field.PolicyTags.Names) : null);
                     columnRoundingModeBuilder.Append(field.RoundingMode);
-                    columnRangeLowerBoundBuilder.Append(field.RangeElementType?.Type);
-                    columnRangeUpperBoundBuilder.Append(field.Fields != null ? string.Join(", ", field.Fields.Select(f => f.Name)) : null);
+                    columnRangeElementTypeBuilder.Append(field.RangeElementType?.Type);
+                    columnRangeNestedFieldsBuilder.Append(field.Fields != null ? string.Join(", ", field.Fields.Select(f => f.Name)) : null);
                 }
             }
 
@@ -411,8 +411,8 @@ namespace AdbcDrivers.BigQuery
                 columnCollationBuilder.Build(),
                 columnPolicyTagsBuilder.Build(),
                 columnRoundingModeBuilder.Build(),
-                columnRangeLowerBoundBuilder.Build(),
-                columnRangeUpperBoundBuilder.Build()
+                columnRangeElementTypeBuilder.Build(),
+                columnRangeNestedFieldsBuilder.Build()
             };
 
             Schema schema = new Schema(
