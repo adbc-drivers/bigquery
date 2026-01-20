@@ -356,46 +356,87 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
+/*
+ * Retrieves the schema information for a BigQuery table, including all nested fields.
+ * 
+ * This method flattens nested STRUCT/RECORD types into individual rows, preserving all field properties
+ * at every nesting level. Each field is represented by a separate row with its full qualified name
+ * using dot notation (e.g., "address.city.name").
+ * 
+ * Output columns include:
+ * - column_name: Full qualified field name with dot notation for nested fields
+ * - column_type: BigQuery data type (STRING, INT64, STRUCT, etc.)
+ * - column_mode: Field mode (NULLABLE, REQUIRED, REPEATED)
+ * - column_description: Field description
+ * - column_max_length: Maximum length for STRING/BYTES types
+ * - column_precision: Precision for NUMERIC types
+ * - column_scale: Scale for NUMERIC types
+ * - column_default_value_expression: Default value expression
+ * - column_collation: Collation specification
+ * - column_policy_tags: Comma-separated policy tags
+ * - column_rounding_mode: Rounding mode for NUMERIC types
+ * - column_range_element_type: Element type for RANGE types
+ * - column_depth: Nesting level (0 for top-level, 1+ for nested)
+ * - column_parent_name: Full qualified parent field name (null for top-level)
+ * 
+ * Example:
+ * For a BigQuery table with the following schema:
+ * 
+ *   CREATE TABLE example (
+ *     id INT64,
+ *     name STRING,
+ *     address STRUCT<
+ *       street STRING,
+ *       city STRUCT<
+ *         name STRING,
+ *         zipcode INT64
+ *       >
+ *     >
+ *   )
+ * 
+ * The output will contain these rows:
+ * 
+ *   | column_name          | column_type | column_depth | column_parent_name |
+ *   |----------------------|-------------|--------------|-------------------|
+ *   | id                   | INT64       | 0            | null              |
+ *   | name                 | STRING      | 0            | null              |
+ *   | address              | STRUCT      | 0            | null              |
+ *   | address.street       | STRING      | 1            | address           |
+ *   | address.city         | STRUCT      | 1            | address           |
+ *   | address.city.name    | STRING      | 2            | address.city      |
+ *   | address.city.zipcode | INT64       | 2            | address.city      |
+ */
         protected Task<QueryResult> GetTableSchema(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
             StringArray.Builder columnTypeBuilder = new StringArray.Builder();
             StringArray.Builder columnModeBuilder = new StringArray.Builder();
             StringArray.Builder columnDescriptionBuilder = new StringArray.Builder();
-            StringArray.Builder columnMaxLengthBuilder = new StringArray.Builder();
-            StringArray.Builder columnPrecisionBuilder = new StringArray.Builder();
-            StringArray.Builder columnScaleBuilder = new StringArray.Builder();
+            Int64Array.Builder columnMaxLengthBuilder = new Int64Array.Builder();
+            Int64Array.Builder columnPrecisionBuilder = new Int64Array.Builder();
+            Int64Array.Builder columnScaleBuilder = new Int64Array.Builder();
             StringArray.Builder columnDefaultValueExpressionBuilder = new StringArray.Builder();
             StringArray.Builder columnCollationBuilder = new StringArray.Builder();
-            StringArray.Builder columnPolicyTagsBuilder = new StringArray.Builder();
+            ListArray.Builder columnPolicyTagsBuilder = new ListArray.Builder(StringType.Default);
             StringArray.Builder columnRoundingModeBuilder = new StringArray.Builder();
             StringArray.Builder columnRangeElementTypeBuilder = new StringArray.Builder();
-            StringArray.Builder columnRangeNestedFieldsBuilder = new StringArray.Builder();
+            Int64Array.Builder columnDepthBuilder = new Int64Array.Builder();
+            StringArray.Builder columnParentNameBuilder = new StringArray.Builder();
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
                 return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
             });
             BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
-            
+
             if (table != null)
             {
-                foreach (TableFieldSchema field in table.Schema.Fields)
-                {
-                    columnNameBuilder.Append(field.Name);
-                    columnTypeBuilder.Append(field.Type);
-                    columnModeBuilder.Append(field.Mode);
-                    columnDescriptionBuilder.Append(field.Description);
-                    columnMaxLengthBuilder.Append(field.MaxLength?.ToString());
-                    columnPrecisionBuilder.Append(field.Precision?.ToString());
-                    columnScaleBuilder.Append(field.Scale?.ToString());
-                    columnDefaultValueExpressionBuilder.Append(field.DefaultValueExpression);
-                    columnCollationBuilder.Append(field.Collation);
-                    columnPolicyTagsBuilder.Append(field.PolicyTags?.Names != null ? string.Join(", ", field.PolicyTags.Names) : null);
-                    columnRoundingModeBuilder.Append(field.RoundingMode);
-                    columnRangeElementTypeBuilder.Append(field.RangeElementType?.Type);
-                    columnRangeNestedFieldsBuilder.Append(field.Fields != null ? string.Join(", ", field.Fields.Select(f => f.Name)) : null);
-                }
+                FlattenFields(table.Schema.Fields, string.Empty, string.Empty, 0,
+                    columnNameBuilder, columnTypeBuilder, columnModeBuilder, columnDescriptionBuilder,
+                    columnMaxLengthBuilder, columnPrecisionBuilder, columnScaleBuilder,
+                    columnDefaultValueExpressionBuilder, columnCollationBuilder,
+                    columnPolicyTagsBuilder, columnRoundingModeBuilder, columnRangeElementTypeBuilder,
+                    columnDepthBuilder, columnParentNameBuilder);
             }
 
             IArrowArray[] dataArrays = new IArrowArray[]
@@ -412,7 +453,8 @@ namespace AdbcDrivers.BigQuery
                 columnPolicyTagsBuilder.Build(),
                 columnRoundingModeBuilder.Build(),
                 columnRangeElementTypeBuilder.Build(),
-                columnRangeNestedFieldsBuilder.Build()
+                columnDepthBuilder.Build(),
+                columnParentNameBuilder.Build()
             };
 
             Schema schema = new Schema(
@@ -422,15 +464,16 @@ namespace AdbcDrivers.BigQuery
                     new Field("column_type", StringType.Default, false),
                     new Field("column_mode", StringType.Default, true),
                     new Field("column_description", StringType.Default, true),
-                    new Field("column_max_length", StringType.Default, true),
-                    new Field("column_precision", StringType.Default, true),
-                    new Field("column_scale", StringType.Default, true),
+                    new Field("column_max_length", Int64Type.Default, true),
+                    new Field("column_precision", Int64Type.Default, true),
+                    new Field("column_scale", Int64Type.Default, true),
                     new Field("column_default_value_expression", StringType.Default, true),
                     new Field("column_collation", StringType.Default, true),
-                    new Field("column_policy_tags", StringType.Default, true),
+                    new Field("column_policy_tags", new ListType(StringType.Default), true),
                     new Field("column_rounding_mode", StringType.Default, true),
                     new Field("column_range_element_type", StringType.Default, true),
-                    new Field("column_nested_fields", StringType.Default, true)
+                    new Field("column_depth", Int64Type.Default, false),
+                    new Field("column_parent_name", StringType.Default, true)
                 },
                 metadata: null
             );
@@ -438,8 +481,118 @@ namespace AdbcDrivers.BigQuery
             schema.Validate(dataArrays);
 
             IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
-            
+
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+ /*
+ * Recursively flattens nested BigQuery table fields into a flat structure with dot notation.
+ * 
+ * This method processes each field in the collection and recursively handles nested STRUCT/RECORD types.
+ * For each field, it:
+ * 1. Constructs the full qualified name using dot notation
+ * 2. Appends all field properties to their respective builders
+ * 3. Records the depth level and parent field name
+ * 4. Recursively processes nested fields if present
+ * 
+ * Example:
+ * Given a field structure:
+ * 
+ *   address STRUCT<
+ *     street STRING,
+ *     location STRUCT<
+ *       lat FLOAT64,
+ *       lon FLOAT64
+ *     >
+ *   >
+ * 
+ * The method will generate these entries:
+ * 
+ *   Depth 0: "address" (parent: null)
+ *   Depth 1: "address.street" (parent: "address")
+ *   Depth 1: "address.location" (parent: "address")
+ *   Depth 2: "address.location.lat" (parent: "address.location")
+ *   Depth 2: "address.location.lon" (parent: "address.location")
+ */
+        private void FlattenFields(
+            IList<TableFieldSchema> fields,
+            string prefix,
+            string parentName,
+            int depth,
+            StringArray.Builder columnNameBuilder,
+            StringArray.Builder columnTypeBuilder,
+            StringArray.Builder columnModeBuilder,
+            StringArray.Builder columnDescriptionBuilder,
+            Int64Array.Builder columnMaxLengthBuilder,
+            Int64Array.Builder columnPrecisionBuilder,
+            Int64Array.Builder columnScaleBuilder,
+            StringArray.Builder columnDefaultValueExpressionBuilder,
+            StringArray.Builder columnCollationBuilder,
+            ListArray.Builder columnPolicyTagsBuilder,
+            StringArray.Builder columnRoundingModeBuilder,
+            StringArray.Builder columnRangeElementTypeBuilder,
+            Int64Array.Builder columnDepthBuilder,
+            StringArray.Builder columnParentNameBuilder)
+        {
+            foreach (TableFieldSchema field in fields)
+            {
+                string fieldName = string.IsNullOrEmpty(prefix) ? field.Name : $"{prefix}.{field.Name}";
+
+                columnNameBuilder.Append(fieldName);
+                columnTypeBuilder.Append(field.Type);
+                columnModeBuilder.Append(field.Mode);
+                columnDescriptionBuilder.Append(field.Description);
+
+                if (field.MaxLength.HasValue)
+                    columnMaxLengthBuilder.Append(field.MaxLength.Value);
+                else
+                    columnMaxLengthBuilder.AppendNull();
+
+                if (field.Precision.HasValue)
+                    columnPrecisionBuilder.Append(field.Precision.Value);
+                else
+                    columnPrecisionBuilder.AppendNull();
+
+                if (field.Scale.HasValue)
+                    columnScaleBuilder.Append(field.Scale.Value);
+                else
+                    columnScaleBuilder.AppendNull();
+
+                columnDefaultValueExpressionBuilder.Append(field.DefaultValueExpression);
+                columnCollationBuilder.Append(field.Collation);
+                if (field.PolicyTags?.Names != null && field.PolicyTags.Names.Count > 0)
+                {
+                    StringArray.Builder valueBuilder = (StringArray.Builder)columnPolicyTagsBuilder.ValueBuilder;
+                    foreach (string tag in field.PolicyTags.Names)
+                    {
+                        valueBuilder.Append(tag);
+                    }
+                    columnPolicyTagsBuilder.Append();
+                }
+                else
+                {
+                    columnPolicyTagsBuilder.AppendNull();
+                }
+                columnRoundingModeBuilder.Append(field.RoundingMode);
+                columnRangeElementTypeBuilder.Append(field.RangeElementType?.Type);
+
+                // Add depth information
+                columnDepthBuilder.Append(depth);
+
+                // Add parent name (null for top-level fields)
+                columnParentNameBuilder.Append(string.IsNullOrEmpty(parentName) ? null : parentName);
+
+                // Recursively flatten nested fields (for STRUCT/RECORD types)
+                if (field.Fields != null && field.Fields.Count > 0)
+                {
+                    FlattenFields(field.Fields, fieldName, fieldName, depth + 1,
+                        columnNameBuilder, columnTypeBuilder, columnModeBuilder, columnDescriptionBuilder,
+                        columnMaxLengthBuilder, columnPrecisionBuilder, columnScaleBuilder,
+                        columnDefaultValueExpressionBuilder, columnCollationBuilder,
+                        columnPolicyTagsBuilder, columnRoundingModeBuilder, columnRangeElementTypeBuilder,
+                        columnDepthBuilder, columnParentNameBuilder);
+                }
+            }
         }
 
         protected Task<QueryResult> GetSchemas(Activity? activity)
