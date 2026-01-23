@@ -1297,4 +1297,3 @@ namespace AdbcDrivers.BigQuery
         }
     }
 }
-
