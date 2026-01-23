@@ -358,11 +358,11 @@ namespace AdbcDrivers.BigQuery
 
         /*
          * Retrieves the schema information for a BigQuery table, including all nested fields.
-         * 
+         *
          * This method flattens nested STRUCT/RECORD types into individual rows, preserving all field properties
          * at every nesting level. Each field is represented by a separate row with its full qualified name
          * using dot notation (e.g., "address.city.name").
-         * 
+         *
          * Output columns include:
          * - column_name: Full qualified field name with dot notation for nested fields
          * - column_type: BigQuery data type (STRING, INT64, STRUCT, etc.)
@@ -378,10 +378,10 @@ namespace AdbcDrivers.BigQuery
          * - column_range_element_type: Element type for RANGE types
          * - column_depth: Nesting level (0 for top-level, 1+ for nested)
          * - column_parent_name: Full qualified parent field name (null for top-level)
-         * 
+         *
          * Example:
          * For a BigQuery table with the following schema:
-         * 
+         *
          *   CREATE TABLE example (
          *     id INT64,
          *     name STRING,
@@ -393,9 +393,9 @@ namespace AdbcDrivers.BigQuery
          *       >
          *     >
          *   )
-         * 
+         *
          * The output will contain these rows:
-         * 
+         *
          *   | column_name          | column_type | column_depth | column_parent_name |
          *   |----------------------|-------------|--------------|-------------------|
          *   | id                   | INT64       | 0            | null              |
@@ -487,17 +487,17 @@ namespace AdbcDrivers.BigQuery
 
         /*
         * Recursively flattens nested BigQuery table fields into a flat structure with dot notation.
-        * 
+        *
         * This method processes each field in the collection and recursively handles nested STRUCT/RECORD types.
         * For each field, it:
         * 1. Constructs the full qualified name using dot notation
         * 2. Appends all field properties to their respective builders
         * 3. Records the depth level and parent field name
         * 4. Recursively processes nested fields if present
-        * 
+        *
         * Example:
         * Given a field structure:
-        * 
+        *
         *   address STRUCT<
         *     street STRING,
         *     location STRUCT<
@@ -505,9 +505,9 @@ namespace AdbcDrivers.BigQuery
         *       lon FLOAT64
         *     >
         *   >
-        * 
+        *
         * The method will generate these entries:
-        * 
+        *
         *   Depth 0: "address" (parent: null)
         *   Depth 1: "address.street" (parent: "address")
         *   Depth 1: "address.location" (parent: "address")
@@ -1297,3 +1297,4 @@ namespace AdbcDrivers.BigQuery
         }
     }
 }
+
