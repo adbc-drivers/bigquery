@@ -97,6 +97,18 @@ namespace AdbcDrivers.BigQuery.Tests
         [JsonPropertyName("largeDecimalAsString")]
         public bool LargeDecimalAsString { get; set; } = true;
 
+        [JsonPropertyName("isMetadataCommand")]
+        public string IsMetadataCommand { get; set; } = string.Empty;
+
+        [JsonPropertyName("catalogName")]
+        public string CatalogName { get; set; } = string.Empty;
+
+        [JsonPropertyName("schemaName")]
+        public string SchemaName { get; set; } = string.Empty;
+
+        [JsonPropertyName("tableName")]
+        public string TableName { get; set; } = string.Empty;
+
         /// <summary>
         /// Sets the query timeout (in minutes).
         /// </summary>

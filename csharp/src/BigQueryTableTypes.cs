@@ -25,6 +25,6 @@ namespace AdbcDrivers.BigQuery
 {
     internal static class BigQueryTableTypes
     {
-        public static readonly string[] TableTypes = new string[] { "BASE TABLE", "VIEW", "CLONE", "SNAPSHOT" };
+        public static readonly string[] TableTypes = new string[] { "BASE TABLE", "EXTERNAL", "VIEW", "CLONE", "SNAPSHOT" };
     }
 }
