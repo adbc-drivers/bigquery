@@ -356,56 +356,56 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
-/*
- * Retrieves the schema information for a BigQuery table, including all nested fields.
- * 
- * This method flattens nested STRUCT/RECORD types into individual rows, preserving all field properties
- * at every nesting level. Each field is represented by a separate row with its full qualified name
- * using dot notation (e.g., "address.city.name").
- * 
- * Output columns include:
- * - column_name: Full qualified field name with dot notation for nested fields
- * - column_type: BigQuery data type (STRING, INT64, STRUCT, etc.)
- * - column_mode: Field mode (NULLABLE, REQUIRED, REPEATED)
- * - column_description: Field description
- * - column_max_length: Maximum length for STRING/BYTES types
- * - column_precision: Precision for NUMERIC types
- * - column_scale: Scale for NUMERIC types
- * - column_default_value_expression: Default value expression
- * - column_collation: Collation specification
- * - column_policy_tags: Comma-separated policy tags
- * - column_rounding_mode: Rounding mode for NUMERIC types
- * - column_range_element_type: Element type for RANGE types
- * - column_depth: Nesting level (0 for top-level, 1+ for nested)
- * - column_parent_name: Full qualified parent field name (null for top-level)
- * 
- * Example:
- * For a BigQuery table with the following schema:
- * 
- *   CREATE TABLE example (
- *     id INT64,
- *     name STRING,
- *     address STRUCT<
- *       street STRING,
- *       city STRUCT<
- *         name STRING,
- *         zipcode INT64
- *       >
- *     >
- *   )
- * 
- * The output will contain these rows:
- * 
- *   | column_name          | column_type | column_depth | column_parent_name |
- *   |----------------------|-------------|--------------|-------------------|
- *   | id                   | INT64       | 0            | null              |
- *   | name                 | STRING      | 0            | null              |
- *   | address              | STRUCT      | 0            | null              |
- *   | address.street       | STRING      | 1            | address           |
- *   | address.city         | STRUCT      | 1            | address           |
- *   | address.city.name    | STRING      | 2            | address.city      |
- *   | address.city.zipcode | INT64       | 2            | address.city      |
- */
+        /*
+         * Retrieves the schema information for a BigQuery table, including all nested fields.
+         * 
+         * This method flattens nested STRUCT/RECORD types into individual rows, preserving all field properties
+         * at every nesting level. Each field is represented by a separate row with its full qualified name
+         * using dot notation (e.g., "address.city.name").
+         * 
+         * Output columns include:
+         * - column_name: Full qualified field name with dot notation for nested fields
+         * - column_type: BigQuery data type (STRING, INT64, STRUCT, etc.)
+         * - column_mode: Field mode (NULLABLE, REQUIRED, REPEATED)
+         * - column_description: Field description
+         * - column_max_length: Maximum length for STRING/BYTES types
+         * - column_precision: Precision for NUMERIC types
+         * - column_scale: Scale for NUMERIC types
+         * - column_default_value_expression: Default value expression
+         * - column_collation: Collation specification
+         * - column_policy_tags: Comma-separated policy tags
+         * - column_rounding_mode: Rounding mode for NUMERIC types
+         * - column_range_element_type: Element type for RANGE types
+         * - column_depth: Nesting level (0 for top-level, 1+ for nested)
+         * - column_parent_name: Full qualified parent field name (null for top-level)
+         * 
+         * Example:
+         * For a BigQuery table with the following schema:
+         * 
+         *   CREATE TABLE example (
+         *     id INT64,
+         *     name STRING,
+         *     address STRUCT<
+         *       street STRING,
+         *       city STRUCT<
+         *         name STRING,
+         *         zipcode INT64
+         *       >
+         *     >
+         *   )
+         * 
+         * The output will contain these rows:
+         * 
+         *   | column_name          | column_type | column_depth | column_parent_name |
+         *   |----------------------|-------------|--------------|-------------------|
+         *   | id                   | INT64       | 0            | null              |
+         *   | name                 | STRING      | 0            | null              |
+         *   | address              | STRUCT      | 0            | null              |
+         *   | address.street       | STRING      | 1            | address           |
+         *   | address.city         | STRUCT      | 1            | address           |
+         *   | address.city.name    | STRING      | 2            | address.city      |
+         *   | address.city.zipcode | INT64       | 2            | address.city      |
+         */
         protected Task<QueryResult> GetTableSchema(Activity? activity)
         {
             StringArray.Builder columnNameBuilder = new StringArray.Builder();
@@ -485,35 +485,35 @@ namespace AdbcDrivers.BigQuery
             return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
         }
 
- /*
- * Recursively flattens nested BigQuery table fields into a flat structure with dot notation.
- * 
- * This method processes each field in the collection and recursively handles nested STRUCT/RECORD types.
- * For each field, it:
- * 1. Constructs the full qualified name using dot notation
- * 2. Appends all field properties to their respective builders
- * 3. Records the depth level and parent field name
- * 4. Recursively processes nested fields if present
- * 
- * Example:
- * Given a field structure:
- * 
- *   address STRUCT<
- *     street STRING,
- *     location STRUCT<
- *       lat FLOAT64,
- *       lon FLOAT64
- *     >
- *   >
- * 
- * The method will generate these entries:
- * 
- *   Depth 0: "address" (parent: null)
- *   Depth 1: "address.street" (parent: "address")
- *   Depth 1: "address.location" (parent: "address")
- *   Depth 2: "address.location.lat" (parent: "address.location")
- *   Depth 2: "address.location.lon" (parent: "address.location")
- */
+        /*
+        * Recursively flattens nested BigQuery table fields into a flat structure with dot notation.
+        * 
+        * This method processes each field in the collection and recursively handles nested STRUCT/RECORD types.
+        * For each field, it:
+        * 1. Constructs the full qualified name using dot notation
+        * 2. Appends all field properties to their respective builders
+        * 3. Records the depth level and parent field name
+        * 4. Recursively processes nested fields if present
+        * 
+        * Example:
+        * Given a field structure:
+        * 
+        *   address STRUCT<
+        *     street STRING,
+        *     location STRUCT<
+        *       lat FLOAT64,
+        *       lon FLOAT64
+        *     >
+        *   >
+        * 
+        * The method will generate these entries:
+        * 
+        *   Depth 0: "address" (parent: null)
+        *   Depth 1: "address.street" (parent: "address")
+        *   Depth 1: "address.location" (parent: "address")
+        *   Depth 2: "address.location.lat" (parent: "address.location")
+        *   Depth 2: "address.location.lon" (parent: "address.location")
+        */
         private void FlattenFields(
             IList<TableFieldSchema> fields,
             string prefix,
