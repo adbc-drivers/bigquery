@@ -373,7 +373,7 @@ namespace AdbcDrivers.BigQuery
          * - column_scale: Scale for NUMERIC types
          * - column_default_value_expression: Default value expression
          * - column_collation: Collation specification
-         * - column_policy_tags: Comma-separated policy tags
+         * - column_policy_tags: List of policy tags
          * - column_rounding_mode: Rounding mode for NUMERIC types
          * - column_range_element_type: Element type for RANGE types
          * - column_depth: Nesting level (0 for top-level, 1+ for nested)
