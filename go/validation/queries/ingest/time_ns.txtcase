@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// TODO: truncate the data on the driver side
 // part: metadata
 
 [tags]
-sql-type-name = "TIMESTAMP"
-
-// part: setup_query
-
-CREATE TABLE test_timestamptz (
-    idx INT,
-    res TIMESTAMP,
-    res2 TIMESTAMP
-);
+broken-vendor = "This is broken on Google's side; it appears BigQuery treats time64[ns] as int64, and throws a type error"
+sql-type-name = "TIME"
