@@ -165,11 +165,11 @@ func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.
 	b.WriteString(q.quoteTblName(tableName))
 	b.WriteString(" (")
 
-	for i := 0; i < int(r.NumCols()); i++ {
+	for i := range r.NumCols() {
 		if i != 0 {
 			b.WriteString(", ")
 		}
-		f := r.Schema().Field(i)
+		f := r.Schema().Field(int(i))
 		b.WriteString(f.Name)
 		b.WriteByte(' ')
 		b.WriteString(getSqlTypeFromArrowField(f))
@@ -253,7 +253,7 @@ func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr arra
 	b.WriteString(q.quoteTblName(tableName))
 	b.WriteString(" (")
 
-	for i := 0; i < rdr.Schema().NumFields(); i++ {
+	for i := range rdr.Schema().NumFields() {
 		if i != 0 {
 			b.WriteString(", ")
 		}
