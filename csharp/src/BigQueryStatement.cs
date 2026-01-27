@@ -621,7 +621,7 @@ namespace AdbcDrivers.BigQuery
                 schemaNameBuilder.Build()
             };
 
-            Schema schema = GetObjectSchema("SchemaName");
+            Schema schema = GetObjectSchema("Name");
             schema.Validate(dataArrays);
 
             IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
@@ -661,7 +661,7 @@ namespace AdbcDrivers.BigQuery
                 catalogNameBuilder.Build()
             };
 
-            Schema schema = GetObjectSchema("CatalogName");
+            Schema schema = GetObjectSchema("Name");
             schema.Validate(dataArrays);
 
             IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
