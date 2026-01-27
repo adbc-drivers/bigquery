@@ -12,26 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version = "2"
+import adbc_driver_manager.dbapi
+import pytest
 
-[formatters]
-enable = [
-  "gofmt",
-]
 
-[issues]
-max-issues-per-linter = 0
-max-same-issues = 0
-uniq-by-line = false
-
-[linters]
-enable = [
-  "errcheck",
-  "govet",
-  "ineffassign",
-  "intrange",
-  "mirror",
-  "nolintlint",
-  "staticcheck",
-  "unused",
-]
+def test_package() -> None:
+    uri = "bigquery://example:foo@nonexistent/test"
+    # Just ensure the driver itself loads
+    with pytest.raises(
+        adbc_driver_manager.dbapi.Error, match="Could not create client"
+    ):
+        with adbc_driver_manager.dbapi.connect(driver="bigquery", uri=uri):
+            pass

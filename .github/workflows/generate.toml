@@ -19,3 +19,8 @@ gcloud = true
 
 [lang]
 go = true
+
+[secrets]
+GOOGLE_CLOUD_PROJECT = { secret = "GOOGLE_CLOUD_PROJECT", contexts = ["test", "validate"] }
+BIGQUERY_DATASET_ID = { secret = "BIGQUERY_DATASET_ID", contexts = ["test", "validate"] }
+BIGQUERY_SECONDARY_DATASET_ID = { secret = "BIGQUERY_SECONDARY_DATASET_ID", contexts = ["test", "validate"] }
