@@ -88,3 +88,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace cloud.google.com/go/bigquery => github.com/lidavidm/google-cloud-go/bigquery v1.72.1-patch
