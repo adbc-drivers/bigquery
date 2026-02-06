@@ -20,6 +20,7 @@ require (
 	cloud.google.com/go/auth v0.18.1
 	cloud.google.com/go/bigquery v1.72.0
 	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260127010732-9982c031b4b7
+	github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20251204005500-ef1acb8b4023
 	github.com/apache/arrow-adbc/go/adbc v1.10.0
 	github.com/apache/arrow-go/v18 v18.5.1
 	github.com/google/uuid v1.6.0
@@ -28,6 +29,7 @@ require (
 	golang.org/x/oauth2 v0.34.0
 	golang.org/x/sync v0.19.0
 	google.golang.org/api v0.264.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -35,7 +37,6 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.5.3 // indirect
-	github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20251204005500-ef1acb8b4023 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/apache/arrow/go/v15 v15.0.2 // indirect
 	github.com/apache/thrift v0.22.0 // indirect
@@ -85,7 +86,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260126211449-d11affda4bed // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260126211449-d11affda4bed // indirect
 	google.golang.org/grpc v1.78.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

@@ -57,6 +57,9 @@ type statement struct {
 	resultRecordBufferSize int
 	prefetchConcurrency    int
 	ingest                 driverbase.BulkIngestOptions
+
+	bulkIngestMethod      string
+	bulkIngestCompression string
 }
 
 func (st *statement) GetOptionBytes(key string) ([]byte, error) {
@@ -139,6 +142,18 @@ func (st *statement) GetOption(key string) (string, error) {
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionBoolQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionStringBulkIngestMethod:
+		// If set at statement level, return that; otherwise fall back to connection
+		if st.bulkIngestMethod != "" {
+			return st.bulkIngestMethod, nil
+		}
+		return st.cnxn.GetOption(key)
+	case OptionStringBulkIngestCompression:
+		// If set at statement level, return that; otherwise fall back to connection
+		if st.bulkIngestCompression != "" {
+			return st.bulkIngestCompression, nil
+		}
+		return st.cnxn.GetOption(key)
 	default:
 		val, err := st.cnxn.GetOption(key)
 		if err == nil {
@@ -173,6 +188,7 @@ func (st *statement) SetOption(key string, v string) error {
 	switch key {
 	case adbc.OptionKeyIngestTargetTable:
 		st.ingest.TableName = v
+		st.queryConfig.Q = ""
 	case adbc.OptionValueIngestTargetCatalog:
 		st.ingest.CatalogName = v
 	case adbc.OptionValueIngestTargetDBSchema:
@@ -286,6 +302,25 @@ func (st *statement) SetOption(key string, v string) error {
 		} else {
 			return err
 		}
+	case OptionStringBulkIngestMethod:
+		if v != OptionValueBulkIngestMethodLoad &&
+			v != OptionValueBulkIngestMethodStorageWrite {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest method: %s (expected %s or %s)", v, OptionValueBulkIngestMethodLoad, OptionValueBulkIngestMethodStorageWrite),
+			}
+		}
+		st.bulkIngestMethod = v
+	case OptionStringBulkIngestCompression:
+		if v != OptionValueCompressionNone &&
+			v != OptionValueCompressionLZ4 &&
+			v != OptionValueCompressionZSTD {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest compression: %s (expected %s, %s, or %s)", v, OptionValueCompressionNone, OptionValueCompressionLZ4, OptionValueCompressionZSTD),
+			}
+		}
+		st.bulkIngestCompression = v
 
 	default:
 		return adbc.Error{
@@ -325,7 +360,7 @@ func (st *statement) SetOptionInt(key string, value int64) error {
 // For queries expected to be executed repeatedly, Prepare should be
 // called before execution.
 func (st *statement) SetSqlQuery(query string) error {
-	// TODO(lidavidm): this should reset ingest parameters (and vice versa)
+	st.ingest.TableName = ""
 	st.queryConfig.Q = query
 	return nil
 }
@@ -876,14 +911,30 @@ func (st *statement) ExecutePartitions(ctx context.Context) (*arrow.Schema, adbc
 }
 
 func (st *statement) executeIngest(ctx context.Context) (int64, error) {
-	logger := st.cnxn.Logger.With("op", "bulkingest")
-
+	// Validate parameters
 	if st.params == nil {
 		return -1, adbc.Error{
 			Msg:  "[bq] no data bound for bulk ingest",
 			Code: adbc.StatusInvalidState,
 		}
 	}
+
+	// Check which implementation to use (statement-level option takes precedence)
+	method, err := st.GetOption(OptionStringBulkIngestMethod)
+	if err != nil {
+		method = OptionValueBulkIngestMethodLoad
+	}
+
+	if method == OptionValueBulkIngestMethodStorageWrite {
+		return st.executeIngestStorageWrite(ctx)
+	}
+
+	// Fall back to existing Parquet-based implementation
+	return st.executeIngestParquet(ctx)
+}
+
+func (st *statement) executeIngestParquet(ctx context.Context) (int64, error) {
+	logger := st.cnxn.Logger.With("op", "bulkingest-parquet")
 
 	impl := &bigqueryBulkIngestImpl{
 		logger:      logger,
