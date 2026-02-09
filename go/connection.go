@@ -78,6 +78,9 @@ type connectionImpl struct {
 	resultRecordBufferSize int
 	prefetchConcurrency    int
 
+	bulkIngestMethod      string
+	bulkIngestCompression string
+
 	client *bigquery.Client
 }
 
@@ -586,6 +589,16 @@ func (c *connectionImpl) GetOption(key string) (string, error) {
 			return "", nil
 		}
 		return c.impersonateLifetime.String(), nil
+	case OptionStringBulkIngestMethod:
+		if c.bulkIngestMethod == "" {
+			return OptionValueBulkIngestMethodLoad, nil
+		}
+		return c.bulkIngestMethod, nil
+	case OptionStringBulkIngestCompression:
+		if c.bulkIngestCompression == "" {
+			return OptionValueCompressionNone, nil
+		}
+		return c.bulkIngestCompression, nil
 	default:
 		return c.ConnectionImplBase.GetOption(key)
 	}
@@ -637,6 +650,25 @@ func (c *connectionImpl) SetOption(key string, value string) error {
 			}
 		}
 		c.impersonateLifetime = dur
+	case OptionStringBulkIngestMethod:
+		if value != OptionValueBulkIngestMethodLoad &&
+			value != OptionValueBulkIngestMethodStorageWrite {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest method: %s (expected %s or %s)", value, OptionValueBulkIngestMethodLoad, OptionValueBulkIngestMethodStorageWrite),
+			}
+		}
+		c.bulkIngestMethod = value
+	case OptionStringBulkIngestCompression:
+		if value != OptionValueCompressionNone &&
+			value != OptionValueCompressionLZ4 &&
+			value != OptionValueCompressionZSTD {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest compression: %s (expected %s, %s, or %s)", value, OptionValueCompressionNone, OptionValueCompressionLZ4, OptionValueCompressionZSTD),
+			}
+		}
+		c.bulkIngestCompression = value
 	default:
 		return c.ConnectionImplBase.SetOption(key, value)
 	}

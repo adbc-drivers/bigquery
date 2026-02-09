@@ -120,6 +120,19 @@ const (
 	// OptionStringImpersonateLifetime instructs the driver to impersonate for the
 	// given duration (e.g. "3600s").
 	OptionStringImpersonateLifetime = "adbc.bigquery.sql.impersonate.lifetime"
+
+	// OptionStringBulkIngestMethod specifies the bulk ingest implementation to use.
+	// Default is "load" (Parquet + LoaderFrom). "storage_write" uses Storage Write API.
+	OptionStringBulkIngestMethod            = "bigquery.bulk_ingest.method"
+	OptionValueBulkIngestMethodLoad         = "load"
+	OptionValueBulkIngestMethodStorageWrite = "storage_write"
+
+	// OptionStringBulkIngestCompression specifies compression for Storage Write API.
+	// Only applies when using storage_write method.
+	OptionStringBulkIngestCompression = "bigquery.bulk_ingest.compression"
+	OptionValueCompressionNone        = "none"
+	OptionValueCompressionLZ4         = "lz4"
+	OptionValueCompressionZSTD        = "zstd"
 )
 
 var (

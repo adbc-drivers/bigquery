@@ -35,6 +35,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	driver "github.com/adbc-drivers/bigquery/go"
+	"github.com/adbc-drivers/driverbase-go/testutil"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-adbc/go/adbc/validation"
 	"github.com/apache/arrow-go/v18/arrow"
@@ -773,6 +774,55 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 	suite.False(rdr.Next())
 
 	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestBulkInsertWrite() {
+	table := "bulk_insert_write"
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "ints", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "strs", Type: arrow.BinaryTypes.String, Nullable: true},
+	}, nil)
+	rec := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), schema, `[
+{"ints": 1, "strs": "one"},
+{"ints": 2, "strs": "two"},
+{"ints": 3, "strs": "three"}
+]`)
+	defer rec.Release()
+
+	rec2 := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), schema, `[
+{"ints": 4, "strs": "four"},
+{"ints": 5, "strs": "five"},
+{"ints": 6, "strs": "six"}
+]`)
+	defer rec2.Release()
+
+	stream, err := array.NewRecordReader(schema, []arrow.RecordBatch{rec, rec2})
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.BindStream(suite.ctx, stream))
+	suite.Require().NoError(suite.stmt.SetOption(adbc.OptionKeyIngestTargetTable, table))
+	suite.Require().NoError(suite.stmt.SetOption(adbc.OptionValueIngestTargetDBSchema, suite.Quirks.DBSchema()))
+	suite.Require().NoError(suite.stmt.SetOption(adbc.OptionKeyIngestMode, adbc.OptionValueIngestModeReplace))
+	suite.Require().NoError(suite.stmt.SetOption(driver.OptionStringBulkIngestMethod, driver.OptionValueBulkIngestMethodStorageWrite))
+	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.ctx = context.Background()
+	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT strs FROM `%s.%s` ORDER BY `ints` ASC", suite.Quirks.schemaName, table)))
+	rdr, _, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	suite.Require().NotNil(rdr)
+	defer rdr.Release()
+	var results []string
+	for rdr.Next() {
+		batch := rdr.RecordBatch()
+		strs := batch.Column(0).(*array.String)
+		for i := range batch.NumRows() {
+			results = append(results, strs.Value(int(i)))
+		}
+	}
+	suite.Require().NoError(rdr.Err())
+	suite.Equal([]string{"one", "two", "three", "four", "five", "six"}, results)
 }
 
 func (suite *BigQueryTests) TestSqlIngestTimestampTypes() {

@@ -58,6 +58,9 @@ type databaseImpl struct {
 	location     string
 	quotaProject string
 	endpoint     string
+
+	bulkIngestMethod      string
+	bulkIngestCompression string
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
@@ -81,6 +84,8 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
+		bulkIngestMethod:           d.bulkIngestMethod,
+		bulkIngestCompression:      d.bulkIngestCompression,
 	}
 
 	err := conn.newClient(ctx)
@@ -133,6 +138,16 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 			return "", nil
 		}
 		return d.impersonateLifetime.String(), nil
+	case OptionStringBulkIngestMethod:
+		if d.bulkIngestMethod == "" {
+			return OptionValueBulkIngestMethodLoad, nil
+		}
+		return d.bulkIngestMethod, nil
+	case OptionStringBulkIngestCompression:
+		if d.bulkIngestCompression == "" {
+			return OptionValueCompressionNone, nil
+		}
+		return d.bulkIngestCompression, nil
 	default:
 		return d.DatabaseImplBase.GetOption(key)
 	}
@@ -234,6 +249,25 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		d.endpoint = value
 	case OptionStringLocation:
 		d.location = value
+	case OptionStringBulkIngestMethod:
+		if value != OptionValueBulkIngestMethodLoad &&
+			value != OptionValueBulkIngestMethodStorageWrite {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest method: %s (expected %s or %s)", value, OptionValueBulkIngestMethodLoad, OptionValueBulkIngestMethodStorageWrite),
+			}
+		}
+		d.bulkIngestMethod = value
+	case OptionStringBulkIngestCompression:
+		if value != OptionValueCompressionNone &&
+			value != OptionValueCompressionLZ4 &&
+			value != OptionValueCompressionZSTD {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest compression: %s (expected %s, %s, or %s)", value, OptionValueCompressionNone, OptionValueCompressionLZ4, OptionValueCompressionZSTD),
+			}
+		}
+		d.bulkIngestCompression = value
 	default:
 		return d.DatabaseImplBase.SetOption(key, value)
 	}
