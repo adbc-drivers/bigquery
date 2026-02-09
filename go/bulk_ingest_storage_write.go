@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	storage "cloud.google.com/go/bigquery/storage/apiv1"
 	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
@@ -29,6 +30,8 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/googleapis/gax-go/v2"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -164,7 +167,57 @@ func (st *statement) createTableForIngest(ctx context.Context, schema *arrow.Sch
 		return errToAdbcErr(adbc.StatusInternal, err, "create table")
 	}
 
+	// Poll until BigQuery recognizes the new table
+	if err := st.waitForTableAvailable(ctx); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// waitForTableAvailable polls until the newly created table is available in BigQuery.
+// BigQuery can have eventual consistency delays after table creation.
+func (st *statement) waitForTableAvailable(ctx context.Context) error {
+	catalog := st.ingest.CatalogName
+	if catalog == "" {
+		catalog = st.queryConfig.DefaultProjectID
+	}
+
+	schema := st.ingest.SchemaName
+	if schema == "" {
+		schema = st.queryConfig.DefaultDatasetID
+	}
+
+	table := st.cnxn.client.DatasetInProject(catalog, schema).Table(st.ingest.TableName)
+	backoff := gax.Backoff{
+		Initial:    100 * time.Millisecond,
+		Multiplier: 2.0,
+		Max:        5 * time.Second,
+	}
+
+	for {
+		_, err := table.Metadata(ctx)
+		if err == nil {
+			st.cnxn.Logger.Debug("table is available", "table", st.ingest.TableName)
+			return nil
+		}
+
+		// Check if it's a 404 (not found) error - this is expected while waiting
+		if apiErr, ok := err.(*googleapi.Error); ok && apiErr.Code == 404 {
+			duration := backoff.Pause()
+			st.cnxn.Logger.Debug("waiting for table to be available",
+				"table", st.ingest.TableName,
+				"backoff", duration)
+
+			if err := gax.Sleep(ctx, duration); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// For other errors, fail immediately
+		return errToAdbcErr(adbc.StatusInternal, err, "check table availability")
+	}
 }
 
 // storageWriteStream manages a BigQuery Storage Write API stream.
