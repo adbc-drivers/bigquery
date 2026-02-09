@@ -20,7 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
+	"strings"
 
 	storage "cloud.google.com/go/bigquery/storage/apiv1"
 	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
@@ -28,10 +28,12 @@ import (
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/compute"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/googleapis/gax-go/v2"
+	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -43,8 +45,59 @@ func (st *statement) executeIngestStorageWrite(ctx context.Context) (n int64, er
 	st.params = nil
 	defer params.Release()
 
-	// Create table if needed
 	schema := params.Schema()
+
+	// TODO: this needs to be generalized to cover lists; we have to remove null list values and splice in empty lists instead.
+	// TODO: we need an option to allow unsafe casts
+	var casts []*compute.CastOptions
+	fields := make([]arrow.Field, len(schema.Fields()))
+	for i, field := range schema.Fields() {
+		fields[i] = field
+		var cast *compute.CastOptions
+		switch field.Type.ID() {
+		case arrow.BINARY_VIEW, arrow.FIXED_SIZE_BINARY:
+			// TODO: arrow-go doesn't implement binary_view -> binary
+			cast = compute.SafeCastOptions(arrow.BinaryTypes.Binary)
+			fields[i].Type = arrow.BinaryTypes.Binary
+		case arrow.STRING_VIEW:
+			// TODO: arrow-go doesn't implement string_view -> binary
+			cast = compute.SafeCastOptions(arrow.BinaryTypes.String)
+			fields[i].Type = arrow.BinaryTypes.String
+		case arrow.TIME32:
+			cast = compute.SafeCastOptions(arrow.FixedWidthTypes.Time64us)
+			fields[i].Type = arrow.FixedWidthTypes.Time64us
+		case arrow.TIME64:
+			timeTy := field.Type.(*arrow.Time64Type)
+			if timeTy.Unit != arrow.Microsecond {
+				cast = compute.SafeCastOptions(arrow.FixedWidthTypes.Time64us)
+				fields[i].Type = arrow.FixedWidthTypes.Time64us
+			}
+		case arrow.TIMESTAMP:
+			// XXX: BigQuery ignores the Arrow unit and just assumes microseconds
+			tsTy := field.Type.(*arrow.TimestampType)
+			if tsTy.Unit != arrow.Microsecond {
+				ty := &arrow.TimestampType{
+					Unit:     arrow.Microsecond,
+					TimeZone: tsTy.TimeZone,
+				}
+				cast = compute.SafeCastOptions(ty)
+				fields[i].Type = ty
+			}
+		}
+
+		if cast != nil {
+			if casts == nil {
+				casts = make([]*compute.CastOptions, len(schema.Fields()))
+			}
+			casts[i] = cast
+		}
+	}
+	if casts != nil {
+		md := schema.Metadata()
+		schema = arrow.NewSchema(fields, &md)
+	}
+
+	// Create table if needed
 	if err := st.createTableForIngest(ctx, schema); err != nil {
 		return -1, err
 	}
@@ -60,19 +113,20 @@ func (st *statement) executeIngestStorageWrite(ctx context.Context) (n int64, er
 
 	// Create and manage write stream
 	stream := &storageWriteStream{
-		client:          writeClient,
-		logger:          logger,
-		tableName:       st.buildTableReference(),
-		streamType:      st.selectStreamType(),
-		compressionOpts: st.getCompressionOptions(),
-		alloc:           st.alloc,
+		client:     writeClient,
+		logger:     logger,
+		tableName:  st.buildTableReference(),
+		streamType: st.selectStreamType(),
+		casts:      casts,
+		ipcOpts:    append([]ipc.Option{ipc.WithAllocator(st.alloc)}, st.getCompressionOptions()...),
+		alloc:      st.alloc,
 	}
 	defer func() {
 		err = errors.Join(err, stream.Close())
 	}()
 
 	// Execute streaming ingestion
-	rowsWritten, err := stream.ingest(ctx, params)
+	rowsWritten, err := stream.ingest(ctx, schema, params)
 	if err != nil {
 		return -1, err
 	}
@@ -189,54 +243,43 @@ func (st *statement) waitForTableAvailable(ctx context.Context) error {
 	}
 
 	table := st.cnxn.client.DatasetInProject(catalog, schema).Table(st.ingest.TableName)
-	backoff := gax.Backoff{
-		Initial:    100 * time.Millisecond,
-		Multiplier: 2.0,
-		Max:        5 * time.Second,
-	}
-
-	for {
+	if err := retry(ctx, "create table "+st.ingest.TableName, func() (bool, error) {
 		_, err := table.Metadata(ctx)
 		if err == nil {
-			st.cnxn.Logger.Debug("table is available", "table", st.ingest.TableName)
-			return nil
+			// completed
+			return true, nil
 		}
-
 		// Check if it's a 404 (not found) error - this is expected while waiting
-		if apiErr, ok := err.(*googleapi.Error); ok && apiErr.Code == 404 {
-			duration := backoff.Pause()
-			st.cnxn.Logger.Debug("waiting for table to be available",
-				"table", st.ingest.TableName,
-				"backoff", duration)
-
-			if err := gax.Sleep(ctx, duration); err != nil {
-				return err
-			}
-			continue
+		var gaiError *googleapi.Error
+		if errors.As(err, &gaiError) && gaiError.Code == 404 {
+			st.cnxn.Logger.Debug("waiting for table to be available", "table", st.ingest.TableName)
+			return false, nil
 		}
 
-		// For other errors, fail immediately
+		return false, err
+	}); err != nil {
 		return errToAdbcErr(adbc.StatusInternal, err, "check table availability")
 	}
+	return nil
 }
 
 // storageWriteStream manages a BigQuery Storage Write API stream.
 type storageWriteStream struct {
-	client          *storage.BigQueryWriteClient
-	logger          *slog.Logger
-	tableName       string // projects/{project}/datasets/{dataset}/tables/{table}
-	streamType      storagepb.WriteStream_Type
-	compressionOpts []ipc.Option
-	alloc           memory.Allocator
+	client     *storage.BigQueryWriteClient
+	logger     *slog.Logger
+	tableName  string // projects/{project}/datasets/{dataset}/tables/{table}
+	streamType storagepb.WriteStream_Type
+	casts      []*compute.CastOptions
+	ipcOpts    []ipc.Option
+	alloc      memory.Allocator
 
 	streamName   string
 	appendStream storagepb.BigQueryWrite_AppendRowsClient
 	offset       int64
-	schemaSet    bool
 }
 
 // ingest reads Arrow data and streams it to BigQuery using the Storage Write API.
-func (s *storageWriteStream) ingest(ctx context.Context, reader array.RecordReader) (int64, error) {
+func (s *storageWriteStream) ingest(ctx context.Context, schema *arrow.Schema, reader array.RecordReader) (int64, error) {
 	// Open stream
 	if err := s.openStream(ctx); err != nil {
 		return 0, err
@@ -245,10 +288,11 @@ func (s *storageWriteStream) ingest(ctx context.Context, reader array.RecordRead
 	var totalRows int64
 
 	// Read and stream batches
+	execCtx := compute.WithAllocator(ctx, s.alloc)
 	for reader.Next() {
 		batch := reader.RecordBatch()
 
-		if err := s.appendBatch(ctx, batch); err != nil {
+		if err := s.appendBatch(execCtx, schema, batch); err != nil {
 			return totalRows, err
 		}
 
@@ -283,97 +327,127 @@ func (s *storageWriteStream) openStream(ctx context.Context) error {
 			},
 		}
 
-		stream, err := s.client.CreateWriteStream(ctx, req)
-		if err != nil {
-			return errToAdbcErr(adbc.StatusIO, err, "create write stream")
-		}
+		var stream *storagepb.WriteStream
+		if err := retry(ctx, "create write stream", func() (bool, error) {
+			var err error
+			stream, err = s.client.CreateWriteStream(ctx, req)
+			if err == nil {
+				// completed
+				return true, nil
+			}
 
+			var apiError *apierror.APIError
+			if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
+				s.logger.Debug("retrying create write stream", "table", s.tableName, "error", err)
+				return false, nil
+			}
+			return false, err
+		}); err != nil {
+			return errToAdbcErr(adbc.StatusIO, err, "create %s write stream for %s", s.streamType, s.tableName)
+		}
 		s.streamName = stream.Name
 		s.logger.Debug("created write stream", "stream", s.streamName)
 	}
-
-	// Open bidirectional AppendRows stream
-	appendStream, err := s.client.AppendRows(ctx)
-	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "open append stream")
-	}
-
-	s.appendStream = appendStream
 	return nil
 }
 
 // appendBatch sends a single Arrow record batch to the stream.
-func (s *storageWriteStream) appendBatch(ctx context.Context, batch arrow.RecordBatch) error {
-	// Build AppendRowsRequest
-	req := &storagepb.AppendRowsRequest{
-		WriteStream: s.streamName,
-	}
-
-	// Include schema on first request
-	if !s.schemaSet {
-		schemaBytes, err := serializeArrowSchema(batch.Schema(), s.alloc)
-		if err != nil {
-			return err
-		}
-
-		req.Rows = &storagepb.AppendRowsRequest_ArrowRows{
-			ArrowRows: &storagepb.AppendRowsRequest_ArrowData{
-				WriterSchema: &storagepb.ArrowSchema{
-					SerializedSchema: schemaBytes,
-				},
-				Rows: &storagepb.ArrowRecordBatch{
-					SerializedRecordBatch: nil, // Will set below
-				},
-			},
-		}
-		s.schemaSet = true
-	}
-
-	// Serialize record batch with optional compression
-	batchBytes, err := serializeArrowRecordBatch(batch, s.alloc, s.compressionOpts)
+func (s *storageWriteStream) appendBatch(ctx context.Context, schema *arrow.Schema, batch arrow.RecordBatch) error {
+	batchBytes, err := serializeArrowRecordBatch(ctx, schema, batch, s.ipcOpts, s.casts)
 	if err != nil {
 		return err
 	}
 
-	// Set record batch in request
-	if req.Rows == nil {
-		req.Rows = &storagepb.AppendRowsRequest_ArrowRows{
-			ArrowRows: &storagepb.AppendRowsRequest_ArrowData{
-				Rows: &storagepb.ArrowRecordBatch{
-					SerializedRecordBatch: batchBytes,
-				},
+	rows := &storagepb.AppendRowsRequest_ArrowRows{
+		ArrowRows: &storagepb.AppendRowsRequest_ArrowData{
+			Rows: &storagepb.ArrowRecordBatch{
+				SerializedRecordBatch: batchBytes,
 			},
-		}
-	} else {
-		req.Rows.(*storagepb.AppendRowsRequest_ArrowRows).ArrowRows.Rows.SerializedRecordBatch = batchBytes
+		},
 	}
 
-	// Include offset for exactly-once semantics
+	// Include schema on first request
+	if s.appendStream == nil {
+		schemaBytes, err := serializeArrowSchema(schema, s.alloc)
+		if err != nil {
+			return err
+		}
+		rows.ArrowRows.WriterSchema = &storagepb.ArrowSchema{
+			SerializedSchema: schemaBytes,
+		}
+	}
+
+	req := &storagepb.AppendRowsRequest{
+		WriteStream: s.streamName,
+		Rows:        rows,
+	}
 	if s.streamType == storagepb.WriteStream_COMMITTED {
+		// Include offset for exactly-once semantics
 		req.Offset = &wrapperspb.Int64Value{Value: s.offset}
 	}
 
-	// Send request
-	if err := s.appendStream.Send(req); err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "send append request")
-	}
+	if s.appendStream == nil {
+		// Send the schema and the first batch to try to flush out an
+		// issue where BQ doesn't seem to know that the stream
+		// exists...
+		if err := retry(ctx, "append rows to "+s.tableName, func() (bool, error) {
+			err := func() error {
+				appendStream, err := s.client.AppendRows(ctx)
+				if err != nil {
+					return errToAdbcErr(adbc.StatusIO, err, "begin AppendRows(%s)", s.tableName)
+				}
+				if err := appendStream.Send(req); err != nil {
+					return errToAdbcErr(adbc.StatusIO, err, "send AppendRows(%s)", s.tableName)
+				}
+				resp, err := appendStream.Recv()
+				if err != nil {
+					return errToAdbcErr(adbc.StatusIO, err, "receive AppendRows(%s)", s.tableName)
+				}
 
-	// Receive response
-	resp, err := s.appendStream.Recv()
-	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "receive append response")
-	}
+				if resp.GetError() != nil {
+					return errToAdbcErr(adbc.StatusIO,
+						fmt.Errorf("append failed: %v", resp.GetError()),
+						"append rows")
+				}
+				s.appendStream = appendStream
+				return nil
+			}()
+			if err == nil {
+				return true, nil
+			}
 
-	// Check for errors
-	if resp.GetError() != nil {
-		return errToAdbcErr(adbc.StatusIO,
-			fmt.Errorf("append failed: %v", resp.GetError()),
-			"append rows")
+			// Weirdly annoyingly, gRPC returns a status.Error which is an internal type
+			if strings.Contains(err.Error(), "NotFound") {
+				s.logger.Debug("retrying AppendRows",
+					"table", s.tableName,
+					"error", err)
+
+				return false, nil
+			}
+			return false, err
+		}); err != nil {
+			return errToAdbcErr(adbc.StatusIO, err, "AppendRows(%s)", s.tableName)
+		}
+	} else {
+		// Once we've managed to send the first message, it seems
+		// there's no need to retry
+		if err := s.appendStream.Send(req); err != nil {
+			return errToAdbcErr(adbc.StatusIO, err, "send append request")
+		}
+		resp, err := s.appendStream.Recv()
+		if err != nil {
+			return errToAdbcErr(adbc.StatusIO, err, "receive append response")
+		}
+
+		if resp.GetError() != nil {
+			return errToAdbcErr(adbc.StatusIO,
+				fmt.Errorf("append failed: %v", resp.GetError()),
+				"append rows")
+		}
 	}
 
 	// Update offset
 	s.offset += batch.NumRows()
-
 	s.logger.Debug("appended batch", "rows", batch.NumRows(), "offset", s.offset)
 	return nil
 }
@@ -423,29 +497,62 @@ func (s *storageWriteStream) Close() error {
 
 // serializeArrowSchema serializes an Arrow schema to IPC format.
 func serializeArrowSchema(schema *arrow.Schema, alloc memory.Allocator) ([]byte, error) {
-	// Get the schema payload
+	// TODO: try to use ipc.PayloadWriter, though this requires us to
+	// convert push-to-pull (since we have to consolidate the schema and
+	// record batch into a single RPC call, we can't just directly turn
+	// one IPC payload into one gRPC send).
 	payload := ipc.GetSchemaPayload(schema, alloc)
 	defer payload.Release()
-
-	// Serialize the payload to bytes
 	var buf bytes.Buffer
 	if _, err := payload.WritePayload(&buf); err != nil {
 		return nil, errToAdbcErr(adbc.StatusInternal, err, "serialize schema payload")
 	}
-
 	return buf.Bytes(), nil
 }
 
 // serializeArrowRecordBatch serializes an Arrow record batch to IPC format with optional compression.
-func serializeArrowRecordBatch(record arrow.RecordBatch, alloc memory.Allocator, compressionOpts []ipc.Option) ([]byte, error) {
-	// Build options with allocator
-	opts := []ipc.Option{ipc.WithAllocator(alloc)}
-	opts = append(opts, compressionOpts...)
+func serializeArrowRecordBatch(ctx context.Context, schema *arrow.Schema, batch arrow.RecordBatch, opts []ipc.Option, casts []*compute.CastOptions) ([]byte, error) {
+	var payload ipc.Payload
+	// TODO: BigQuery limits us to ~10 MB of data per call; need to probe
+	// how this limit is computed and also respect it
 
-	// Get the record batch payload with compression applied
-	payload, err := ipc.GetRecordBatchPayload(record, opts...)
-	if err != nil {
-		return nil, errToAdbcErr(adbc.StatusInternal, err, "get record batch payload")
+	if casts != nil {
+		rawCols := batch.Columns()
+		cols := make([]arrow.Array, len(rawCols))
+		ownedCols := []arrow.Array{}
+		defer func() {
+			for _, col := range ownedCols {
+				col.Release()
+			}
+		}()
+
+		for i, cast := range casts {
+			if cast == nil {
+				cols[i] = rawCols[i]
+			} else {
+				var err error
+				cols[i], err = compute.CastArray(ctx, rawCols[i], cast)
+				if err != nil {
+					return nil, fmt.Errorf("could not prepare ingest data: could not cast column %d to `%s`: %v", i+1, cast.ToType, err)
+				}
+				ownedCols = append(ownedCols, cols[i])
+			}
+		}
+
+		rb := array.NewRecordBatch(schema, cols, batch.NumRows())
+		defer rb.Release()
+
+		var err error
+		payload, err = ipc.GetRecordBatchPayload(rb, opts...)
+		if err != nil {
+			return nil, errToAdbcErr(adbc.StatusInternal, err, "get record batch payload")
+		}
+	} else {
+		var err error
+		payload, err = ipc.GetRecordBatchPayload(batch, opts...)
+		if err != nil {
+			return nil, errToAdbcErr(adbc.StatusInternal, err, "get record batch payload")
+		}
 	}
 	defer payload.Release()
 

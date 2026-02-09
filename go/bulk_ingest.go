@@ -263,6 +263,9 @@ func writeFields(b *strings.Builder, fields []arrow.Field, skipName bool) error 
 }
 
 func createTableStatement(options *driverbase.BulkIngestOptions, schema *arrow.Schema, ifTableExists driverbase.BulkIngestTableExistsBehavior, ifTableMissing driverbase.BulkIngestTableMissingBehavior) (string, error) {
+	// TODO: refactor this to take in a bigquery Client, and create the
+	// table by using DatasetInProject.Table.Create, passing in a
+	// bigquery.TableMetadata, instead of generating SQL
 	var b strings.Builder
 
 	switch ifTableExists {
@@ -271,6 +274,7 @@ func createTableStatement(options *driverbase.BulkIngestOptions, schema *arrow.S
 	case driverbase.BulkIngestTableExistsIgnore:
 		// Do nothing
 	case driverbase.BulkIngestTableExistsDrop:
+		// TODO: add CatalogName/SchemaName here
 		b.WriteString("DROP TABLE IF EXISTS ")
 		b.WriteString(quoteIdentifier(options.TableName))
 		b.WriteString("; ")

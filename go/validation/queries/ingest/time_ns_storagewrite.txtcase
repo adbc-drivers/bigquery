@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ADBC Drivers Contributors
+// Copyright (c) 2026 ADBC Drivers Contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,12 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// TODO: truncate the data on the driver side
 // part: metadata
 
-[tags]
-sql-type-name = "TIMESTAMP"
+[setup.statement.options]
+"bigquery.bulk_ingest.method" = { apply = "storage_write", revert = "load" }
 
-// part: expected_schema
+[tags]
+broken-driver = "The driver refuses to truncate to microseconds; it will work if the data is only microsecond precision and not nanosecond precision."
+sql-type-name = "TIME"
+
+// part: input_schema
 
 {
     "format": "+s",
@@ -29,22 +34,16 @@ sql-type-name = "TIMESTAMP"
         },
         {
             "name": "value",
-            "format": "tsu:UTC",
-            "flags": ["nullable"]
-        },
-        {
-            "name": "value2",
-            "format": "tsu:UTC",
+            "format": "ttn",
             "flags": ["nullable"]
         }
     ]
 }
 
-// part: expected
+// part: input
 
-{"idx": 0, "value": null, "value2": null}
-{"idx": 1, "value": 0, "value2": 0}
-{"idx": 2, "value": 946684800123000, "value2": 946684800123000}
-{"idx": 3, "value": 1684158330123000, "value2": 1684158330123000}
-{"idx": 4, "value": -62135596800000000, "value2": -62135596800000000}
-{"idx": 5, "value": 253402300799999000, "value2": 253402300799999000}
+{"idx": 0, "value": 0}
+{"idx": 1, "value": 3661000000000}
+{"idx": 2, "value": 43200000000000}
+{"idx": 3, "value": 49531123456789}
+{"idx": 4, "value": 86399999999999}

@@ -1,0 +1,132 @@
+// Copyright (c) 2026 ADBC Drivers Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//         http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// part: metadata
+
+[setup.statement.options]
+"bigquery.bulk_ingest.method" = { apply = "storage_write", revert = "load" }
+
+[tags]
+broken-driver = "The driver currently will not rewrite NULL list elements."
+caveats = [
+  "BigQuery does not support NULL lists; it will instead return an empty list",
+  "BigQuery does not support NULL list elements; it will instead raise an error",
+  "See the BigQuery documentation for the [ARRAY type](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type)"
+]
+
+// part: input_schema
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "idx",
+            "format": "l",
+            "flags": ["nullable"]
+        },
+        {
+            "name": "value",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "value",
+                    "format": "+s",
+                    "flags": ["nullable"],
+                    "children": [
+                        {
+                            "name": "key",
+                            "format": "U",
+                            "flags": ["nullable"]
+                        },
+                        {
+                            "name": "num",
+                            "format": "g",
+                            "flags": ["nullable"]
+                        },
+                        {
+                            "name": "row",
+                            "format": "g",
+                            "flags": ["nullable"]
+                        },
+                        {
+                            "name": "active",
+                            "format": "b",
+                            "flags": ["nullable"]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+// part: input
+{"idx": 0, "value": null}
+{"idx": 1, "value": []}
+{"idx": 2, "value": [{}]}
+{"idx": 3, "value": [{"key": "foo"}]}
+{"idx": 4, "value": [{"key": "foo", "num": 42.42, "row": 64, "active": false}]}
+
+// part: expected_schema
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "idx",
+            "format": "l",
+            "flags": ["nullable"]
+        },
+        {
+            "name": "value",
+            "format": "+l",
+            "flags": ["nullable"],
+            "children": [
+                {
+                    "name": "value",
+                    "format": "+s",
+                    "flags": ["nullable"],
+                    "children": [
+                        {
+                            "name": "key",
+                            "format": "u",
+                            "flags": ["nullable"]
+                        },
+                        {
+                            "name": "num",
+                            "format": "g",
+                            "flags": ["nullable"]
+                        },
+                        {
+                            "name": "row",
+                            "format": "g",
+                            "flags": ["nullable"]
+                        },
+                        {
+                            "name": "active",
+                            "format": "b",
+                            "flags": ["nullable"]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+// part: expected
+{"idx": 0, "value": []}
+{"idx": 1, "value": []}
+{"idx": 2, "value": [{}]}
+{"idx": 3, "value": [{"key": "foo"}]}
+{"idx": 4, "value": [{"key": "foo", "num": 42.42, "row": 64, "active": false}]}

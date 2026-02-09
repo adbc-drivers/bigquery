@@ -226,3 +226,37 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	adbcErr.Msg = msg.String()
 	return adbcErr
 }
+
+func retryWithBackoff(ctx context.Context, context string, maxAttempts int, backoff gax.Backoff, f func() (bool, error)) error {
+	attempt := 0
+	for {
+		complete, err := f()
+		if err != nil {
+			return err
+		} else if complete {
+			return nil
+		}
+
+		duration := backoff.Pause()
+		if err := gax.Sleep(ctx, duration); err != nil {
+			return err
+		}
+		attempt++
+
+		if attempt >= maxAttempts {
+			return adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  fmt.Sprintf("[bq] could not %s: maximum retry attempts exceeded", context),
+			}
+		}
+	}
+}
+
+func retry(ctx context.Context, context string, f func() (bool, error)) error {
+	backoff := gax.Backoff{
+		Initial:    100 * time.Millisecond,
+		Multiplier: 2.0,
+		Max:        10 * time.Second,
+	}
+	return retryWithBackoff(ctx, context, 15, backoff, f)
+}

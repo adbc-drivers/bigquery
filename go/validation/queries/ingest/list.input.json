@@ -1,5 +1,0 @@
-{"idx": 0, "value": null}
-{"idx": 1, "value": []}
-{"idx": 2, "value": [{}]}
-{"idx": 3, "value": [{"key": "foo"}]}
-{"idx": 4, "value": [{"key": "foo", "num": 42.42, "row": 64, "active": false}]}
