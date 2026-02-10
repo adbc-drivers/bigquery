@@ -35,7 +35,7 @@ type bigqueryBulkIngestSink struct {
 	rows int64
 }
 
-func (sink *bigqueryBulkIngestSink) Rows() int64 {
+func (sink *bigqueryBulkIngestSink) NumRows() int64 {
 	return sink.rows
 }
 
@@ -57,6 +57,8 @@ func (sink *bigqueryBulkIngestSink) Close() error {
 }
 
 type bigqueryBulkIngestImpl struct {
+	driverbase.ParquetIngestImpl
+
 	logger      *slog.Logger
 	options     driverbase.BulkIngestOptions
 	queryConfig bigquery.QueryConfig
@@ -65,7 +67,11 @@ type bigqueryBulkIngestImpl struct {
 	tmpdir string
 }
 
-func (bi *bigqueryBulkIngestImpl) Init() error {
+var _ driverbase.BulkIngestImpl = (*bigqueryBulkIngestImpl)(nil)
+var _ driverbase.BulkIngestFileImpl = (*bigqueryBulkIngestImpl)(nil)
+var _ driverbase.BulkIngestInitFinalizeImpl = (*bigqueryBulkIngestImpl)(nil)
+
+func (bi *bigqueryBulkIngestImpl) Init(ctx context.Context) error {
 	tmpdir, err := os.MkdirTemp("", fmt.Sprintf("bq-bulk-%s", bi.options.TableName))
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create temporary directory for bulk ingest")
@@ -74,13 +80,15 @@ func (bi *bigqueryBulkIngestImpl) Init() error {
 	return nil
 }
 
-func (bi *bigqueryBulkIngestImpl) Close() {
+func (bi *bigqueryBulkIngestImpl) Finalize(ctx context.Context, success bool) error {
 	if bi.tmpdir != "" {
 		if err := os.RemoveAll(bi.tmpdir); err != nil {
+			// Suppress errors
 			bi.logger.Error("failed to remove temporary directory", "dir", bi.tmpdir, "err", err)
 		}
 	}
 	bi.tmpdir = ""
+	return nil
 }
 
 func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.BulkIngestPendingCopy) error {

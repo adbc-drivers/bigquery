@@ -33,7 +33,7 @@ repos:
         )$
 
 - repo: https://github.com/golangci/golangci-lint
-  rev: e2e40021c9007020676c93680a36e3ab06c6cd33  # frozen: v2.8.0
+  rev: 72798d34b1eb36745915b0d4eea5c2b3b31bdfe3  # frozen: v2.9.0
   hooks:
   - id: golangci-lint
     entry: bash -c 'cd go && golangci-lint run --fix --timeout 5m'
@@ -56,6 +56,6 @@ repos:
   - id: trailing-whitespace
 
 - repo: https://github.com/adbc-drivers/dev
-  rev: 30cd0fdecc0d03de3ca2a65acb4595505d3754ca
+  rev: 03bf2427d2f60555ff1950c28bfa9369130ef15f
   hooks:
   - id: rat
