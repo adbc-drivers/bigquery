@@ -47,6 +47,7 @@ go/bigquery_database.go
 go/connection.go
 go/driver.go
 go/driver_test.go
+go/pkg/adbc.h
 go/pkg/driver.go
 go/pkg/utils.c
 go/pkg/utils.h

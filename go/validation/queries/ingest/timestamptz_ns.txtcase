@@ -15,5 +15,41 @@
 // part: metadata
 
 [tags]
-broken-vendor = "This is broken on Google's side, as BigQuery doesn't properly parse Parquet types. See https://github.com/googleapis/google-cloud-python/issues/6542."
+broken-vendor = "From experimentation, it appears that BigQuery will accept nanosecond timestamps, but will interpret them as microseconds. Do not use!"
 sql-type-name = "TIMESTAMP"
+
+// part: input
+
+{"idx": 0, "value": null, "value2": null}
+{"idx": 1, "value": 0, "value2": 0}
+{"idx": 2, "value": 1000, "value2": -1000}
+
+// part: expected_schema
+
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "idx",
+            "format": "l",
+            "flags": ["nullable"]
+        },
+        {
+            "name": "value",
+            "format": "tsu:UTC",
+            "flags": ["nullable"]
+        },
+        {
+            "name": "value2",
+            "format": "tsu:UTC",
+            "flags": ["nullable"]
+        }
+    ]
+}
+
+// part: expected
+// If BigQuery truly accepted nanoseconds, we should see 1 microsecond for row 2 below
+
+{"idx": 0, "value": null, "value2": null}
+{"idx": 1, "value": 0, "value2": 0}
+{"idx": 2, "value": 1, "value2": -1}

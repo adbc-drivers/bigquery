@@ -1,4 +1,4 @@
-# Copyright (c) 2025 ADBC Drivers Contributors
+# Copyright (c) 2025-2026 ADBC Drivers Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
+import functools
 from pathlib import Path
 
 from adbc_drivers_validation import model
@@ -41,7 +43,9 @@ class BigQueryQuirks(model.DriverQuirks):
         # statement" queries which is not very useful to us
         statement_bulk_ingest_temporary=False,
         statement_execute_schema=True,
+        statement_prepare=True,
         statement_rows_affected=True,
+        statement_rows_affected_ddl=True,
         current_catalog=model.FromEnv("GOOGLE_CLOUD_PROJECT"),
         current_schema=model.FromEnv("BIGQUERY_DATASET_ID"),
         secondary_schema=model.FromEnv("BIGQUERY_SECONDARY_DATASET_ID"),
@@ -70,6 +74,54 @@ class BigQueryQuirks(model.DriverQuirks):
     @property
     def queries_paths(self) -> tuple[Path]:
         return (Path(__file__).parent.parent / "queries",)
+
+    @functools.cached_property
+    def query_set(self) -> model.QuerySet:
+        queries = super().query_set.queries.copy()
+
+        ingest = collections.defaultdict(list)
+        for name, query in queries.items():
+            if not isinstance(query.query, model.IngestQuery):
+                continue
+            ingest[query.arrow_type_name].append(query)
+
+        def _tests_storage_write(q):
+            if (setup := q.metadata().setup.statement) is None:
+                return False
+            method = setup.options.get("bigquery.bulk_ingest.method")
+            return method is not None and method.apply == "storage_write"
+
+        for name, type_queries in ingest.items():
+            if any(_tests_storage_write(q) for q in type_queries):
+                continue
+
+            for q in type_queries:
+                name = f"{q.name}:storagewrite"
+                metadata = [
+                    {
+                        "setup": {
+                            "statement": {
+                                "options": {
+                                    "bigquery.bulk_ingest.method": {
+                                        "apply": "storage_write",
+                                        "revert": "load",
+                                    }
+                                }
+                            }
+                        },
+                        "tags": {
+                            "broken-vendor": None,
+                        },
+                    }
+                ]
+                metadata.extend(q.metadata_paths or [])
+                queries[name] = model.Query(
+                    name=name,
+                    query=q.query,
+                    metadata_paths=metadata,
+                )
+
+        return model.QuerySet(queries=queries)
 
     def is_table_not_found(self, table_name: str, error: Exception) -> bool:
         return "Not found: Table" in str(error) and table_name in str(error)
