@@ -162,6 +162,9 @@ const (
 	// columns of the destination table. RECORD columns are skipped
 	// (BigQuery does not support policy tags on nested types).
 	OptionJsonUpdateTableColumnsPolicyTags = "adbc.bigquery.table.update_columns_policy_tags"
+	// OptionStringUpdateTableDescriptionValue sets the table-level
+	// description via Table.Update on the destination table.
+	OptionStringUpdateTableDescriptionValue = "adbc.bigquery.table.update_description"
 
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10

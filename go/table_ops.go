@@ -138,3 +138,24 @@ func (st *statement) executeUpdateTableColumnsMetadata(ctx context.Context) (arr
 	}
 	return emptyResult()
 }
+
+// executeUpdateTableDescription updates only the table description,
+// leaving schema untouched.
+func (st *statement) executeUpdateTableDescription(ctx context.Context) (array.RecordReader, int64, error) {
+	if st.queryConfig.Dst == nil {
+		return nil, -1, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] update_description requires a destination table",
+		}
+	}
+	dst := st.queryConfig.Dst
+	table := st.cnxn.client.DatasetInProject(dst.ProjectID, dst.DatasetID).Table(dst.TableID)
+	md, err := table.Metadata(ctx)
+	if err != nil {
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "get table metadata")
+	}
+	if _, err := table.Update(ctx, bigquery.TableMetadataToUpdate{Description: st.tableDescription}, md.ETag); err != nil {
+		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "update table description")
+	}
+	return emptyResult()
+}
