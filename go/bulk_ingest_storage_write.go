@@ -32,7 +32,6 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/googleapis/gax-go/v2/apierror"
-	"google.golang.org/api/googleapi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -193,73 +192,11 @@ func (st *statement) createTableForIngest(ctx context.Context, schema *arrow.Sch
 		ifTableMissing = driverbase.BulkIngestTableMissingCreate
 	}
 
-	// Reuse existing createTableStatement function from bulk_ingest.go
-	stmt, err := createTableStatement(&st.ingest, schema, ifTableExists, ifTableMissing)
-	if err != nil {
+	// Use API-based table creation
+	if err := createTableWithAPI(ctx, st.cnxn.client, st.queryConfig, &st.ingest, schema, ifTableExists, ifTableMissing); err != nil {
 		return err
 	}
 
-	if stmt == "" {
-		return nil // No table creation needed
-	}
-
-	// Execute CREATE TABLE statement
-	query := st.cnxn.client.Query("")
-	query.QueryConfig = st.queryConfig
-	query.Q = stmt
-	job, err := query.Run(ctx)
-	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "create table")
-	}
-
-	status, err := safeWaitForJob(ctx, st.cnxn.Logger, job)
-	if err != nil {
-		return err
-	}
-
-	if err := status.Err(); err != nil {
-		return errToAdbcErr(adbc.StatusInternal, err, "create table")
-	}
-
-	// Poll until BigQuery recognizes the new table
-	if err := st.waitForTableAvailable(ctx); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// waitForTableAvailable polls until the newly created table is available in BigQuery.
-// BigQuery can have eventual consistency delays after table creation.
-func (st *statement) waitForTableAvailable(ctx context.Context) error {
-	catalog := st.ingest.CatalogName
-	if catalog == "" {
-		catalog = st.queryConfig.DefaultProjectID
-	}
-
-	schema := st.ingest.SchemaName
-	if schema == "" {
-		schema = st.queryConfig.DefaultDatasetID
-	}
-
-	table := st.cnxn.client.DatasetInProject(catalog, schema).Table(st.ingest.TableName)
-	if err := retry(ctx, "create table "+st.ingest.TableName, func() (bool, error) {
-		_, err := table.Metadata(ctx)
-		if err == nil {
-			// completed
-			return true, nil
-		}
-		// Check if it's a 404 (not found) error - this is expected while waiting
-		var gaiError *googleapi.Error
-		if errors.As(err, &gaiError) && gaiError.Code == 404 {
-			st.cnxn.Logger.Debug("waiting for table to be available", "table", st.ingest.TableName)
-			return false, nil
-		}
-
-		return false, err
-	}); err != nil {
-		return errToAdbcErr(adbc.StatusInternal, err, "check table availability")
-	}
 	return nil
 }
 

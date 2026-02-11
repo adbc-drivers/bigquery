@@ -21,7 +21,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
@@ -138,33 +137,14 @@ func (bi *bigqueryBulkIngestImpl) CreateSink(ctx context.Context, options *drive
 }
 
 func (bi *bigqueryBulkIngestImpl) CreateTable(ctx context.Context, schema *arrow.Schema, ifTableExists driverbase.BulkIngestTableExistsBehavior, ifTableMissing driverbase.BulkIngestTableMissingBehavior) error {
-	if stmt, err := createTableStatement(&bi.options, schema, ifTableExists, ifTableMissing); err != nil {
+	bi.logger.Debug("creating table", "table", bi.options.TableName)
+
+	if err := createTableWithAPI(ctx, bi.client, bi.queryConfig, &bi.options, schema, ifTableExists, ifTableMissing); err != nil {
+		bi.logger.Debug("failed to create table", "table", bi.options.TableName, "error", err)
 		return err
-	} else if stmt != "" {
-		bi.logger.Debug("creating table", "table", bi.options.TableName, "stmt", stmt)
-		query := bi.client.Query("")
-		query.QueryConfig = bi.queryConfig
-		query.Q = stmt
-		job, err := query.Run(ctx)
-		if err != nil {
-			return err
-		}
-		js, err := safeWaitForJob(ctx, bi.logger, job)
-		if err != nil {
-			bi.logger.Debug("failed to create table", "table", bi.options.TableName, "stmt", stmt, "error", err)
-			return err
-		} else if err = js.Err(); err != nil {
-			bi.logger.Debug("failed to create table", "table", bi.options.TableName, "stmt", stmt, "error", err)
-			return errToAdbcErr(adbc.StatusInternal, err, "create table")
-		} else if !js.Done() {
-			bi.logger.Debug("failed to create table", "table", bi.options.TableName, "stmt", stmt, "error", "did not complete")
-			return adbc.Error{
-				Code: adbc.StatusInternal,
-				Msg:  "[bq] CREATE TABLE query did not complete",
-			}
-		}
-		bi.logger.Debug("created table", "table", bi.options.TableName)
 	}
+
+	bi.logger.Debug("created table", "table", bi.options.TableName)
 	return nil
 }
 
@@ -191,119 +171,165 @@ func (bi *bigqueryBulkIngestImpl) Delete(ctx context.Context, chunk driverbase.B
 	return nil
 }
 
-func writeFields(b *strings.Builder, fields []arrow.Field, skipName bool) error {
-	for i, field := range fields {
-		if i > 0 {
-			b.WriteString(", ")
+// arrowFieldToBigQueryField converts an Arrow field to a BigQuery FieldSchema.
+func arrowFieldToBigQueryField(field arrow.Field) (*bigquery.FieldSchema, error) {
+	bqField := &bigquery.FieldSchema{
+		Name:     field.Name,
+		Required: !field.Nullable,
+	}
+
+	switch field.Type.ID() {
+	case arrow.BINARY, arrow.LARGE_BINARY, arrow.BINARY_VIEW, arrow.FIXED_SIZE_BINARY:
+		bqField.Type = bigquery.BytesFieldType
+	case arrow.BOOL:
+		bqField.Type = bigquery.BooleanFieldType
+	case arrow.DATE32:
+		bqField.Type = bigquery.DateFieldType
+	case arrow.DECIMAL128, arrow.DECIMAL256:
+		dec := field.Type.(arrow.DecimalType)
+		bqField.Type = bigquery.NumericFieldType
+		bqField.Precision = int64(dec.GetPrecision())
+		bqField.Scale = int64(dec.GetScale())
+	case arrow.FLOAT32, arrow.FLOAT64:
+		bqField.Type = bigquery.FloatFieldType
+	case arrow.INT16, arrow.INT32, arrow.INT64:
+		bqField.Type = bigquery.IntegerFieldType
+	case arrow.STRING, arrow.LARGE_STRING, arrow.STRING_VIEW:
+		bqField.Type = bigquery.StringFieldType
+	case arrow.TIME32, arrow.TIME64:
+		bqField.Type = bigquery.TimeFieldType
+	case arrow.TIMESTAMP:
+		ts := field.Type.(*arrow.TimestampType)
+		if ts.TimeZone != "" {
+			bqField.Type = bigquery.TimestampFieldType
+		} else {
+			bqField.Type = bigquery.DateTimeFieldType
 		}
-
-		if !skipName {
-			b.WriteString(quoteIdentifier(field.Name))
-		}
-
-		switch field.Type.ID() {
-		case arrow.BINARY, arrow.LARGE_BINARY, arrow.BINARY_VIEW, arrow.FIXED_SIZE_BINARY:
-			b.WriteString(" BYTES")
-		case arrow.BOOL:
-			b.WriteString(" BOOLEAN")
-		case arrow.DATE32:
-			b.WriteString(" DATE")
-		case arrow.DECIMAL128, arrow.DECIMAL256:
-			dec := field.Type.(arrow.DecimalType)
-			fmt.Fprintf(b, "NUMERIC(%d, %d)", dec.GetPrecision(), dec.GetScale())
-		case arrow.FLOAT32:
-			b.WriteString(" FLOAT64")
-		case arrow.FLOAT64:
-			b.WriteString(" FLOAT64")
-		case arrow.INT16, arrow.INT32, arrow.INT64:
-			b.WriteString(" INT64")
-		case arrow.STRING, arrow.LARGE_STRING, arrow.STRING_VIEW:
-			b.WriteString(" STRING")
-		case arrow.TIME32, arrow.TIME64:
-			b.WriteString(" TIME")
-		case arrow.TIMESTAMP:
-			ts := field.Type.(*arrow.TimestampType)
-			if ts.TimeZone != "" {
-				b.WriteString(" TIMESTAMP")
-			} else {
-				b.WriteString(" DATETIME")
-			}
-		case arrow.LIST, arrow.LARGE_LIST, arrow.LIST_VIEW, arrow.FIXED_SIZE_LIST:
-			child := field.Type.(arrow.NestedType).Fields()[0]
-			if child.Type.ID() == arrow.LIST || child.Type.ID() == arrow.LARGE_LIST || child.Type.ID() == arrow.LIST_VIEW || child.Type.ID() == arrow.FIXED_SIZE_LIST {
-				return adbc.Error{
-					Msg:  "[bigquery] nested lists are not supported",
-					Code: adbc.StatusNotImplemented,
-				}
-			}
-
-			b.WriteString(" ARRAY<")
-			if err := writeFields(b, []arrow.Field{child}, true); err != nil {
-				return err
-			}
-			b.WriteString(">")
-		case arrow.STRUCT:
-			b.WriteString(" STRUCT<")
-			if err := writeFields(b, field.Type.(*arrow.StructType).Fields(), false); err != nil {
-				return err
-			}
-			b.WriteString(">")
-		default:
-			return adbc.Error{
-				Msg:  fmt.Sprintf("[bigquery] Unsupported type %s", field.Type),
+	case arrow.LIST, arrow.LARGE_LIST, arrow.LIST_VIEW, arrow.FIXED_SIZE_LIST:
+		child := field.Type.(arrow.NestedType).Fields()[0]
+		if child.Type.ID() == arrow.LIST || child.Type.ID() == arrow.LARGE_LIST ||
+			child.Type.ID() == arrow.LIST_VIEW || child.Type.ID() == arrow.FIXED_SIZE_LIST {
+			return nil, adbc.Error{
+				Msg:  "[bigquery] nested lists are not supported",
 				Code: adbc.StatusNotImplemented,
 			}
 		}
-
-		if !field.Nullable {
-			b.WriteString(" NOT NULL")
+		// Recursively convert child field
+		childField, err := arrowFieldToBigQueryField(child)
+		if err != nil {
+			return nil, err
+		}
+		bqField.Type = childField.Type
+		bqField.Repeated = true
+		bqField.Precision = childField.Precision
+		bqField.Scale = childField.Scale
+		bqField.Schema = childField.Schema
+	case arrow.STRUCT:
+		bqField.Type = bigquery.RecordFieldType
+		structType := field.Type.(*arrow.StructType)
+		bqField.Schema = make([]*bigquery.FieldSchema, len(structType.Fields()))
+		for i, f := range structType.Fields() {
+			nested, err := arrowFieldToBigQueryField(f)
+			if err != nil {
+				return nil, err
+			}
+			bqField.Schema[i] = nested
+		}
+	default:
+		return nil, adbc.Error{
+			Msg:  fmt.Sprintf("[bigquery] Unsupported type %s", field.Type),
+			Code: adbc.StatusNotImplemented,
 		}
 	}
-	return nil
+
+	return bqField, nil
 }
 
-func createTableStatement(options *driverbase.BulkIngestOptions, schema *arrow.Schema, ifTableExists driverbase.BulkIngestTableExistsBehavior, ifTableMissing driverbase.BulkIngestTableMissingBehavior) (string, error) {
-	// TODO: refactor this to take in a bigquery Client, and create the
-	// table by using DatasetInProject.Table.Create, passing in a
-	// bigquery.TableMetadata, instead of generating SQL
-	var b strings.Builder
+// arrowSchemaToBigQuerySchema converts an Arrow schema to a BigQuery schema.
+func arrowSchemaToBigQuerySchema(schema *arrow.Schema) (bigquery.Schema, error) {
+	bqSchema := make([]*bigquery.FieldSchema, len(schema.Fields()))
+	for i, field := range schema.Fields() {
+		bqField, err := arrowFieldToBigQueryField(field)
+		if err != nil {
+			return nil, err
+		}
+		bqSchema[i] = bqField
+	}
+	return bqSchema, nil
+}
 
-	switch ifTableExists {
-	case driverbase.BulkIngestTableExistsError:
-		// Do nothing
-	case driverbase.BulkIngestTableExistsIgnore:
-		// Do nothing
-	case driverbase.BulkIngestTableExistsDrop:
-		// TODO: add CatalogName/SchemaName here
-		b.WriteString("DROP TABLE IF EXISTS ")
-		b.WriteString(quoteIdentifier(options.TableName))
-		b.WriteString("; ")
+// createTableWithAPI creates or drops a table using the BigQuery Client API.
+func createTableWithAPI(
+	ctx context.Context,
+	client *bigquery.Client,
+	queryConfig bigquery.QueryConfig,
+	options *driverbase.BulkIngestOptions,
+	schema *arrow.Schema,
+	ifTableExists driverbase.BulkIngestTableExistsBehavior,
+	ifTableMissing driverbase.BulkIngestTableMissingBehavior,
+) error {
+	// Get table reference
+	var dataset *bigquery.Dataset
+	if options.CatalogName != "" && options.SchemaName != "" {
+		dataset = client.DatasetInProject(options.CatalogName, options.SchemaName)
+	} else if options.SchemaName != "" {
+		dataset = client.Dataset(options.SchemaName)
+	} else {
+		dataset = client.Dataset(queryConfig.DefaultDatasetID)
+	}
+	table := dataset.Table(options.TableName)
+
+	_, err := table.Metadata(ctx)
+	tableExists := err == nil
+
+	skipCreate := false
+	if tableExists {
+		switch ifTableExists {
+		case driverbase.BulkIngestTableExistsError:
+			return adbc.Error{
+				Code: adbc.StatusAlreadyExists,
+				Msg:  fmt.Sprintf("[bigquery] table %s already exists", options.TableName),
+			}
+		case driverbase.BulkIngestTableExistsIgnore:
+			skipCreate = true
+		case driverbase.BulkIngestTableExistsDrop:
+			if err := table.Delete(ctx); err != nil {
+				return errToAdbcErr(adbc.StatusInternal, err, "drop table")
+			}
+			tableExists = false
+		}
 	}
 
 	switch ifTableMissing {
 	case driverbase.BulkIngestTableMissingError:
-		// Do nothing
+		if !tableExists {
+			return adbc.Error{
+				Code: adbc.StatusNotFound,
+				Msg:  fmt.Sprintf("[bigquery] Not found: Table %s", options.TableName),
+			}
+		}
 	case driverbase.BulkIngestTableMissingCreate:
-		b.WriteString("CREATE TABLE ")
-		if ifTableExists == driverbase.BulkIngestTableExistsIgnore {
-			b.WriteString("IF NOT EXISTS ")
-		}
-		if options.CatalogName != "" {
-			b.WriteString(quoteIdentifier(options.CatalogName))
-			b.WriteString(".")
-		}
-		if options.SchemaName != "" {
-			b.WriteString(quoteIdentifier(options.SchemaName))
-			b.WriteString(".")
-		}
-		b.WriteString(quoteIdentifier(options.TableName))
-		b.WriteString(" (")
+		if !skipCreate && !tableExists {
+			// Convert Arrow schema to BigQuery schema
+			bqSchema, err := arrowSchemaToBigQuerySchema(schema)
+			if err != nil {
+				return err
+			}
 
-		if err := writeFields(&b, schema.Fields(), false); err != nil {
-			return "", err
-		}
+			// Create table
+			if err := table.Create(ctx, &bigquery.TableMetadata{Schema: bqSchema}); err != nil {
+				return errToAdbcErr(adbc.StatusInternal, err, "create table")
+			}
 
-		b.WriteString(")")
+			// Wait for eventual consistency
+			if err := retry(ctx, "check table availability", func() (bool, error) {
+				_, err := table.Metadata(ctx)
+				return err == nil, err
+			}); err != nil {
+				return errToAdbcErr(adbc.StatusInternal, err, "verify table creation")
+			}
+		}
 	}
-	return b.String(), nil
+
+	return nil
 }
