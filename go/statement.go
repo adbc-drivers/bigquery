@@ -25,6 +25,7 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -925,30 +926,28 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 		method = OptionValueBulkIngestMethodLoad
 	}
 
+	var logger *slog.Logger
+	var impl driverbase.BulkIngestImpl
+
 	if method == OptionValueBulkIngestMethodStorageWrite {
-		return st.executeIngestStorageWrite(ctx)
-	}
-
-	// Fall back to existing Parquet-based implementation
-	return st.executeIngestParquet(ctx)
-}
-
-func (st *statement) executeIngestParquet(ctx context.Context) (int64, error) {
-	logger := st.cnxn.Logger.With("op", "bulkingest-parquet")
-
-	impl := &bigqueryBulkIngestImpl{
-		logger:      logger,
-		options:     st.ingest,
-		queryConfig: st.queryConfig,
-		client:      st.cnxn.client,
-	}
-	if err := impl.Init(); err != nil {
-		return -1, adbc.Error{
-			Msg:  fmt.Sprintf("[bq] failed to initialize bulk ingest: %s", err),
-			Code: adbc.StatusInternal,
+		logger = st.cnxn.Logger.With("op", "bulkingest-storagewrite")
+		impl = &storageWriteBulkIngestImpl{
+			alloc:       st.alloc,
+			schema:      st.params.Schema(),
+			logger:      logger,
+			options:     st.ingest,
+			queryConfig: st.queryConfig,
+			client:      st.cnxn.client,
+		}
+	} else {
+		logger = st.cnxn.Logger.With("op", "bulkingest-parquet")
+		impl = &bigqueryBulkIngestImpl{
+			logger:      logger,
+			options:     st.ingest,
+			queryConfig: st.queryConfig,
+			client:      st.cnxn.client,
 		}
 	}
-	defer impl.Close()
 	manager := &driverbase.BulkIngestManager{
 		Impl:        impl,
 		ErrorHelper: &st.cnxn.ErrorHelper,
