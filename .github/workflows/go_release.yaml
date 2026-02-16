@@ -1,4 +1,4 @@
-# Copyright (c) 2025 ADBC Drivers Contributors
+# Copyright (c) 2025-2026 ADBC Drivers Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -67,6 +67,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: 'recursive'
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
         with:
@@ -74,7 +75,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@82d477f15f3a381dbcc8adc1206ce643fe110fb7  # v0.9.3
+      - uses: prefix-dev/setup-pixi@a0af7a228712d6121d37aba47adf55c1332c9c2e  # v0.9.4
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -92,6 +93,13 @@ jobs:
             echo "Loading pre-build"
             ./ci/scripts/pre-build.sh test ${{ matrix.platform }} ${{ matrix.arch }}
           fi
+
+          set -a
+          if [[ -f .env.build ]]; then
+            echo "Loading .env.build"
+            source .env.build
+          fi
+          set +a
 
           go build ./...
 
@@ -171,6 +179,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: 'recursive'
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
         with:
@@ -178,7 +187,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@82d477f15f3a381dbcc8adc1206ce643fe110fb7  # v0.9.3
+      - uses: prefix-dev/setup-pixi@a0af7a228712d6121d37aba47adf55c1332c9c2e  # v0.9.4
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -191,8 +200,10 @@ jobs:
 
       - name: Log in to ghcr.io
         if: runner.os == 'Linux'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build Library
         working-directory: go
@@ -201,12 +212,15 @@ jobs:
             ./ci/scripts/pre-build.sh test ${{ matrix.platform }} ${{ matrix.arch }}
           fi
           set -a
-          if [[ -f .env.release ]]; then
+          if [[ -f .env.build ]]; then
+            echo "Loading .env.build"
+            source .env.build
+          fi
+          if [[ -f .env.test ]]; then
             source .env.test
           fi
           set +a
           pixi run adbc-make build DEBUG=true VERBOSE=true DRIVER=bigquery IMPL_LANG=go
-
       - name: Start Test Dependencies
         # Can't use Docker on macOS AArch64 runners, and Windows containers
         # work but often the container doesn't support Windows
@@ -293,6 +307,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: 'recursive'
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
         with:
@@ -300,7 +315,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@82d477f15f3a381dbcc8adc1206ce643fe110fb7  # v0.9.3
+      - uses: prefix-dev/setup-pixi@a0af7a228712d6121d37aba47adf55c1332c9c2e  # v0.9.4
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -312,8 +327,10 @@ jobs:
 
       - name: Log in to ghcr.io
         if: runner.os == 'Linux'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build Library
         working-directory: go
@@ -322,6 +339,10 @@ jobs:
             ./ci/scripts/pre-build.sh release ${{ matrix.platform }} ${{ matrix.arch }}
           fi
           set -a
+          if [[ -f .env.build ]]; then
+            echo "Loading .env.build"
+            source .env.build
+          fi
           if [[ -f .env.release ]]; then
             source .env.release
           fi
@@ -346,13 +367,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: 'recursive'
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
         with:
           check-latest: true
           go-version: "stable"
 
-      - uses: prefix-dev/setup-pixi@82d477f15f3a381dbcc8adc1206ce643fe110fb7  # v0.9.3
+      - uses: prefix-dev/setup-pixi@a0af7a228712d6121d37aba47adf55c1332c9c2e  # v0.9.4
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -417,7 +439,7 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
         with:
           go-version: 'stable'
-      - uses: prefix-dev/setup-pixi@82d477f15f3a381dbcc8adc1206ce643fe110fb7  # v0.9.3
+      - uses: prefix-dev/setup-pixi@a0af7a228712d6121d37aba47adf55c1332c9c2e  # v0.9.4
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -442,6 +464,7 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+          submodules: 'recursive'
       - name: load package
         working-directory: go
         run: |
@@ -449,10 +472,15 @@ jobs:
             echo "Loading pre-build"
             ./ci/scripts/pre-build.sh test ${{ matrix.platform }} ${{ matrix.arch }}
           fi
-
+          set -a
+          if [[ -f .env.build ]]; then
+            echo "Loading .env.build"
+            source .env.build
+          fi
           if [[ -f .env.ci ]]; then
             source .env.ci
           fi
+          set +a
           pixi exec -s adbc-driver-manager -s pyarrow -s pytest python -m pytest -vs ci/test_package.py
 
   release:
@@ -470,13 +498,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: 'recursive'
 
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5  # v6.2.0
-        with:
-          check-latest: true
-          go-version: "stable"
-
-      - uses: prefix-dev/setup-pixi@82d477f15f3a381dbcc8adc1206ce643fe110fb7  # v0.9.3
+      - uses: prefix-dev/setup-pixi@a0af7a228712d6121d37aba47adf55c1332c9c2e  # v0.9.4
         with:
           pixi-version: v0.63.2
           run-install: false
