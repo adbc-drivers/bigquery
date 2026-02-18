@@ -76,9 +76,9 @@ func (impl *storageWriteBulkIngestImpl) createWriteStream(ctx context.Context) e
 		var apiError *apierror.APIError
 		if errors.As(err, &apiError) && apiError.GRPCStatus().Code() == codes.NotFound {
 			impl.logger.Debug("retrying create write stream", "table", impl.tableReference, "error", err)
-			return false, nil
+			return false, err
 		}
-		return false, err
+		return true, err
 	}); err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create write stream for %s", impl.tableReference)
 	}
@@ -277,7 +277,6 @@ func (impl *storageWriteBulkIngestImpl) Copy(ctx context.Context, chunk driverba
 		},
 	}
 	if impl.appendStream == nil {
-		// Include schema on first request
 		if err := impl.createWriteStream(ctx); err != nil {
 			return err
 		}
@@ -296,15 +295,23 @@ func (impl *storageWriteBulkIngestImpl) Copy(ctx context.Context, chunk driverba
 		Rows:        rows,
 	}
 
-	// Send the schema and the first batch to try to flush out an
-	// issue where BQ doesn't seem to know that the stream
-	// exists...
+	// The first time we try to write, BigQuery appears to have an issue
+	// where it thinks the stream doesn't exist, even though we just
+	// created it, so retry if needed
 	if err := retry(ctx, "append rows to "+impl.tableReference, func() (bool, error) {
 		err := func() error {
-			appendStream, err := impl.writeClient.AppendRows(ctx)
-			if err != nil {
-				return errToAdbcErr(adbc.StatusIO, err, "begin AppendRows(%s)", impl.tableReference)
+			var appendStream storagepb.BigQueryWrite_AppendRowsClient
+
+			if impl.appendStream != nil {
+				appendStream = impl.appendStream
+			} else {
+				var err error
+				appendStream, err = impl.writeClient.AppendRows(ctx)
+				if err != nil {
+					return errToAdbcErr(adbc.StatusIO, err, "begin AppendRows(%s)", impl.tableReference)
+				}
 			}
+
 			if err := appendStream.Send(req); err != nil {
 				return errToAdbcErr(adbc.StatusIO, err, "send AppendRows(%s)", impl.tableReference)
 			}
@@ -326,8 +333,10 @@ func (impl *storageWriteBulkIngestImpl) Copy(ctx context.Context, chunk driverba
 		}
 
 		// Only retry on the first request; if we've already created
-		// the stream, we can't recreate it.  Weirdly annoyingly, gRPC
-		// returns a status.Error which is an internal type
+		// the stream, we don't want to recreate it.  Weirdly
+		// annoyingly, gRPC returns a status.Error which is an
+		// internal type, making it hard to determine whether to retry
+		// TODO(lidavidm): maybe it's OK to recreate appendStream?
 		if impl.appendStream == nil && strings.Contains(err.Error(), "NotFound") {
 			impl.logger.Debug("retrying AppendRows",
 				"table", impl.tableReference,
@@ -335,7 +344,7 @@ func (impl *storageWriteBulkIngestImpl) Copy(ctx context.Context, chunk driverba
 
 			return false, nil
 		}
-		return false, err
+		return true, err
 	}); err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "AppendRows(%s)", impl.tableReference)
 	}

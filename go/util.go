@@ -231,10 +231,8 @@ func retryWithBackoff(ctx context.Context, context string, maxAttempts int, back
 	attempt := 0
 	for {
 		complete, err := f()
-		if err != nil {
+		if complete {
 			return err
-		} else if complete {
-			return nil
 		}
 
 		duration := backoff.Pause()
