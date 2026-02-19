@@ -37,6 +37,7 @@ class BigQueryQuirks(model.DriverQuirks):
         connection_transactions=True,
         get_objects_constraints_foreign=True,
         get_objects_constraints_primary=True,
+        statement_bind=True,
         statement_bulk_ingest=True,
         statement_bulk_ingest_schema=True,
         # N.B. while technically supported, this is only inside "multi
@@ -111,6 +112,7 @@ class BigQueryQuirks(model.DriverQuirks):
                         },
                         "tags": {
                             "broken-vendor": None,
+                            "variant": "Storage Write API",
                         },
                     }
                 ]

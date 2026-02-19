@@ -23,6 +23,7 @@
 broken-driver = "arrow-go does not support casting binary_view to binary"
 broken-vendor = "BigQuery cannot natively ingest binary_view"
 sql-type-name = "BYTES"
+variant = "Storage Write API"
 
 // part: input_schema
 
