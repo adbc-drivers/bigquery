@@ -22,6 +22,7 @@
 [tags]
 broken-driver = "The driver refuses to truncate to microseconds; it will work if the data is only microsecond precision and not nanosecond precision."
 sql-type-name = "TIMESTAMP"
+variant = "Storage Write API"
 
 // part: input_schema
 

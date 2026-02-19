@@ -24,6 +24,7 @@ caveats = [
   "BigQuery does not support NULL list elements; it will instead raise an error",
   "See the BigQuery documentation for the [ARRAY type](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_type)"
 ]
+variant = "Storage Write API"
 
 // part: input_schema
 {

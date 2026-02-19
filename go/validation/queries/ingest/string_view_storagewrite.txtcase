@@ -23,6 +23,7 @@
 broken-driver = "arrow-go does not support casting string_view to string"
 broken-vendor = "BigQuery cannot natively ingest string_view"
 sql-type-name = "STRING"
+variant = "Storage Write API"
 
 // part: input_schema
 
