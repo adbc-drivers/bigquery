@@ -235,10 +235,18 @@ namespace AdbcDrivers.BigQuery
 
                 BigQueryClientBuilder bigQueryClientBuilder = new BigQueryClientBuilder()
                 {
-                    ProjectId = projectId,
                     QuotaProject = billingProjectId,
                     GoogleCredential = Credential
                 };
+
+                if(!string.IsNullOrEmpty(billingProjectId))
+                {
+                    bigQueryClientBuilder.ProjectId = billingProjectId;
+                }
+                else
+                {
+                    bigQueryClientBuilder.ProjectId = projectId;
+                }
 
                 if (!string.IsNullOrEmpty(DefaultClientLocation))
                 {
