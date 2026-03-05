@@ -183,14 +183,14 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 				for i, ref := range fk.ColumnReferences {
 					columnNames[i] = ref.ReferencingColumn
 					columnUsage[i] = driverbase.ConstraintColumnUsage{
-						ForeignKeyCatalog:  driverbase.Nullable(fk.ReferencedTable.ProjectID),
-						ForeignKeyDbSchema: driverbase.Nullable(fk.ReferencedTable.DatasetID),
+						ForeignKeyCatalog:  new(fk.ReferencedTable.ProjectID),
+						ForeignKeyDbSchema: new(fk.ReferencedTable.DatasetID),
 						ForeignKeyTable:    fk.ReferencedTable.TableID,
 						ForeignKeyColumn:   ref.ReferencedColumn,
 					}
 				}
 				constraints = append(constraints, driverbase.ConstraintInfo{
-					ConstraintName:        driverbase.Nullable(fk.Name),
+					ConstraintName:        new(fk.Name),
 					ConstraintType:        driverbase.ForeignKey,
 					ConstraintColumnNames: columnNames,
 					ConstraintColumnUsage: columnUsage,
@@ -236,19 +236,19 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 					columns = append(columns, driverbase.ColumnInfo{
 						ColumnName:          fieldschema.Name,
-						OrdinalPosition:     driverbase.Nullable(int32(pos + 1)),
-						Remarks:             driverbase.Nullable(fieldschema.Description),
-						XdbcDataType:        driverbase.Nullable(int16(field.Type.ID())),
-						XdbcTypeName:        driverbase.Nullable(string(fieldschema.Type)),
-						XdbcNullable:        driverbase.Nullable(xdbcNullable),
-						XdbcSqlDataType:     driverbase.Nullable(int16(xdbcDataType)),
-						XdbcIsNullable:      driverbase.Nullable(xdbcIsNullable),
-						XdbcDecimalDigits:   driverbase.Nullable(int16(fieldschema.Scale)),
-						XdbcColumnSize:      driverbase.Nullable(int32(xdbcColumnSize)),
-						XdbcCharOctetLength: driverbase.Nullable(xdbcCharOctetLength),
-						XdbcScopeCatalog:    driverbase.Nullable(catalog),
-						XdbcScopeSchema:     driverbase.Nullable(schema),
-						XdbcScopeTable:      driverbase.Nullable(table.TableID),
+						OrdinalPosition:     new(int32(pos + 1)),
+						Remarks:             new(fieldschema.Description),
+						XdbcDataType:        new(int16(field.Type.ID())),
+						XdbcTypeName:        new(string(fieldschema.Type)),
+						XdbcNullable:        new(xdbcNullable),
+						XdbcSqlDataType:     new(int16(xdbcDataType)),
+						XdbcIsNullable:      new(xdbcIsNullable),
+						XdbcDecimalDigits:   new(int16(fieldschema.Scale)),
+						XdbcColumnSize:      new(int32(xdbcColumnSize)),
+						XdbcCharOctetLength: new(xdbcCharOctetLength),
+						XdbcScopeCatalog:    new(catalog),
+						XdbcScopeSchema:     new(schema),
+						XdbcScopeTable:      new(table.TableID),
 					})
 				}
 			}

@@ -111,6 +111,7 @@ Examples:
 
 To see documentation for previous versions of this driver, see the following:
 
+- [v1.11.0](./v1.11.0.md)
 - [v1.10.0](./v1.10.0.md)
 - [v1.0.0](./v1.0.0.md)
 
