@@ -239,14 +239,7 @@ namespace AdbcDrivers.BigQuery
                     GoogleCredential = Credential
                 };
 
-                if(!string.IsNullOrEmpty(billingProjectId))
-                {
-                    bigQueryClientBuilder.ProjectId = billingProjectId;
-                }
-                else
-                {
-                    bigQueryClientBuilder.ProjectId = projectId;
-                }
+                bigQueryClientBuilder.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
 
                 if (!string.IsNullOrEmpty(DefaultClientLocation))
                 {
