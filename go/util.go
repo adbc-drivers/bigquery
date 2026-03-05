@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,17 +115,13 @@ func isRetryableError(err error) bool {
 		if len(e.Errors) > 0 {
 			reason = e.Errors[0].Reason
 
-			for _, r := range retryableReasons {
-				if r == reason {
-					return true
-				}
+			if slices.Contains(retryableReasons, reason) {
+				return true
 			}
 		}
 
-		for _, code := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
-			if e.Code == code {
-				return true
-			}
+		if slices.Contains([]int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout}, e.Code) {
+			return true
 		}
 
 	case *url.Error:
@@ -155,7 +152,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	}
 	var msg strings.Builder
 	msg.WriteString("[bq] Could not")
-	msg.WriteString(fmt.Sprintf(" %s", fmt.Sprintf(context, contextArgs...)))
+	fmt.Fprintf(&msg, " %s", fmt.Sprintf(context, contextArgs...))
 	msg.WriteString(": ")
 
 	var apiErr *apierror.APIError
@@ -165,7 +162,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	statusCode := -1
 	if errors.As(err, &httpErr) {
 		statusCode = httpErr.Code
-		msg.WriteString(fmt.Sprintf("%d %s: %s", httpErr.Code, http.StatusText(httpErr.Code), httpErr.Message))
+		fmt.Fprintf(&msg, "%d %s: %s", httpErr.Code, http.StatusText(httpErr.Code), httpErr.Message)
 	} else if errors.As(err, &apiErr) {
 		// Despite all the structure inside the error, there isn't a great way to
 		// extract or map it onto anything (e.g. there are two types of errors
@@ -178,12 +175,12 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 			url.RawQuery = ""
 			cleanURL = url.String()
 		}
-		msg.WriteString(fmt.Sprintf("failed to %s %s", urlErr.Op, cleanURL))
+		fmt.Fprintf(&msg, "failed to %s %s", urlErr.Op, cleanURL)
 		if urlErr.Err != nil {
-			msg.WriteString(fmt.Sprintf(": %s", urlErr.Err.Error()))
+			fmt.Fprintf(&msg, ": %s", urlErr.Err.Error())
 		}
 	} else if errors.As(err, &bqErr) {
-		msg.WriteString(fmt.Sprintf("%s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location))
+		fmt.Fprintf(&msg, "%s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location)
 
 		switch bqErr.Reason {
 		case "accessDenied", "billingNotEnabled", "blocked":
