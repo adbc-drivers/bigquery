@@ -216,6 +216,35 @@ namespace AdbcDrivers.BigQuery.Tests
             }
         }
 
+        [Fact]
+        public async Task BigNumericTest()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                using AdbcConnection adbcConnection = GetAdbcConnection(environment.Name);
+                using AdbcStatement statement = adbcConnection.CreateStatement();
+                statement.SqlQuery = "select `studio`, `bets_game` from `mashuptest-154002`.`NWIND`.`ICM684001186`";
+                QueryResult result = statement.ExecuteQuery();
+                try
+                {
+                    QueryResult queryResult = result;
+                    using IArrowArrayStream? stream = queryResult.Stream;
+                    Assert.NotNull(stream);
+                    RecordBatch batch = await stream.ReadNextRecordBatchAsync();
+
+                    Assert.Fail("Expecting OperationCanceledException to be thrown.");
+                }
+                catch (Exception ex) when (BigQueryUtils.ContainsException(ex, out OperationCanceledException? _))
+                {
+                    _outputHelper?.WriteLine($"Received expected OperationCanceledException: {ex.Message}");
+                }
+                catch (Exception ex) when (ex is not FailException)
+                {
+                    Assert.Fail($"Expecting OperationCanceledException to be thrown. Instead, received {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+
         private AdbcConnection GetAdbcConnection(string? environmentName)
         {
             if (string.IsNullOrEmpty(environmentName))
