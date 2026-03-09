@@ -142,9 +142,19 @@ func isRetryableError(err error) bool {
 
 // errToAdbcErr converts an error to an ADBC error, using the metadata from
 // Google API errors if possible and including the supplied context
-func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextArgs ...any) error {
+func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, contextArgs ...any) error {
 	if errors.Is(err, adbc.Error{}) {
 		return err
+	} else if errors.Is(err, context.Canceled) {
+		return adbc.Error{
+			Code: adbc.StatusCancelled,
+			Msg:  fmt.Sprintf("[bq] cancelled %s: %s", fmt.Sprintf(errContext, contextArgs...), err.Error()),
+		}
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		return adbc.Error{
+			Code: adbc.StatusTimeout,
+			Msg:  fmt.Sprintf("[bq] deadline exceeded: %s", fmt.Sprintf(errContext, contextArgs...)),
+		}
 	}
 
 	adbcErr := adbc.Error{
@@ -152,24 +162,20 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	}
 	var msg strings.Builder
 	msg.WriteString("[bq] Could not")
-	fmt.Fprintf(&msg, " %s", fmt.Sprintf(context, contextArgs...))
+	fmt.Fprintf(&msg, " %s", fmt.Sprintf(errContext, contextArgs...))
 	msg.WriteString(": ")
 
-	var apiErr *apierror.APIError
-	var bqErr *bigquery.Error
-	var httpErr *googleapi.Error
-	var urlErr *url.Error
 	statusCode := -1
-	if errors.As(err, &httpErr) {
+	if httpErr, ok := errors.AsType[*googleapi.Error](err); ok {
 		statusCode = httpErr.Code
 		fmt.Fprintf(&msg, "%d %s: %s", httpErr.Code, http.StatusText(httpErr.Code), httpErr.Message)
-	} else if errors.As(err, &apiErr) {
+	} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok {
 		// Despite all the structure inside the error, there isn't a great way to
 		// extract or map it onto anything (e.g. there are two types of errors
 		// depending on whether HTTP or gRPC is used, but you can't actually
 		// branch on that because the HTTP error is not exposed to you)
 		msg.WriteString(apiErr.Error())
-	} else if errors.As(err, &urlErr) {
+	} else if urlErr, ok := errors.AsType[*url.Error](err); ok {
 		cleanURL := urlErr.URL
 		if url, err := url.Parse(urlErr.URL); err == nil {
 			url.RawQuery = ""
@@ -179,7 +185,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 		if urlErr.Err != nil {
 			fmt.Fprintf(&msg, ": %s", urlErr.Err.Error())
 		}
-	} else if errors.As(err, &bqErr) {
+	} else if bqErr, ok := errors.AsType[*bigquery.Error](err); ok {
 		fmt.Fprintf(&msg, "%s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location)
 
 		switch bqErr.Reason {
@@ -206,8 +212,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 		msg.WriteString(err.Error())
 	}
 
-	var authErr *auth.Error
-	if statusCode <= 0 && errors.As(err, &authErr) {
+	if authErr, ok := errors.AsType[*auth.Error](err); ok && statusCode <= 0 {
 		statusCode = authErr.Response.StatusCode
 	}
 
