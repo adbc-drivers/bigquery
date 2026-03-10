@@ -18,8 +18,9 @@ from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
+    quirks = [bigquery.get_quirks(metafunc.config.getoption("vendor_version"))]
     return adbc_drivers_validation.tests.ingest.generate_tests(
-        bigquery.QUIRKS,
+        quirks,
         metafunc,
         ingest_mode_queries={"ingest/string", "ingest/string:storagewrite"},
     )
