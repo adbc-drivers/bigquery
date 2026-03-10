@@ -35,6 +35,7 @@ class BigQueryQuirks(model.DriverQuirks):
         connection_set_current_catalog=False,
         connection_set_current_schema=True,
         connection_transactions=True,
+        get_objects=True,
         get_objects_constraints_foreign=True,
         get_objects_constraints_primary=True,
         statement_bind=True,
