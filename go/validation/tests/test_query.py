@@ -18,7 +18,8 @@ from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
-    return query_tests.generate_tests(bigquery.QUIRKS, metafunc)
+    quirks = [bigquery.get_quirks(metafunc.config.getoption("vendor_version"))]
+    return query_tests.generate_tests(quirks, metafunc)
 
 
 class TestQuery(query_tests.TestQuery):

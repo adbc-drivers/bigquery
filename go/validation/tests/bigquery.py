@@ -35,6 +35,7 @@ class BigQueryQuirks(model.DriverQuirks):
         connection_set_current_catalog=False,
         connection_set_current_schema=True,
         connection_transactions=True,
+        get_objects=True,
         get_objects_constraints_foreign=True,
         get_objects_constraints_primary=True,
         statement_bind=True,
@@ -148,4 +149,9 @@ class BigQueryQuirks(model.DriverQuirks):
         ]
 
 
-QUIRKS = [BigQueryQuirks()]
+@functools.cache
+def get_quirks(version: str) -> BigQueryQuirks:
+    quirks = BigQueryQuirks()
+    if version != quirks.short_version:
+        raise ValueError(f"Unsupported BigQuery version: {version}")
+    return quirks
