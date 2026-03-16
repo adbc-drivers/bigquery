@@ -18,7 +18,6 @@ import adbc_driver_manager.dbapi
 import pytest
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_application_default_credentials_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -43,7 +42,6 @@ def test_application_default_credentials_uri_parsing(
         assert location == "dummylocation"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_service_account_file_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -72,7 +70,6 @@ def test_service_account_file_uri_parsing(
         assert table_id == "mytable"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_service_account_string_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -102,7 +99,6 @@ def test_service_account_string_uri_parsing(
         assert location == "dummylocation"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_user_oauth_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -142,7 +138,6 @@ def test_user_oauth_uri_parsing(
         assert location == "dummylocation"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_custom_endpoint_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -170,7 +165,6 @@ def test_custom_endpoint_uri_parsing(
         assert quota_project == "billing-project"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_custom_endpoint_without_port_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -195,7 +189,6 @@ def test_custom_endpoint_without_port_uri_parsing(
         assert dataset_id == "dummydataset"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_port_without_host_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -217,7 +210,6 @@ def test_port_without_host_uri_parsing(
         assert project_id == "dummyproject"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_missing_project_id_uri_error(
     driver_path: str,
 ) -> None:
@@ -235,7 +227,6 @@ def test_missing_project_id_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_minimal_uri_parsing(
     driver_path: str,
 ) -> None:
@@ -254,7 +245,6 @@ def test_minimal_uri_parsing(
         assert project_id == "dummyproject"
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_invalid_oauth_type_uri_error(
     driver_path: str,
 ) -> None:
@@ -272,7 +262,6 @@ def test_invalid_oauth_type_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_invalid_uri_scheme_error(
     driver_path: str,
 ) -> None:
@@ -290,7 +279,6 @@ def test_invalid_uri_scheme_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_missing_auth_credentials_service_account_uri_error(
     driver_path: str,
 ) -> None:
@@ -308,7 +296,6 @@ def test_missing_auth_credentials_service_account_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_missing_oauth_credentials_uri_error(
     driver_path: str,
 ) -> None:
@@ -326,7 +313,6 @@ def test_missing_oauth_credentials_uri_error(
             pass
 
 
-@pytest.mark.feature(group="Configuration", name="Connect with URI")
 def test_end_to_end_real_connection(
     driver_path: str,
     bigquery_project: str,
