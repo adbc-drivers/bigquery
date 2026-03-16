@@ -1042,7 +1042,7 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	case bigquery.GeographyFieldType:
 		field.Type = arrow.BinaryTypes.String
 		metadata["ARROW:extension:name"] = "geoarrow.wkt"
-		metadata["ARROW:extension:metadata"] = `{"crs": "EPSG:4326", "crs_type": "srid"}`
+		metadata["ARROW:extension:metadata"] = `{"crs": "EPSG:4326", "crs_type": "authority_code", "edges": "spherical"}`
 	case bigquery.BigNumericFieldType:
 		// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#decimal_types
 		field.Type = &arrow.Decimal256Type{
