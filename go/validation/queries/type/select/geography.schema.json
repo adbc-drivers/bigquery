@@ -7,7 +7,7 @@
             "flags": ["nullable"],
             "metadata": {
                 "ARROW:extension:name": "geoarrow.wkt",
-                "ARROW:extension:metadata": "{\"crs\": \"EPSG:4326\", \"crs_type\": \"authority_code\",\"edges\":\"spherical\"}"
+                "ARROW:extension:metadata": "{\"crs\": \"EPSG:4326\", \"crs_type\": \"authority_code\", \"edges\": \"spherical\"}"
             }
         }
     ]
