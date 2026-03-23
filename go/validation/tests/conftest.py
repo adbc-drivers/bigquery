@@ -30,7 +30,7 @@ from . import bigquery
 
 def pytest_addoption(parser):
     adbc_drivers_validation.tests.conftest.pytest_addoption(parser)
-    parser.addoption("--vendor-version", action="store", default="1.73.1")
+    parser.addoption("--vendor-version", action="store", default="1.74.0")
 
 
 @pytest.fixture(scope="session")
