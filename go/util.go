@@ -226,7 +226,22 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, conte
 	}
 
 	adbcErr.Msg = msg.String()
+
+	if isReauthError(err.Error()) {
+		adbcErr.Code = adbc.StatusUnauthorized
+		adbcErr.Msg += ". " + reauthGuidance
+	}
+
 	return adbcErr
+}
+
+const reauthGuidance = "Your Google Workspace admin requires re-authentication (RAPT). " +
+	"Consider using a service account instead of user credentials, or re-authenticate " +
+	"interactively with 'gcloud auth application-default login'. " +
+	"See https://support.google.com/a/answer/9368756"
+
+func isReauthError(s string) bool {
+	return strings.Contains(s, "invalid_rapt") || strings.Contains(s, "reauth related error")
 }
 
 func retryWithBackoff(ctx context.Context, context string, maxAttempts int, backoff gax.Backoff, f func() (bool, error)) error {
