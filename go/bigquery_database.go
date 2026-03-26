@@ -154,7 +154,18 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 }
 
 func (d *databaseImpl) SetOptions(options map[string]string) error {
+	// Process "uri" first so that URI-parsed defaults (e.g. auth_type=ADC) are
+	// set before any explicit options. Subsequent options will then override
+	// those defaults, regardless of Go's non-deterministic map iteration order.
+	if uri, ok := options["uri"]; ok {
+		if err := d.SetOption("uri", uri); err != nil {
+			return err
+		}
+	}
 	for k, v := range options {
+		if k == "uri" {
+			continue // already processed above
+		}
 		err := d.SetOption(k, v)
 		if err != nil {
 			return err
