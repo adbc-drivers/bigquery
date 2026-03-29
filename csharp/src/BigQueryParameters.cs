@@ -40,6 +40,7 @@ namespace AdbcDrivers.BigQuery
         public const string ClientSecret = "adbc.bigquery.client_secret";
         public const string ClientTimeout = "adbc.bigquery.client.timeout";
         public const string EvaluationKind = "adbc.bigquery.multiple_statement.evaluation_kind";
+        public const string DisableExplicitCancel = "adbc.bigquery.disable_explicit_cancel";
         public const string GetQueryResultsOptionsTimeout = "adbc.bigquery.get_query_results_options.timeout";
         public const string IncludeConstraintsWithGetObjects = "adbc.bigquery.include_constraints_getobjects";
         public const string IncludePublicProjectId = "adbc.bigquery.include_public_project_id";

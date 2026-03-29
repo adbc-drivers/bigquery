@@ -216,6 +216,75 @@ namespace AdbcDrivers.BigQuery.Tests
             }
         }
 
+        [Fact]
+        public async Task CanDisableExplicitCancelStatement()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                AdbcConnection adbcConnection = GetAdbcConnection(environment.Name);
+
+                AdbcStatement statement = adbcConnection.CreateStatement();
+                statement.SetOption(BigQueryParameters.DisableExplicitCancel, "true");
+
+                // Execute the query/cancel multiple times to validate consistent behavior
+                const int iterations = 3;
+                for (int i = 0; i < iterations; i++)
+                {
+                    _outputHelper?.WriteLine($"Iteration {i + 1} of {iterations}");
+                    // Generate unique column names so query will not be served from cache
+                    string columnName1 = Guid.NewGuid().ToString("N");
+                    string columnName2 = Guid.NewGuid().ToString("N");
+                    statement.SqlQuery = $"SELECT GENERATE_ARRAY(`{columnName2}`, 10000) AS `{columnName1}` FROM UNNEST(GENERATE_ARRAY(0, 100000)) AS `{columnName2}`";
+                    _outputHelper?.WriteLine($"Query: {statement.SqlQuery}");
+
+                    // Expect this to take about 10 seconds without cancellation
+                    Task<QueryResult> queryTask = Task.Run(statement.ExecuteQuery);
+
+                    await Task.Yield();
+                    statement.Cancel();
+
+                    QueryResult queryResult = await queryTask;
+                    // Should not throw OperationCanceledException
+                }
+            }
+        }
+
+        [Fact]
+        public async Task CanDisableExplicitCancelStreamFromStatement()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                using AdbcConnection adbcConnection = GetAdbcConnection(environment.Name);
+                using AdbcStatement statement = adbcConnection.CreateStatement();
+                statement.SetOption(BigQueryParameters.DisableExplicitCancel, "true");
+
+                // Execute the query/cancel multiple times to validate consistent behavior
+                const int iterations = 3;
+                QueryResult[] results = new QueryResult[iterations];
+                for (int i = 0; i < iterations; i++)
+                {
+                    _outputHelper?.WriteLine($"Iteration {i + 1} of {iterations}");
+                    // Generate unique column names so query will not be served from cache
+                    string columnName1 = Guid.NewGuid().ToString("N");
+                    string columnName2 = Guid.NewGuid().ToString("N");
+                    statement.SqlQuery = $"SELECT `{columnName2}` AS `{columnName1}` FROM UNNEST(GENERATE_ARRAY(1, 100)) AS `{columnName2}`";
+                    _outputHelper?.WriteLine($"Query: {statement.SqlQuery}");
+
+                    // Expect this to take about 10 seconds without cancellation
+                    results[i] = statement.ExecuteQuery();
+                }
+                statement.Cancel();
+                for (int index = 0; index < iterations; index++)
+                {
+                    QueryResult queryResult = results[index];
+                    using IArrowArrayStream? stream = queryResult.Stream;
+                    Assert.NotNull(stream);
+                    RecordBatch batch = await stream.ReadNextRecordBatchAsync();
+                    // Should not throw OperationCanceledException
+                }
+            }
+        }
+
         private AdbcConnection GetAdbcConnection(string? environmentName)
         {
             if (string.IsNullOrEmpty(environmentName))
