@@ -45,6 +45,12 @@ const (
 	OptionEndpoint            = "bigquery.endpoint"
 	OptionStorageEndpoint     = "bigquery.storage_endpoint"
 
+	// TODO (harry): migrate the options with prefix "adbc.bigquery.sql" to use the newer format
+	// TODO (harry): add the old option values to optionRemapping map for backward-compatibility
+	// OptionStringAPIEndpoint is a backward-compat alias for OptionStringEndpoint
+	// retained for compatibility with the legacy arrow-adbc bigquery driver.
+	OptionStringAPIEndpoint = "adbc.bigquery.sql.api_endpoint"
+
 	OptionValueAuthTypeDefault              = "auth_bigquery"
 	OptionValueAuthTypeJSONCredentialFile   = "json_credential_file"
 	OptionValueAuthTypeJSONCredentialString = "json_credential_string"

@@ -138,7 +138,7 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.projectID, nil
 	case OptionDatasetID:
 		return d.datasetID, nil
-	case OptionEndpoint:
+	case OptionEndpoint, OptionStringAPIEndpoint:
 		return d.endpoint, nil
 	case OptionStorageEndpoint:
 		return d.storageEndpoint, nil
@@ -278,7 +278,7 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.projectID = value
 	case OptionDatasetID:
 		d.datasetID = value
-	case OptionEndpoint:
+	case OptionEndpoint, OptionStringAPIEndpoint:
 		d.endpoint = value
 	case OptionStorageEndpoint:
 		d.storageEndpoint = value
