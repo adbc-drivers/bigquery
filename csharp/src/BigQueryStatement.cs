@@ -131,6 +131,7 @@ namespace AdbcDrivers.BigQuery
                     getQueryResultsOptions.Timeout = TimeSpan.FromSeconds(seconds);
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
                 }
+                activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.Seconds);
 
                 using JobCancellationContext cancellationContext = new JobCancellationContext(cancellationRegistry, job);
 
@@ -140,9 +141,12 @@ namespace AdbcDrivers.BigQuery
                 {
                     return await ExecuteCancellableJobAsync(cancellationContext, activity, async (context) =>
                     {
-                        // if the authentication token was reset, then we need a new job with the latest token
-                        context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-                        return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        return await this.TraceActivityAsync(async activity =>
+                        {
+                            // if the authentication token was reset, then we need a new job with the latest token
+                            context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                            return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        }, "BigQueryStatement.ExecuteQueryInternalAsync.GetQueryResultsAsync");
                     }).ConfigureAwait(false);
                 };
 
@@ -235,8 +239,11 @@ namespace AdbcDrivers.BigQuery
                 {
                     return await ExecuteCancellableJobAsync(cancellationContext, activity, async (context) =>
                     {
-                        // Cancelling this step may leave the server with unread streams.
-                        return await GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, activity, context.CancellationToken).ConfigureAwait(false);
+                        return await this.TraceActivityAsync(async activity =>
+                        {
+                            // Cancelling this step may leave the server with unread streams.
+                            return await GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, activity, context.CancellationToken).ConfigureAwait(false);
+                        }, "BigQueryStatement.ExecuteQueryInternalAsync.GetArrowReaders");
                     }).ConfigureAwait(false);
                 };
                 IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
