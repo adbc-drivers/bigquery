@@ -363,7 +363,7 @@ func (q *BigQueryQuirks) SupportsCurrentCatalogSchema() bool          { return t
 func (q *BigQueryQuirks) SupportsExecuteSchema() bool                 { return false }
 func (q *BigQueryQuirks) SupportsGetSetOptions() bool                 { return true }
 func (q *BigQueryQuirks) SupportsPartitionedData() bool               { return false }
-func (q *BigQueryQuirks) SupportsStatistics() bool                    { return false }
+func (q *BigQueryQuirks) SupportsStatistics() bool                    { return true }
 func (q *BigQueryQuirks) SupportsTransactions() bool                  { return false }
 func (q *BigQueryQuirks) SupportsGetParameterSchema() bool            { return false }
 func (q *BigQueryQuirks) SupportsDynamicParameterBinding() bool       { return false }
@@ -2021,4 +2021,43 @@ func TestBigQueryURIParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (suite *BigQueryTests) TestGetStatistics() {
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	project := suite.Quirks.Catalog()
+	dataset := suite.Quirks.DBSchema()
+
+	rdr, err := statsCnxn.GetStatistics(suite.ctx, &project, &dataset, nil, false)
+	suite.NoError(err)
+	defer rdr.Release()
+
+	suite.True(adbc.GetStatisticsSchema.Equal(rdr.Schema()),
+		"expected: %s\ngot: %s", adbc.GetStatisticsSchema, rdr.Schema())
+
+	// Test pattern filtering doesn't error
+	tablePattern := "%"
+	rdr2, err := statsCnxn.GetStatistics(suite.ctx, &project, &dataset, &tablePattern, false)
+	suite.NoError(err)
+	defer rdr2.Release()
+	suite.True(adbc.GetStatisticsSchema.Equal(rdr2.Schema()))
+}
+
+func (suite *BigQueryTests) TestGetStatisticNames() {
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	rdr, err := statsCnxn.GetStatisticNames(suite.ctx)
+	suite.NoError(err)
+	defer rdr.Release()
+
+	suite.True(adbc.GetStatisticNamesSchema.Equal(rdr.Schema()),
+		"expected: %s\ngot: %s", adbc.GetStatisticNamesSchema, rdr.Schema())
+
+	// Verify exactly 8 BigQuery-specific rows (keys >= 1024)
+	suite.True(rdr.Next())
+	rec := rdr.RecordBatch()
+	suite.Equal(int64(8), rec.NumRows())
 }
