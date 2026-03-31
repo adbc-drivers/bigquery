@@ -18,8 +18,9 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
+
+	"cloud.google.com/go/bigquery"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -186,6 +187,12 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 
 // getTableStatistics retrieves statistics for tables in a dataset
 func (c *connectionImpl) getTableStatistics(ctx context.Context, project, dataset string, tablePattern *regexp.Regexp, tableName *string, approximate bool) ([]bigqueryStatistic, error) {
+	// We intentionally resolve the exact table set with the Tables API first
+	// instead of relying on a direct LIKE filter against INFORMATION_SCHEMA.
+	// A broad metadata-view scan can still be expensive for wide patterns, while
+	// pre-enumeration lets us bound the follow-up PARTITIONS/TABLE_STORAGE
+	// queries to a known table list and pass that list as a parameterized
+	// IN UNNEST(@table_names) filter.
 	tableIt := c.client.DatasetInProject(project, dataset).Tables(ctx)
 	var tableNames []string
 	for {
@@ -225,16 +232,6 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 
 // getTableStatisticsBatch retrieves statistics for a specific batch of tables
 func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, dataset string, tableNames []string, approximate bool) ([]bigqueryStatistic, error) {
-	var inClause strings.Builder
-	inClause.WriteString("(")
-	for i, name := range tableNames {
-		if i > 0 {
-			inClause.WriteString(", ")
-		}
-		fmt.Fprintf(&inClause, "'%s'", strings.ReplaceAll(name, "'", "''"))
-	}
-	inClause.WriteString(")")
-
 	// Query INFORMATION_SCHEMA.PARTITIONS for aggregated statistics
 	// Use nested query to handle:
 	// 1. NULL partition_id for unpartitioned tables (coalesce to __UNPARTITIONED__)
@@ -253,23 +250,30 @@ func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, d
 			SUM(partition_billable_bytes) AS total_billable_bytes,
 			MAX(partition_last_modified) AS last_modified_time
 		FROM (
-			SELECT
-				table_name,
-				COALESCE(partition_id, '__UNPARTITIONED__') AS partition_id_coalesced,
-				MAX(total_rows) AS partition_rows,
-				SUM(total_logical_bytes) AS partition_logical_bytes,
-				SUM(total_billable_bytes) AS partition_billable_bytes,
-				MAX(last_modified_time) AS partition_last_modified
-			FROM %s.%s.INFORMATION_SCHEMA.PARTITIONS
-			WHERE table_name IN %s
-			GROUP BY table_name, partition_id_coalesced
-		)
-		GROUP BY table_name
-	`, quoteIdentifier(project), quoteIdentifier(dataset), inClause.String())
+				SELECT
+					table_name,
+					COALESCE(partition_id, '__UNPARTITIONED__') AS partition_id_coalesced,
+					MAX(total_rows) AS partition_rows,
+					SUM(total_logical_bytes) AS partition_logical_bytes,
+					SUM(total_billable_bytes) AS partition_billable_bytes,
+					MAX(last_modified_time) AS partition_last_modified
+				FROM %s.%s.INFORMATION_SCHEMA.PARTITIONS
+				WHERE table_name IN UNNEST(@table_names)
+				GROUP BY table_name, partition_id_coalesced
+			)
+			GROUP BY table_name
+		`, quoteIdentifier(project), quoteIdentifier(dataset))
 
 	partitionsJob := c.client.Query(partitionsQuery)
 	partitionsJob.DefaultProjectID = project
 	partitionsJob.DefaultDatasetID = dataset
+	// Pass the bounded table set as a query parameter
+	partitionsJob.Parameters = []bigquery.QueryParameter{
+		{
+			Name:  "table_names",
+			Value: tableNames,
+		},
+	}
 
 	partitionsIt, err := partitionsJob.Read(ctx)
 	if err != nil {
@@ -330,12 +334,19 @@ func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, d
 			long_term_physical_bytes,
 			time_travel_physical_bytes
 		FROM %s.%s.INFORMATION_SCHEMA.TABLE_STORAGE
-		WHERE table_name IN %s
-	`, quoteIdentifier(project), quoteIdentifier(dataset), inClause.String())
+		WHERE table_name IN UNNEST(@table_names)
+	`, quoteIdentifier(project), quoteIdentifier(dataset))
 
 	storageJob := c.client.Query(storageQuery)
 	storageJob.DefaultProjectID = project
 	storageJob.DefaultDatasetID = dataset
+	// Pass the bounded table set as a query parameter
+	storageJob.Parameters = []bigquery.QueryParameter{
+		{
+			Name:  "table_names",
+			Value: tableNames,
+		},
+	}
 
 	storageIt, err := storageJob.Read(ctx)
 	if err != nil {
