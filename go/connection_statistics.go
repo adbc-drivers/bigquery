@@ -250,19 +250,19 @@ func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, d
 			SUM(partition_billable_bytes) AS total_billable_bytes,
 			MAX(partition_last_modified) AS last_modified_time
 		FROM (
-				SELECT
-					table_name,
-					COALESCE(partition_id, '__UNPARTITIONED__') AS partition_id_coalesced,
-					MAX(total_rows) AS partition_rows,
-					SUM(total_logical_bytes) AS partition_logical_bytes,
-					SUM(total_billable_bytes) AS partition_billable_bytes,
-					MAX(last_modified_time) AS partition_last_modified
-				FROM %s.%s.INFORMATION_SCHEMA.PARTITIONS
-				WHERE table_name IN UNNEST(@table_names)
-				GROUP BY table_name, partition_id_coalesced
-			)
-			GROUP BY table_name
-		`, quoteIdentifier(project), quoteIdentifier(dataset))
+			SELECT
+				table_name,
+				COALESCE(partition_id, '__UNPARTITIONED__') AS partition_id_coalesced,
+				MAX(total_rows) AS partition_rows,
+				SUM(total_logical_bytes) AS partition_logical_bytes,
+				SUM(total_billable_bytes) AS partition_billable_bytes,
+				MAX(last_modified_time) AS partition_last_modified
+			FROM %s.%s.INFORMATION_SCHEMA.PARTITIONS
+			WHERE table_name IN UNNEST(@table_names)
+			GROUP BY table_name, partition_id_coalesced
+		)
+		GROUP BY table_name
+	`, quoteIdentifier(project), quoteIdentifier(dataset))
 
 	partitionsJob := c.client.Query(partitionsQuery)
 	partitionsJob.DefaultProjectID = project
