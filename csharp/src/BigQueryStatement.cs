@@ -50,6 +50,7 @@ namespace AdbcDrivers.BigQuery
     /// </summary>
     class BigQueryStatement : TracingStatement, ITokenProtectedResource, IDisposable
     {
+        private const string ClassName = nameof(BigQueryStatement);
         readonly BigQueryConnection bigQueryConnection;
         readonly CancellationRegistry cancellationRegistry;
 
@@ -146,7 +147,7 @@ namespace AdbcDrivers.BigQuery
                             // if the authentication token was reset, then we need a new job with the latest token
                             context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
                             return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-                        }, "BigQueryStatement.ExecuteQueryInternalAsync.GetQueryResultsAsync");
+                        }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
                     }).ConfigureAwait(false);
                 };
 
@@ -243,7 +244,7 @@ namespace AdbcDrivers.BigQuery
                         {
                             // Cancelling this step may leave the server with unread streams.
                             return await GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, activity, context.CancellationToken).ConfigureAwait(false);
-                        }, "BigQueryStatement.ExecuteQueryInternalAsync.GetArrowReaders");
+                        }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(GetArrowReaders));
                     }).ConfigureAwait(false);
                 };
                 IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
@@ -252,7 +253,7 @@ namespace AdbcDrivers.BigQuery
                 IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, new CancellationContext(cancellationRegistry));
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
                 return new QueryResult(totalRows, stream);
-            });
+            }, ClassName + "." + nameof(ExecuteQueryInternalAsync));
         }
 
         private Task<QueryResult> ExecuteMetadataCommandQuery(Activity? activity)
@@ -713,7 +714,7 @@ namespace AdbcDrivers.BigQuery
             this.TraceActivity(_ =>
             {
                 this.cancellationRegistry.CancelAll();
-            });
+            }, ClassName + ".", nameof(Cancel));
         }
 
         public override void Dispose()
@@ -763,7 +764,7 @@ namespace AdbcDrivers.BigQuery
 
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, updatedRows);
                 return new UpdateResult(updatedRows);
-            });
+            }, ClassName + ".", nameof(ExecuteUpdateInternalAsync));
         }
 
         private Schema TranslateSchema(TableSchema schema)
@@ -1173,6 +1174,7 @@ namespace AdbcDrivers.BigQuery
 
         private class MultiArrowReader : TracingReader
         {
+            private const string ClassName = BigQueryStatement.ClassName + ".MultiArrowReader";
             private static readonly string s_assemblyName = BigQueryUtils.GetAssemblyName(typeof(BigQueryStatement));
             private static readonly string s_assemblyVersion = BigQueryUtils.GetAssemblyVersion(typeof(BigQueryStatement));
 
@@ -1229,7 +1231,7 @@ namespace AdbcDrivers.BigQuery
 
                         this.reader = null;
                     }
-                });
+                }, ClassName + ".", nameof(ReadNextRecordBatchAsync));
             }
 
             protected override void Dispose(bool disposing)
