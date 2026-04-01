@@ -761,9 +761,12 @@ namespace AdbcDrivers.BigQuery
                 {
                     return await ExecuteCancellableJobAsync(context, activity, async (context) =>
                     {
-                        context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, null, context.CancellationToken).ConfigureAwait(false);
-                        activity?.AddBigQueryTag("job_id", context.Job.Reference.JobId);
-                        return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
+                        return await this.TraceActivityAsync(async activity =>
+                        {
+                            context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, null, context.CancellationToken).ConfigureAwait(false);
+                            activity?.AddBigQueryTag("job_id", context.Job.Reference.JobId);
+                            return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
+                        }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
                     }).ConfigureAwait(false);
                 };
                 BigQueryResults? result = await ExecuteWithRetriesAsync(getQueryResultsAsyncFunc, activity, context.CancellationToken);
