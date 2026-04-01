@@ -569,9 +569,16 @@ namespace AdbcDrivers.BigQuery
                 try
                 {
                     activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, sql, IsSafeToTrace);
-
-                    Func<Task<BigQueryResults?>> func = () => Client.ExecuteQueryAsync(sql, parameters ?? Enumerable.Empty<BigQueryParameter>(), queryOptions, resultsOptions);
-                    BigQueryResults? result = ExecuteWithRetriesAsync<BigQueryResults?>(func, activity).GetAwaiter().GetResult();
+                    Func<Task<BigQueryResults?>> func = async () =>
+                    {
+                        return await this.TraceActivityAsync(async (activity) =>
+                        {
+                            BigQueryJob job = await Client.CreateQueryJobAsync(sql, parameters ?? Enumerable.Empty<BigQueryParameter>(), queryOptions);
+                            activity?.AddBigQueryTag("job_id", job.Reference.JobId);
+                            return await job.GetQueryResultsAsync(resultsOptions);
+                        }, ClassName + "." + nameof(ExecuteQuery) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
+                    };
+                    BigQueryResults? result = ExecuteWithRetriesAsync(func, activity).GetAwaiter().GetResult();
 
                     return result;
                 }

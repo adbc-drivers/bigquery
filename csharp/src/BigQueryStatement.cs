@@ -146,6 +146,7 @@ namespace AdbcDrivers.BigQuery
                         {
                             // if the authentication token was reset, then we need a new job with the latest token
                             context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                            activity?.AddBigQueryTag("job_id", context.Job.Reference.JobId);
                             return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
                         }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
                     }).ConfigureAwait(false);
@@ -204,7 +205,11 @@ namespace AdbcDrivers.BigQuery
                             cancellationContext.Job = indexedJob;
                             return await ExecuteCancellableJobAsync(cancellationContext, activity, async (context) =>
                             {
-                                return await indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                                return await this.TraceActivityAsync(async activity =>
+                                {
+                                    activity?.AddBigQueryTag("job_id", context.Job?.Reference.JobId);
+                                    return await indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                                }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync) + ".MultiJobResults");
                             }).ConfigureAwait(false);
                         }
 
@@ -243,6 +248,7 @@ namespace AdbcDrivers.BigQuery
                         return await this.TraceActivityAsync(async activity =>
                         {
                             // Cancelling this step may leave the server with unread streams.
+                            activity?.AddBigQueryTag("job_id", context.Job?.Reference.JobId);
                             return await GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, activity, context.CancellationToken).ConfigureAwait(false);
                         }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(GetArrowReaders));
                     }).ConfigureAwait(false);
@@ -756,6 +762,7 @@ namespace AdbcDrivers.BigQuery
                     return await ExecuteCancellableJobAsync(context, activity, async (context) =>
                     {
                         context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, null, context.CancellationToken).ConfigureAwait(false);
+                        activity?.AddBigQueryTag("job_id", context.Job.Reference.JobId);
                         return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
                     }).ConfigureAwait(false);
                 };
