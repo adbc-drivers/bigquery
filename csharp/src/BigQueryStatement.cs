@@ -714,7 +714,7 @@ namespace AdbcDrivers.BigQuery
             this.TraceActivity(_ =>
             {
                 this.cancellationRegistry.CancelAll();
-            }, ClassName + ".", nameof(Cancel));
+            }, ClassName + "." + nameof(Cancel));
         }
 
         public override void Dispose()
@@ -764,7 +764,7 @@ namespace AdbcDrivers.BigQuery
 
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, updatedRows);
                 return new UpdateResult(updatedRows);
-            }, ClassName + ".", nameof(ExecuteUpdateInternalAsync));
+            }, ClassName + "." + nameof(ExecuteUpdateInternalAsync));
         }
 
         private Schema TranslateSchema(TableSchema schema)
@@ -1231,7 +1231,7 @@ namespace AdbcDrivers.BigQuery
 
                         this.reader = null;
                     }
-                }, ClassName + ".", nameof(ReadNextRecordBatchAsync));
+                }, ClassName + "." + nameof(ReadNextRecordBatchAsync));
             }
 
             protected override void Dispose(bool disposing)

@@ -269,7 +269,7 @@ namespace AdbcDrivers.BigQuery
 
                 Client = client;
                 return client;
-            }, ClassName + ".", nameof(Open));
+            }, ClassName + "." + nameof(Open));
         }
 
         internal void SetCredential()
@@ -343,7 +343,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     throw new ArgumentException($"{authenticationType} is not a valid authenticationType");
                 }
-            }, ClassName + ".", nameof(SetCredential));
+            }, ClassName + "." + nameof(SetCredential));
         }
 
         public override void SetOption(string key, string value)
@@ -358,7 +358,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     UpdateClientToken();
                 }
-            }, ClassName + ".", nameof(SetOption));
+            }, ClassName + "." + nameof(SetOption));
         }
 
         /// <summary>
@@ -506,7 +506,7 @@ namespace AdbcDrivers.BigQuery
                 StandardSchemas.GetInfoSchema.Validate(dataArrays);
 
                 return new BigQueryInfoArrowStream(StandardSchemas.GetInfoSchema, dataArrays);
-            }, ClassName + ".", nameof(GetInfo));
+            }, ClassName + "." + nameof(GetInfo));
         }
 
         public override IArrowArrayStream GetObjects(
@@ -530,7 +530,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
                 }
-            }, ClassName + ".", nameof(GetObjects));
+            }, ClassName + "." + nameof(GetObjects));
         }
 
         /// <summary>
@@ -579,7 +579,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
                 }
-            }, ClassName + ".", nameof(ExecuteQuery));
+            }, ClassName + "." + nameof(ExecuteQuery));
         }
 
         internal static bool IsUnauthorizedException(Exception ex, out GoogleApiException? googleEx)
@@ -649,7 +649,7 @@ namespace AdbcDrivers.BigQuery
                 StandardSchemas.GetObjectsSchema.Validate(dataArrays);
 
                 return dataArrays;
-            }, ClassName + ".", nameof(GetCatalogs));
+            }, ClassName + "." + nameof(GetCatalogs));
         }
 
         private StructArray GetDbSchemas(
@@ -713,7 +713,7 @@ namespace AdbcDrivers.BigQuery
                     length,
                     dataArrays,
                     nullBitmapBuffer.Build());
-            }, ClassName + ".", nameof(GetDbSchemas));
+            }, ClassName + "." + nameof(GetDbSchemas));
         }
 
         private StructArray GetTableSchemas(
@@ -807,7 +807,7 @@ namespace AdbcDrivers.BigQuery
                     length,
                     dataArrays,
                     nullBitmapBuffer.Build());
-            }, ClassName + ".", nameof(GetTableSchemas));
+            }, ClassName + "." + nameof(GetTableSchemas));
         }
 
         private StructArray GetColumnSchema(
@@ -923,7 +923,7 @@ namespace AdbcDrivers.BigQuery
                     length,
                     dataArrays,
                     nullBitmapBuffer.Build());
-            }, ClassName + ".", nameof(GetColumnSchema));
+            }, ClassName + "." + nameof(GetColumnSchema));
         }
 
         private StructArray GetConstraintSchema(
@@ -995,7 +995,7 @@ namespace AdbcDrivers.BigQuery
                     length,
                     dataArrays,
                     nullBitmapBuffer.Build());
-            }, ClassName + ".", nameof(GetConstraintSchema));
+            }, ClassName + "." + nameof(GetConstraintSchema));
         }
 
         private StringArray GetConstraintColumnNames(
@@ -1023,7 +1023,7 @@ namespace AdbcDrivers.BigQuery
                 }
 
                 return constraintColumnNamesBuilder.Build();
-            }, ClassName + ".", nameof(GetConstraintColumnNames));
+            }, ClassName + "." + nameof(GetConstraintColumnNames));
         }
 
         private StructArray GetConstraintsUsage(
@@ -1079,7 +1079,7 @@ namespace AdbcDrivers.BigQuery
                     length,
                     dataArrays,
                     nullBitmapBuffer.Build());
-            }, ClassName + ".", nameof(GetConstraintsUsage));
+            }, ClassName + "." + nameof(GetConstraintsUsage));
         }
 
         private string PatternToRegEx(string? pattern)
@@ -1197,7 +1197,7 @@ namespace AdbcDrivers.BigQuery
                 }
 
                 return new Schema(fields, null);
-            }, ClassName + ".", nameof(GetTableSchema));
+            }, ClassName + "." + nameof(GetTableSchema));
         }
 
         private Field DescToField(BigQueryRow row)
