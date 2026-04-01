@@ -1059,9 +1059,9 @@ namespace AdbcDrivers.BigQuery
         {
             try
             {
-                return await this.TraceActivityAsync(async jobActivity =>
+                return await this.TraceActivityAsync(jobActivity =>
                 {
-                    return await func(context, jobActivity).ConfigureAwait(false);
+                    return func(context, jobActivity);
                 }, activityName).ConfigureAwait(false);
             }
             catch (Exception ex)
