@@ -88,12 +88,19 @@ namespace AdbcDrivers.BigQuery
 
         public override void SetOption(string key, string value)
         {
-            if (Options == null)
-            {
-                Options = new Dictionary<string, string>();
-            }
+            Options ??= [];
 
             Options[key] = value;
+
+            switch (key)
+            {
+                case AdbcOptions.Telemetry.TraceParent:
+                    SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
+                    break;
+                default:
+                    // TODO: Throw an exception if setting value is unsupported at particular execution states.
+                    break;
+            }
         }
 
         public override QueryResult ExecuteQuery()
@@ -144,8 +151,11 @@ namespace AdbcDrivers.BigQuery
                     {
                         // if the authentication token was reset, then we need a new job with the latest token
                         context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-                        jobActivity?.AddBigQueryTag("job_id", context.Job.Reference.JobId);
-                        return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresults_started", [new("job.id", context.Job.Reference.JobId)]);
+                        BigQueryResults results = await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresults_completed", GetJobStatistics(jobActivity, context.Job));
+
+                        return results;
                     }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
                 }
 
@@ -202,8 +212,11 @@ namespace AdbcDrivers.BigQuery
                             cancellationContext.Job = indexedJob;
                             return ExecuteCancellableJobAsync(cancellationContext, activity, (context, jobActivity) =>
                             {
-                                jobActivity?.AddBigQueryTag("job_id", context.Job?.Reference.JobId);
-                                return indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken);
+                                jobActivity?.AddEvent("getqueryresults_started", [new("job.id", indexedJob.Reference.JobId)]);
+                                var results = indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken);
+                                jobActivity?.AddEvent("getqueryresults_completed", GetJobStatistics(jobActivity, indexedJob));
+
+                                return results;
                             }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync) + ".MultiJobResults");
                         }
 
@@ -240,7 +253,7 @@ namespace AdbcDrivers.BigQuery
                     return ExecuteCancellableJobAsync(cancellationContext, activity, (context, jobActivity) =>
                     {
                         // Cancelling this step may leave the server with unread streams.
-                        jobActivity?.AddBigQueryTag("job_id", context.Job?.Reference.JobId);
+                        jobActivity?.AddBigQueryTag("job.id", context.Job?.Reference.JobId);
                         return GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, jobActivity, context.CancellationToken);
                     }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(GetArrowReaders));
                 }
@@ -753,8 +766,11 @@ namespace AdbcDrivers.BigQuery
                     return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
                     {
                         context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, null, context.CancellationToken).ConfigureAwait(false);
-                        jobActivity?.AddBigQueryTag("job_id", context.Job.Reference.JobId);
-                        return await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresultsasync_started", [new("job.id", context.Job.Reference.JobId)]);
+                        BigQueryResults results = await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresultsasync_completed", GetJobStatistics(jobActivity, context.Job));
+
+                        return results;
                     }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
                 }
                 BigQueryResults? result = await ExecuteWithRetriesAsync(getQueryResultsAsyncFunc, activity, context.CancellationToken);
@@ -855,12 +871,12 @@ namespace AdbcDrivers.BigQuery
         {
             // Ideally we wouldn't need to indirect through a stream, but the necessary APIs in Arrow
             // are internal. (TODO: consider changing Arrow).
-            activity?.AddConditionalBigQueryTag("read_stream", streamName, isSafeToTrace);
+            activity.AddEvent("read_chunk_started", isSafeToTrace ? [new("stream.name", streamName)] : null);
             BigQueryReadClient.ReadRowsStream readRowsStream = client.ReadRows(new ReadRowsRequest { ReadStream = streamName });
             IAsyncEnumerator<ReadRowsResponse> enumerator = readRowsStream.GetResponseStream().GetAsyncEnumerator(cancellationToken);
 
             ReadRowsStream stream = new ReadRowsStream(enumerator);
-            activity?.AddBigQueryTag("read_stream.has_rows", stream.HasRows);
+            activity.AddEvent("read_chunk_completed", [new("read_stream.has_rows", stream.HasRows)]);
 
             return stream.HasRows ? stream : null;
         }
@@ -1092,6 +1108,49 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
+        private IReadOnlyList<KeyValuePair<string, object?>>? GetJobStatistics(Activity? activity, BigQueryJob job)
+        {
+            if (activity == null || job?.Resource?.Statistics == null) return null;
+
+            JobStatistics stats = job.Resource.Statistics;
+
+            List<KeyValuePair<string, object?>> tags =
+            [
+                new("job.id", job.Reference.JobId),
+                new("job.location", job.Reference.Location),
+                new("job.project_id", job.Reference.ProjectId),
+                new("job.creation_time", stats.CreationTime),
+                new("job.start_time", stats.StartTime),
+                new("job.end_time", stats.EndTime),
+            ];
+
+            if (stats.Query != null)
+            {
+                List<KeyValuePair<string, object?>> queryStats =
+                [
+                    new("job.query.cache_hit", stats.Query.CacheHit),
+                    new("job.query.total_bytes_processed", stats.Query.TotalBytesProcessed),
+                    new("job.query.total_bytes_billed", stats.Query.TotalBytesBilled),
+                    new("job.query.billing_tier", stats.Query.BillingTier),
+                    new("job.query.total_slot_ms", stats.Query.TotalSlotMs),
+                    new("job.query.statement_type", stats.Query.StatementType),
+                ];
+                tags.AddRange(queryStats);
+
+
+                if (stats.Query.Timeline != null)
+                {
+                    tags.Add(new("job.query.timeline_entries", stats.Query.Timeline.Count));
+                }
+
+                if (stats.Query.QueryPlan != null)
+                {
+                    tags.Add(new("job.query.plan_stages", stats.Query.QueryPlan.Count));
+                }
+            }
+            return tags;
+        }
+
         private class CancellationContext : IDisposable
         {
             private readonly CancellationRegistry cancellationRegistry;
@@ -1205,6 +1264,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     if (this.readers == null)
                     {
+                        activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
                         return null;
                     }
 
@@ -1217,6 +1277,7 @@ namespace AdbcDrivers.BigQuery
                         {
                             if (!this.readers.MoveNext())
                             {
+                                activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
                                 this.readers.Dispose();
                                 this.readers = null;
                                 return null;
@@ -1228,6 +1289,8 @@ namespace AdbcDrivers.BigQuery
 
                         if (result != null)
                         {
+                            long rowCount = result.Length;
+                            activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, rowCount);
                             return result;
                         }
 

@@ -84,6 +84,11 @@ namespace AdbcDrivers.BigQuery
 
             this.httpClient = new HttpClient();
 
+            if (this.properties.TryGetValue(AdbcOptions.Telemetry.TraceParent, out string? traceParent) &&
+                !string.IsNullOrWhiteSpace(traceParent))
+            {
+                this.SetTraceParent(traceParent);
+            }
             if (this.properties.TryGetValue(BigQueryParameters.LargeDecimalsAsString, out string? sLargeDecimalsAsString) &&
                 bool.TryParse(sLargeDecimalsAsString, out bool largeDecimalsAsString))
             {
@@ -350,13 +355,23 @@ namespace AdbcDrivers.BigQuery
         {
             this.TraceActivity(activity =>
             {
-                activity?.AddTag(key + ".set", value);
-
                 this.properties[key] = value;
 
-                if (key.Equals(BigQueryParameters.AccessToken))
+                switch (key)
                 {
-                    UpdateClientToken();
+                    case BigQueryParameters.AccessToken:
+                        // Don't log the access token value, but do log that it was set
+                        activity?.AddTag(key + ".set", "***");
+                        UpdateClientToken();
+                        break;
+                    case AdbcOptions.Telemetry.TraceParent:
+                        activity?.AddTag(key + ".set", value);
+                        SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
+                        break;
+                    default:
+                        // TODO: Validate other options as they are set and throw if they are invalid
+                        // (for example, if the user tries to set a non-integer value for ClientTimeout)
+                        break;
                 }
             }, ClassName + "." + nameof(SetOption));
         }

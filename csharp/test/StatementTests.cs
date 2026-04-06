@@ -27,6 +27,7 @@ using System.Threading.Tasks;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Adbc.Tests;
+using Apache.Arrow.Adbc.Tracing;
 using Apache.Arrow.Ipc;
 using Xunit;
 using Xunit.Abstractions;
@@ -213,6 +214,51 @@ namespace AdbcDrivers.BigQuery.Tests
                         Assert.Fail($"Expecting OperationCanceledException to be thrown. Instead, received {ex.GetType().Name}: {ex.Message}");
                     }
                 }
+            }
+        }
+
+        [Fact]
+        public void CanSetTraceParentViaOptions()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                const string traceParentValue1 = "00-4bf92f3577b34da6a3ce929d0e0e4736-1111111111111111-01";
+                const string traceParentValue2 = "00-4bf92f3577b34da6a3ce929d0e0e4736-2222222222222222-01";
+
+                AdbcConnection adbcConnection = GetAdbcConnection(environment.Name);
+                AdbcStatement adbcStatement = adbcConnection.CreateStatement();
+
+                var bqConnection = adbcConnection as IActivityTracer;
+                Assert.NotNull(bqConnection);
+                var bqStatement = adbcStatement as IActivityTracer;
+                Assert.NotNull(bqStatement);
+
+                Assert.Null(bqConnection.TraceParent);
+                Assert.Null(bqStatement.TraceParent);
+
+                adbcStatement.SetOption(AdbcOptions.Telemetry.TraceParent, traceParentValue1);
+                Assert.Null(bqConnection.TraceParent);
+                Assert.Equal(traceParentValue1, bqStatement.TraceParent);
+
+                adbcStatement.SetOption(AdbcOptions.Telemetry.TraceParent, "");
+                Assert.Null(bqConnection.TraceParent);
+                Assert.Null(bqStatement.TraceParent);
+
+                adbcConnection.SetOption(AdbcOptions.Telemetry.TraceParent, traceParentValue1);
+                Assert.Equal(traceParentValue1, bqConnection.TraceParent);
+                Assert.Equal(traceParentValue1, bqStatement.TraceParent);
+
+                adbcStatement.SetOption(AdbcOptions.Telemetry.TraceParent, traceParentValue2);
+                Assert.Equal(traceParentValue1, bqConnection.TraceParent);
+                Assert.Equal(traceParentValue2, bqStatement.TraceParent);
+
+                adbcConnection.SetOption(AdbcOptions.Telemetry.TraceParent, "");
+                Assert.Null(bqConnection.TraceParent);
+                Assert.Equal(traceParentValue2, bqStatement.TraceParent);
+
+                adbcStatement.SetOption(AdbcOptions.Telemetry.TraceParent, "");
+                Assert.Null(bqConnection.TraceParent);
+                Assert.Null(bqStatement.TraceParent);
             }
         }
 
