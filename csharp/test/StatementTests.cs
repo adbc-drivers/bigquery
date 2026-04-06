@@ -227,7 +227,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 AdbcConnection adbcConnection = GetAdbcConnection(environment.Name);
                 AdbcStatement adbcStatement = adbcConnection.CreateStatement();
-                
+
                 var bqConnection = adbcConnection as IActivityTracer;
                 Assert.NotNull(bqConnection);
                 var bqStatement = adbcStatement as IActivityTracer;
