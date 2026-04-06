@@ -95,7 +95,7 @@ namespace AdbcDrivers.BigQuery
             switch (key)
             {
                 case AdbcOptions.Telemetry.TraceParent:
-                    ((IActivityTracer)this).Trace.TraceParent = string.IsNullOrEmpty(value) ? null : value;
+                    SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
                     break;
                 default:
                     // TODO: Throw an exception if setting value is unsupported at particular execution states.
