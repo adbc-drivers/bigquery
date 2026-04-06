@@ -154,7 +154,4 @@ class BigQueryQuirks(model.DriverQuirks):
 
 @functools.cache
 def get_quirks(version: str) -> BigQueryQuirks:
-    quirks = BigQueryQuirks()
-    if version != quirks.short_version:
-        raise ValueError(f"Unsupported BigQuery version: {version}")
-    return quirks
+    return BigQueryQuirks()
