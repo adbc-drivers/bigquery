@@ -24,7 +24,6 @@ import (
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"google.golang.org/api/iterator"
 )
@@ -80,47 +79,6 @@ const (
 	StatisticLastModifiedTimeName = "bigquery.statistic.last_modified_time"
 )
 
-const (
-	unionTypeInt64   arrow.UnionTypeCode = 0
-	unionTypeUint64  arrow.UnionTypeCode = 1
-	unionTypeFloat64 arrow.UnionTypeCode = 2
-	unionTypeBinary  arrow.UnionTypeCode = 3
-)
-
-type bigqueryStatistic struct {
-	tableName  string
-	columnName *string
-	key        int16
-	valueKind  arrow.UnionTypeCode
-	valueI64   int64
-	valueU64   uint64
-	valueF64   float64
-	valueBin   []byte
-	approx     bool
-}
-
-func newInt64Stat(table string, column *string, key int16, value int64, approx bool) bigqueryStatistic {
-	return bigqueryStatistic{
-		tableName:  table,
-		columnName: column,
-		key:        key,
-		valueKind:  unionTypeInt64,
-		valueI64:   value,
-		approx:     approx,
-	}
-}
-
-func newBinaryStat(table string, column *string, key int16, value []byte, approx bool) bigqueryStatistic {
-	return bigqueryStatistic{
-		tableName:  table,
-		columnName: column,
-		key:        key,
-		valueKind:  unionTypeBinary,
-		valueBin:   value,
-		approx:     approx,
-	}
-}
-
 func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, tableName *string, approximate bool) (array.RecordReader, error) {
 	catalogPattern, err := driverbase.PatternToRegexp(catalog)
 	if err != nil {
@@ -149,7 +107,7 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 	project := c.client.Project()
 	if !catalogPattern.MatchString(project) {
 		// No matching catalog, return empty result
-		return c.emptyGetStatisticsReader()
+		return driverbase.EmptyGetStatisticsReader(c.Alloc)
 	}
 
 	// Get datasets matching the schema pattern
@@ -158,7 +116,7 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 		return nil, errToAdbcErr(adbc.StatusInternal, err, "list datasets")
 	}
 
-	statsByDataset := map[string][]bigqueryStatistic{}
+	statsByDataset := map[string][]driverbase.Statistic{}
 	var datasetOrder []string
 	seenDataset := map[string]bool{}
 
@@ -182,11 +140,14 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 		}
 	}
 
-	return c.buildGetStatisticsReader(project, datasetOrder, statsByDataset)
+	catalogOrder := []string{project}
+	schemaOrder := map[string][]string{project: datasetOrder}
+	statsByCatalog := map[string]map[string][]driverbase.Statistic{project: statsByDataset}
+	return driverbase.BuildGetStatisticsReader(c.Alloc, catalogOrder, schemaOrder, statsByCatalog)
 }
 
 // getTableStatistics retrieves statistics for tables in a dataset
-func (c *connectionImpl) getTableStatistics(ctx context.Context, project, dataset string, tablePattern *regexp.Regexp, tableName *string, approximate bool) ([]bigqueryStatistic, error) {
+func (c *connectionImpl) getTableStatistics(ctx context.Context, project, dataset string, tablePattern *regexp.Regexp, tableName *string, approximate bool) ([]driverbase.Statistic, error) {
 	// We intentionally resolve the exact table set with the Tables API first
 	// instead of relying on a direct LIKE filter against INFORMATION_SCHEMA.
 	// A broad metadata-view scan can still be expensive for wide patterns, while
@@ -214,7 +175,7 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 
 	// Query INFORMATION_SCHEMA in batches to avoid query size limits
 	batchSize := 100
-	var allStats []bigqueryStatistic
+	var allStats []driverbase.Statistic
 
 	for i := 0; i < len(tableNames); i += batchSize {
 		end := min(i+batchSize, len(tableNames))
@@ -231,7 +192,7 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 }
 
 // getTableStatisticsBatch retrieves statistics for a specific batch of tables
-func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, dataset string, tableNames []string, approximate bool) ([]bigqueryStatistic, error) {
+func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, dataset string, tableNames []string, approximate bool) ([]driverbase.Statistic, error) {
 	// Query INFORMATION_SCHEMA.PARTITIONS for aggregated statistics
 	// Use nested query to handle:
 	// 1. NULL partition_id for unpartitioned tables (coalesce to __UNPARTITIONED__)
@@ -407,14 +368,14 @@ func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, d
 	}
 
 	// Combine statistics for each table
-	var allStats []bigqueryStatistic
+	var allStats []driverbase.Statistic
 	for tableName, pstats := range partitionStats {
 		allStats = append(allStats,
-			newInt64Stat(tableName, nil, int16(adbc.StatisticRowCountKey), pstats.TotalRows, approximate),
-			newInt64Stat(tableName, nil, StatisticTotalLogicalBytesKey, pstats.TotalLogicalBytes, approximate),
-			newInt64Stat(tableName, nil, StatisticTotalBillableBytesKey, pstats.TotalBillableBytes, approximate),
-			newInt64Stat(tableName, nil, StatisticPartitionCountKey, pstats.PartitionCount, false),
-			newBinaryStat(tableName, nil, StatisticLastModifiedTimeKey, []byte(pstats.LastModifiedTime.Format(time.RFC3339Nano)), false),
+			driverbase.NewFloat64Stat(tableName, nil, int16(adbc.StatisticRowCountKey), float64(pstats.TotalRows), true),
+			driverbase.NewInt64Stat(tableName, nil, StatisticTotalLogicalBytesKey, pstats.TotalLogicalBytes, true),
+			driverbase.NewInt64Stat(tableName, nil, StatisticTotalBillableBytesKey, pstats.TotalBillableBytes, true),
+			driverbase.NewInt64Stat(tableName, nil, StatisticPartitionCountKey, pstats.PartitionCount, false),
+			driverbase.NewBinaryStat(tableName, nil, StatisticLastModifiedTimeKey, []byte(pstats.LastModifiedTime.Format(time.RFC3339Nano)), false),
 		)
 
 		// Add storage statistics if available
@@ -423,10 +384,10 @@ func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, d
 		// regardless of the caller's preference.
 		if sstats, ok := storageStats[tableName]; ok {
 			allStats = append(allStats,
-				newInt64Stat(tableName, nil, StatisticTotalPhysicalBytesKey, sstats.TotalPhysicalBytes, true),
-				newInt64Stat(tableName, nil, StatisticActiveLogicalBytesKey, sstats.ActiveLogicalBytes, true),
-				newInt64Stat(tableName, nil, StatisticLongTermLogicalBytesKey, sstats.LongTermLogicalBytes, true),
-				newInt64Stat(tableName, nil, StatisticTimeTravelPhysicalBytesKey, sstats.TimeTravelPhysicalBytes, true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticTotalPhysicalBytesKey, sstats.TotalPhysicalBytes, true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticActiveLogicalBytesKey, sstats.ActiveLogicalBytes, true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticLongTermLogicalBytesKey, sstats.LongTermLogicalBytes, true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticTimeTravelPhysicalBytesKey, sstats.TimeTravelPhysicalBytes, true),
 			)
 		}
 	}
@@ -435,115 +396,15 @@ func (c *connectionImpl) getTableStatisticsBatch(ctx context.Context, project, d
 }
 
 func (c *connectionImpl) GetStatisticNames(ctx context.Context) (array.RecordReader, error) {
-	statistics := []struct {
-		Name string
-		Key  int16
-	}{
-		// BigQuery-specific statistics only (keys >= 1024)
-		{StatisticTotalLogicalBytesName, StatisticTotalLogicalBytesKey},
-		{StatisticTotalBillableBytesName, StatisticTotalBillableBytesKey},
-		{StatisticTotalPhysicalBytesName, StatisticTotalPhysicalBytesKey},
-		{StatisticActiveLogicalBytesName, StatisticActiveLogicalBytesKey},
-		{StatisticLongTermLogicalBytesName, StatisticLongTermLogicalBytesKey},
-		{StatisticTimeTravelPhysicalBytesName, StatisticTimeTravelPhysicalBytesKey},
-		{StatisticPartitionCountName, StatisticPartitionCountKey},
-		{StatisticLastModifiedTimeName, StatisticLastModifiedTimeKey},
-	}
-
-	bldr := array.NewRecordBuilder(c.Alloc, adbc.GetStatisticNamesSchema)
-	defer bldr.Release()
-
-	nameBldr := bldr.Field(0).(*array.StringBuilder)
-	keyBldr := bldr.Field(1).(*array.Int16Builder)
-
-	for _, stat := range statistics {
-		nameBldr.Append(stat.Name)
-		keyBldr.Append(stat.Key)
-	}
-
-	rec := bldr.NewRecordBatch()
-	defer rec.Release()
-
-	return array.NewRecordReader(adbc.GetStatisticNamesSchema, []arrow.RecordBatch{rec})
-}
-
-// emptyGetStatisticsReader returns an empty GetStatistics result.
-func (c *connectionImpl) emptyGetStatisticsReader() (array.RecordReader, error) {
-	bldr := array.NewRecordBuilder(c.Alloc, adbc.GetStatisticsSchema)
-	defer bldr.Release()
-
-	rec := bldr.NewRecordBatch()
-	defer rec.Release()
-
-	return array.NewRecordReader(adbc.GetStatisticsSchema, []arrow.RecordBatch{rec})
-}
-
-// buildGetStatisticsReader constructs the Arrow RecordReader for GetStatistics.
-func (c *connectionImpl) buildGetStatisticsReader(
-	project string,
-	datasetOrder []string,
-	statsByDataset map[string][]bigqueryStatistic,
-) (array.RecordReader, error) {
-	bldr := array.NewRecordBuilder(c.Alloc, adbc.GetStatisticsSchema)
-	defer bldr.Release()
-
-	catalogNameBldr := bldr.Field(0).(*array.StringBuilder)
-	catalogSchemasBldr := bldr.Field(1).(*array.ListBuilder)
-	dbSchemaStructBldr := catalogSchemasBldr.ValueBuilder().(*array.StructBuilder)
-	dbSchemaNameBldr := dbSchemaStructBldr.FieldBuilder(0).(*array.StringBuilder)
-	dbSchemaStatsListBldr := dbSchemaStructBldr.FieldBuilder(1).(*array.ListBuilder)
-
-	statsStructBldr := dbSchemaStatsListBldr.ValueBuilder().(*array.StructBuilder)
-	tableNameBldr := statsStructBldr.FieldBuilder(0).(*array.StringBuilder)
-	columnNameBldr := statsStructBldr.FieldBuilder(1).(*array.StringBuilder)
-	statKeyBldr := statsStructBldr.FieldBuilder(2).(*array.Int16Builder)
-	statValueBldr := statsStructBldr.FieldBuilder(3).(*array.DenseUnionBuilder)
-	statApproxBldr := statsStructBldr.FieldBuilder(4).(*array.BooleanBuilder)
-
-	statI64Bldr := statValueBldr.Child(0).(*array.Int64Builder)
-	statU64Bldr := statValueBldr.Child(1).(*array.Uint64Builder)
-	statF64Bldr := statValueBldr.Child(2).(*array.Float64Builder)
-	statBinBldr := statValueBldr.Child(3).(*array.BinaryBuilder)
-
-	catalogNameBldr.Append(project)
-	catalogSchemasBldr.Append(true)
-
-	for _, dataset := range datasetOrder {
-		dbSchemaStructBldr.Append(true)
-		dbSchemaNameBldr.Append(dataset)
-		dbSchemaStatsListBldr.Append(true)
-
-		for _, st := range statsByDataset[dataset] {
-			statsStructBldr.Append(true)
-			tableNameBldr.Append(st.tableName)
-
-			if st.columnName == nil {
-				columnNameBldr.AppendNull()
-			} else {
-				columnNameBldr.Append(*st.columnName)
-			}
-
-			statKeyBldr.Append(st.key)
-			statApproxBldr.Append(st.approx)
-
-			statValueBldr.Append(st.valueKind)
-			switch st.valueKind {
-			case unionTypeInt64:
-				statI64Bldr.Append(st.valueI64)
-			case unionTypeUint64:
-				statU64Bldr.Append(st.valueU64)
-			case unionTypeFloat64:
-				statF64Bldr.Append(st.valueF64)
-			case unionTypeBinary:
-				statBinBldr.Append(st.valueBin)
-			default:
-				return nil, fmt.Errorf("unknown statistic value kind: %d", st.valueKind)
-			}
-		}
-	}
-
-	rec := bldr.NewRecordBatch()
-	defer rec.Release()
-
-	return array.NewRecordReader(adbc.GetStatisticsSchema, []arrow.RecordBatch{rec})
+	// BigQuery-specific statistics only (keys >= 1024)
+	return driverbase.BuildGetStatisticNamesReader(c.Alloc, []driverbase.StatisticNameKey{
+		{Name: StatisticTotalLogicalBytesName, Key: StatisticTotalLogicalBytesKey},
+		{Name: StatisticTotalBillableBytesName, Key: StatisticTotalBillableBytesKey},
+		{Name: StatisticTotalPhysicalBytesName, Key: StatisticTotalPhysicalBytesKey},
+		{Name: StatisticActiveLogicalBytesName, Key: StatisticActiveLogicalBytesKey},
+		{Name: StatisticLongTermLogicalBytesName, Key: StatisticLongTermLogicalBytesKey},
+		{Name: StatisticTimeTravelPhysicalBytesName, Key: StatisticTimeTravelPhysicalBytesKey},
+		{Name: StatisticPartitionCountName, Key: StatisticPartitionCountKey},
+		{Name: StatisticLastModifiedTimeName, Key: StatisticLastModifiedTimeKey},
+	})
 }
