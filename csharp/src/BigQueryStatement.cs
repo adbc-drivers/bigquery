@@ -1387,7 +1387,7 @@ namespace AdbcDrivers.BigQuery
                         Task.Delay(delay, this.cancellationToken).GetAwaiter().GetResult();
                         delay = Math.Min(2 * delay, 5000);
 
-                        // Re-create the gRPC stream
+                        // Re-create the gRPC stream starting from current offset (always 0 in constructor)
                         try
                         {
                             this.response.DisposeAsync().GetAwaiter().GetResult();
@@ -1396,7 +1396,7 @@ namespace AdbcDrivers.BigQuery
                         {
                             // Best-effort disposal of the broken stream
                         }
-                        this.response = CreateEnumerator(0);
+                        this.response = CreateEnumerator(this.rowsRead);
                     }
                     catch (Exception ex)
                     {
