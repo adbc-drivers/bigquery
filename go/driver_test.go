@@ -363,7 +363,7 @@ func (q *BigQueryQuirks) SupportsCurrentCatalogSchema() bool          { return t
 func (q *BigQueryQuirks) SupportsExecuteSchema() bool                 { return false }
 func (q *BigQueryQuirks) SupportsGetSetOptions() bool                 { return true }
 func (q *BigQueryQuirks) SupportsPartitionedData() bool               { return false }
-func (q *BigQueryQuirks) SupportsStatistics() bool                    { return false }
+func (q *BigQueryQuirks) SupportsStatistics() bool                    { return true }
 func (q *BigQueryQuirks) SupportsTransactions() bool                  { return false }
 func (q *BigQueryQuirks) SupportsGetParameterSchema() bool            { return false }
 func (q *BigQueryQuirks) SupportsDynamicParameterBinding() bool       { return false }
@@ -2021,4 +2021,152 @@ func TestBigQueryURIParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (suite *BigQueryTests) TestGetStatistics() {
+	// Create a persistent test table (if not exists) to ensure consistent results
+	// across test runs despite INFORMATION_SCHEMA staleness
+	suite.Require().NoError(suite.stmt.SetSqlQuery(`
+		CREATE TABLE IF NOT EXISTS statistics_test (
+			id INT64,
+			category STRING,
+			name STRING,
+			value FLOAT64
+		)
+	`))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	// Check if table is empty, if so populate it with 300 rows
+	suite.Require().NoError(suite.stmt.SetSqlQuery(`SELECT COUNT(*) FROM statistics_test`))
+	countRdr, _, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	suite.Require().True(countRdr.Next())
+	count := countRdr.RecordBatch().Column(0).(*array.Int64).Value(0)
+	countRdr.Release()
+
+	if count == 0 {
+		suite.Require().NoError(suite.stmt.SetSqlQuery(`
+			INSERT INTO statistics_test
+			SELECT
+				row_num as id,
+				CASE MOD(row_num, 3) WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END as category,
+				CONCAT('test_', CAST(row_num AS STRING)) as name,
+				RAND() * 300 as value
+			FROM UNNEST(GENERATE_ARRAY(1, 300)) as row_num
+		`))
+		_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+		suite.Require().NoError(err)
+	}
+
+	project := suite.Quirks.Catalog()
+	dataset := suite.Quirks.DBSchema()
+
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	// Test Get statistics with specific table filter
+	tableName := "statistics_test"
+	statsRdr, err := statsCnxn.GetStatistics(suite.ctx, &project, &dataset, &tableName, false)
+	suite.Require().NoError(err)
+	defer statsRdr.Release()
+
+	// Verify schema matches ADBC spec
+	suite.True(adbc.GetStatisticsSchema.Equal(statsRdr.Schema()),
+		"Schema should match ADBC spec\nexpected: %s\ngot: %s",
+		adbc.GetStatisticsSchema, statsRdr.Schema())
+
+	// Read and extract statistics for our table
+	var allStats []testutil.Statistic
+	for statsRdr.Next() {
+		rec := statsRdr.RecordBatch()
+		suite.Greater(rec.NumRows(), int64(0), "Should have at least one catalog")
+		stats := testutil.ExtractStatisticsForTable(rec, project, dataset, tableName)
+		allStats = append(allStats, stats...)
+	}
+	suite.NoError(statsRdr.Err())
+
+	suite.Greater(len(allStats), 0, "Should find statistics for statistics_test table")
+
+	// Convert to lookup map for easier assertions
+	statsMap := testutil.StatisticsToLookupMap(allStats)
+
+	// Row count: We inserted 300 rows
+	rowCount, ok := statsMap[int16(6)].StatisticValue.(float64)
+	suite.True(ok, "row_count statistic should be present as float64")
+	suite.GreaterOrEqual(rowCount, float64(300), "Row count should be at least 300")
+	suite.True(statsMap[int16(6)].IsApproximate, "row_count should be approximate (cached)")
+	suite.T().Logf("Row count: %.0f (note: may be stale due to INFORMATION_SCHEMA caching)", rowCount)
+
+	// Bytes: Should be > 0, reasonable size for 300 rows with data
+	totalLogicalBytes, ok := statsMap[int16(1024)].StatisticValue.(int64)
+	suite.True(ok, "total_logical_bytes statistic should be present")
+	suite.Greater(totalLogicalBytes, int64(0), "Total logical bytes should be > 0")
+	suite.True(statsMap[int16(1024)].IsApproximate, "total_logical_bytes should be approximate (cached)")
+	suite.T().Logf("Total logical bytes: %d", totalLogicalBytes)
+
+	// Partition count: Unpartitioned table should have 1 partition
+	partitionCount, ok := statsMap[int16(1030)].StatisticValue.(int64)
+	suite.True(ok, "partition_count statistic should be present")
+	suite.Equal(int64(1), partitionCount, "Unpartitioned table should have partition count of 1")
+	suite.False(statsMap[int16(1030)].IsApproximate, "partition_count should be exact (not approximate)")
+	suite.T().Logf("Partition count: %d", partitionCount)
+
+	// Check for other BigQuery-specific statistics (may not all be present)
+	if totalBillableBytes, ok := statsMap[int16(1025)].StatisticValue.(int64); ok {
+		suite.T().Logf("Total billable bytes found: %d", totalBillableBytes)
+		suite.GreaterOrEqual(totalBillableBytes, int64(0), "Total billable bytes should be non-negative")
+		suite.True(statsMap[int16(1025)].IsApproximate, "total_billable_bytes should be approximate")
+	}
+
+	if totalPhysicalBytes, ok := statsMap[int16(1026)].StatisticValue.(int64); ok {
+		suite.T().Logf("Total physical bytes found: %d", totalPhysicalBytes)
+		suite.GreaterOrEqual(totalPhysicalBytes, int64(0), "Total physical bytes should be non-negative")
+		// TABLE_STORAGE stats are always approximate
+		suite.True(statsMap[int16(1026)].IsApproximate, "total_physical_bytes should be approximate")
+	}
+
+	if activeLogicalBytes, ok := statsMap[int16(1027)].StatisticValue.(int64); ok {
+		suite.T().Logf("Active logical bytes found: %d", activeLogicalBytes)
+		suite.GreaterOrEqual(activeLogicalBytes, int64(0), "Active logical bytes should be non-negative")
+		suite.True(statsMap[int16(1027)].IsApproximate, "active_logical_bytes should be approximate")
+	}
+
+	if longTermLogicalBytes, ok := statsMap[int16(1028)].StatisticValue.(int64); ok {
+		suite.T().Logf("Long-term logical bytes found: %d", longTermLogicalBytes)
+		suite.GreaterOrEqual(longTermLogicalBytes, int64(0), "Long-term logical bytes should be non-negative")
+		suite.True(statsMap[int16(1028)].IsApproximate, "long_term_logical_bytes should be approximate")
+	}
+
+	if timeTravelPhysicalBytes, ok := statsMap[int16(1029)].StatisticValue.(int64); ok {
+		suite.T().Logf("Time travel physical bytes found: %d", timeTravelPhysicalBytes)
+		suite.GreaterOrEqual(timeTravelPhysicalBytes, int64(0), "Time travel physical bytes should be non-negative")
+		suite.True(statsMap[int16(1029)].IsApproximate, "time_travel_physical_bytes should be approximate")
+	}
+
+	if lastModifiedTime, ok := statsMap[int16(1031)].StatisticValue.([]byte); ok {
+		suite.T().Logf("Last modified time found: %s", string(lastModifiedTime))
+		suite.Greater(len(lastModifiedTime), 0, "Last modified time should not be empty")
+		suite.False(statsMap[int16(1031)].IsApproximate, "last_modified_time should be exact")
+	}
+
+	// Note: We intentionally don't drop the table to keep it for subsequent test runs,
+	// ensuring consistent results despite INFORMATION_SCHEMA caching
+}
+
+func (suite *BigQueryTests) TestGetStatisticNames() {
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	rdr, err := statsCnxn.GetStatisticNames(suite.ctx)
+	suite.NoError(err)
+	defer rdr.Release()
+
+	suite.True(adbc.GetStatisticNamesSchema.Equal(rdr.Schema()),
+		"expected: %s\ngot: %s", adbc.GetStatisticNamesSchema, rdr.Schema())
+
+	// Verify exactly 8 BigQuery-specific rows (keys >= 1024)
+	suite.True(rdr.Next())
+	rec := rdr.RecordBatch()
+	suite.Equal(int64(8), rec.NumRows())
 }

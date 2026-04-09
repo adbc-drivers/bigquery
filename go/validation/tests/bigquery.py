@@ -26,8 +26,8 @@ class BigQueryQuirks(model.DriverQuirks):
     vendor_name = "BigQuery"
     # BigQuery doesn't really have a public facing version, so use the client
     # version instead
-    vendor_version = "cloud.google.com/go/bigquery v1.74.0"
-    short_version = "1.74.0"
+    vendor_version = "cloud.google.com/go/bigquery v1.75.0"
+    short_version = "1.75.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         # TODO(lidavidm): this is a bit weird; it does work, but we'd need two
@@ -129,6 +129,9 @@ class BigQueryQuirks(model.DriverQuirks):
     def is_table_not_found(self, table_name: str, error: Exception) -> bool:
         return "Not found: Table" in str(error) and table_name in str(error)
 
+    def is_retryable(self, error: Exception) -> bool:
+        return "rateLimitExceeded" in str(error)
+
     def quote_one_identifier(self, identifier: str) -> str:
         return f"`{identifier}`"
 
@@ -151,7 +154,4 @@ class BigQueryQuirks(model.DriverQuirks):
 
 @functools.cache
 def get_quirks(version: str) -> BigQueryQuirks:
-    quirks = BigQueryQuirks()
-    if version != quirks.short_version:
-        raise ValueError(f"Unsupported BigQuery version: {version}")
-    return quirks
+    return BigQueryQuirks()
