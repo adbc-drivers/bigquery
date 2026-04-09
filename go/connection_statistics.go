@@ -107,7 +107,7 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 	project := c.client.Project()
 	if !catalogPattern.MatchString(project) {
 		// No matching catalog, return empty result
-		return driverbase.EmptyGetStatisticsReader(c.Alloc)
+		return driverbase.EmptyGetStatisticsReader()
 	}
 
 	// Get datasets matching the schema pattern

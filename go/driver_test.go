@@ -2077,7 +2077,7 @@ func (suite *BigQueryTests) TestGetStatistics() {
 		adbc.GetStatisticsSchema, statsRdr.Schema())
 
 	// Read and extract statistics for our table
-	var allStats []map[string]any
+	var allStats []testutil.Statistic
 	for statsRdr.Next() {
 		rec := statsRdr.RecordBatch()
 		suite.Greater(rec.NumRows(), int64(0), "Should have at least one catalog")
@@ -2088,72 +2088,66 @@ func (suite *BigQueryTests) TestGetStatistics() {
 
 	suite.Greater(len(allStats), 0, "Should find statistics for statistics_test table")
 
-	// Convert to lookup maps for easier assertions
-	statisticsFound, statisticsApprox := testutil.StatisticsToLookupMaps(allStats)
-
-	// Verify we got all expected statistics
-	// Base statistics (always present):
-	suite.Contains(statisticsFound, int16(6), "Should have row_count statistic")
-	suite.Contains(statisticsFound, int16(1024), "Should have total_logical_bytes statistic")
-	suite.Contains(statisticsFound, int16(1030), "Should have partition_count statistic")
+	// Convert to lookup map for easier assertions
+	statsMap := testutil.StatisticsToLookupMap(allStats)
 
 	// Row count: We inserted 300 rows
-	rowCount, hasRowCount := statisticsFound[int16(6)].(float64)
-	suite.True(hasRowCount, "row_count statistic should be present as float64")
+	rowCount, ok := statsMap[int16(6)].StatisticValue.(float64)
+	suite.True(ok, "row_count statistic should be present as float64")
 	suite.GreaterOrEqual(rowCount, float64(300), "Row count should be at least 300")
-	suite.True(statisticsApprox[int16(6)], "row_count should be approximate (cached)")
+	suite.True(statsMap[int16(6)].IsApproximate, "row_count should be approximate (cached)")
 	suite.T().Logf("Row count: %.0f (note: may be stale due to INFORMATION_SCHEMA caching)", rowCount)
 
 	// Bytes: Should be > 0, reasonable size for 300 rows with data
-	totalLogicalBytes, hasBytes := statisticsFound[int16(1024)].(int64)
-	suite.True(hasBytes, "total_logical_bytes statistic should be present")
+	totalLogicalBytes, ok := statsMap[int16(1024)].StatisticValue.(int64)
+	suite.True(ok, "total_logical_bytes statistic should be present")
 	suite.Greater(totalLogicalBytes, int64(0), "Total logical bytes should be > 0")
-	suite.True(statisticsApprox[int16(1024)], "total_logical_bytes should be approximate (cached)")
+	suite.True(statsMap[int16(1024)].IsApproximate, "total_logical_bytes should be approximate (cached)")
 	suite.T().Logf("Total logical bytes: %d", totalLogicalBytes)
 
 	// Partition count: Unpartitioned table should have 1 partition
-	partitionCount, hasPartitionCount := statisticsFound[int16(1030)].(int64)
-	suite.True(hasPartitionCount, "partition_count statistic should be present")
+	partitionCount, ok := statsMap[int16(1030)].StatisticValue.(int64)
+	suite.True(ok, "partition_count statistic should be present")
 	suite.Equal(int64(1), partitionCount, "Unpartitioned table should have partition count of 1")
-	suite.False(statisticsApprox[int16(1030)], "partition_count should be exact (not approximate)")
+	suite.False(statsMap[int16(1030)].IsApproximate, "partition_count should be exact (not approximate)")
 	suite.T().Logf("Partition count: %d", partitionCount)
 
 	// Check for other BigQuery-specific statistics (may not all be present)
-	if totalBillableBytes, ok := statisticsFound[int16(1025)].(int64); ok {
+	if totalBillableBytes, ok := statsMap[int16(1025)].StatisticValue.(int64); ok {
 		suite.T().Logf("Total billable bytes found: %d", totalBillableBytes)
 		suite.GreaterOrEqual(totalBillableBytes, int64(0), "Total billable bytes should be non-negative")
-		suite.True(statisticsApprox[int16(1025)], "total_billable_bytes should be approximate")
+		suite.True(statsMap[int16(1025)].IsApproximate, "total_billable_bytes should be approximate")
 	}
 
-	if totalPhysicalBytes, ok := statisticsFound[int16(1026)].(int64); ok {
+	if totalPhysicalBytes, ok := statsMap[int16(1026)].StatisticValue.(int64); ok {
 		suite.T().Logf("Total physical bytes found: %d", totalPhysicalBytes)
 		suite.GreaterOrEqual(totalPhysicalBytes, int64(0), "Total physical bytes should be non-negative")
 		// TABLE_STORAGE stats are always approximate
-		suite.True(statisticsApprox[int16(1026)], "total_physical_bytes should be approximate")
+		suite.True(statsMap[int16(1026)].IsApproximate, "total_physical_bytes should be approximate")
 	}
 
-	if activeLogicalBytes, ok := statisticsFound[int16(1027)].(int64); ok {
+	if activeLogicalBytes, ok := statsMap[int16(1027)].StatisticValue.(int64); ok {
 		suite.T().Logf("Active logical bytes found: %d", activeLogicalBytes)
 		suite.GreaterOrEqual(activeLogicalBytes, int64(0), "Active logical bytes should be non-negative")
-		suite.True(statisticsApprox[int16(1027)], "active_logical_bytes should be approximate")
+		suite.True(statsMap[int16(1027)].IsApproximate, "active_logical_bytes should be approximate")
 	}
 
-	if longTermLogicalBytes, ok := statisticsFound[int16(1028)].(int64); ok {
+	if longTermLogicalBytes, ok := statsMap[int16(1028)].StatisticValue.(int64); ok {
 		suite.T().Logf("Long-term logical bytes found: %d", longTermLogicalBytes)
 		suite.GreaterOrEqual(longTermLogicalBytes, int64(0), "Long-term logical bytes should be non-negative")
-		suite.True(statisticsApprox[int16(1028)], "long_term_logical_bytes should be approximate")
+		suite.True(statsMap[int16(1028)].IsApproximate, "long_term_logical_bytes should be approximate")
 	}
 
-	if timeTravelPhysicalBytes, ok := statisticsFound[int16(1029)].(int64); ok {
+	if timeTravelPhysicalBytes, ok := statsMap[int16(1029)].StatisticValue.(int64); ok {
 		suite.T().Logf("Time travel physical bytes found: %d", timeTravelPhysicalBytes)
 		suite.GreaterOrEqual(timeTravelPhysicalBytes, int64(0), "Time travel physical bytes should be non-negative")
-		suite.True(statisticsApprox[int16(1029)], "time_travel_physical_bytes should be approximate")
+		suite.True(statsMap[int16(1029)].IsApproximate, "time_travel_physical_bytes should be approximate")
 	}
 
-	if lastModifiedTime, ok := statisticsFound[int16(1031)].([]byte); ok {
+	if lastModifiedTime, ok := statsMap[int16(1031)].StatisticValue.([]byte); ok {
 		suite.T().Logf("Last modified time found: %s", string(lastModifiedTime))
 		suite.Greater(len(lastModifiedTime), 0, "Last modified time should not be empty")
-		suite.False(statisticsApprox[int16(1031)], "last_modified_time should be exact")
+		suite.False(statsMap[int16(1031)].IsApproximate, "last_modified_time should be exact")
 	}
 
 	// Note: We intentionally don't drop the table to keep it for subsequent test runs,
