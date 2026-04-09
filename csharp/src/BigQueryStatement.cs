@@ -126,7 +126,7 @@ namespace AdbcDrivers.BigQuery
 
                 if (Options?.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? timeoutSeconds) == true &&
                     int.TryParse(timeoutSeconds, out int seconds) &&
-                    seconds >= 0)
+                    seconds > 0)
                 {
                     getQueryResultsOptions.Timeout = TimeSpan.FromSeconds(seconds);
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
@@ -733,7 +733,7 @@ namespace AdbcDrivers.BigQuery
 
                 if (Options?.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? timeoutSeconds) == true &&
                     int.TryParse(timeoutSeconds, out int seconds) &&
-                    seconds >= 0)
+                    seconds > 0)
                 {
                     getQueryResultsOptions.Timeout = TimeSpan.FromSeconds(seconds);
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
@@ -845,15 +845,13 @@ namespace AdbcDrivers.BigQuery
             return type;
         }
 
-        private static IArrowReader? ReadChunk(BigQueryReadClient client, string streamName, Activity? activity, bool isSafeToTrace, CancellationToken cancellationToken = default)
+        private IArrowReader? ReadChunk(BigQueryReadClient client, string streamName, Activity? activity, bool isSafeToTrace, CancellationToken cancellationToken = default)
         {
             // Ideally we wouldn't need to indirect through a stream, but the necessary APIs in Arrow
             // are internal. (TODO: consider changing Arrow).
             activity?.AddConditionalBigQueryTag("read_stream", streamName, isSafeToTrace);
-            BigQueryReadClient.ReadRowsStream readRowsStream = client.ReadRows(new ReadRowsRequest { ReadStream = streamName });
-            IAsyncEnumerator<ReadRowsResponse> enumerator = readRowsStream.GetResponseStream().GetAsyncEnumerator(cancellationToken);
 
-            ReadRowsStream stream = new ReadRowsStream(enumerator);
+            ReadRowsStream stream = new ReadRowsStream(client, streamName, MaxRetryAttempts, RetryDelayMs, cancellationToken);
             activity?.AddBigQueryTag("read_stream.has_rows", stream.HasRows);
 
             return stream.HasRows ? stream : null;
@@ -1247,26 +1245,93 @@ namespace AdbcDrivers.BigQuery
 
         sealed class ReadRowsStream : IArrowArrayStream
         {
+            readonly BigQueryReadClient client;
+            readonly string streamName;
+            readonly int maxRetries;
+            readonly int initialDelayMs;
+            readonly CancellationToken cancellationToken;
             readonly Schema? schema;
-            readonly IAsyncEnumerator<ReadRowsResponse> response;
+            IAsyncEnumerator<ReadRowsResponse> response;
+            long rowsRead;
             bool first;
             bool disposed;
 
-            public ReadRowsStream(IAsyncEnumerator<ReadRowsResponse> response)
+            public ReadRowsStream(BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
             {
+                this.client = client;
+                this.streamName = streamName;
+                this.maxRetries = maxRetries;
+                this.initialDelayMs = initialDelayMs;
+                this.cancellationToken = cancellationToken;
+
+                this.response = CreateEnumerator(offset: 0);
+                this.rowsRead = 0;
+
+                // First MoveNextAsync to get the schema - with retry logic
                 try
                 {
-                    if (response.MoveNextAsync().Result && response.Current != null)
+                    bool moved = MoveNextWithRetrySyncForConstructor();
+                    if (moved && this.response.Current != null)
                     {
-                        this.schema = ArrowSerializationHelpers.DeserializeSchema(response.Current.ArrowSchema.SerializedSchema.Memory);
+                        this.schema = ArrowSerializationHelpers.DeserializeSchema(this.response.Current.ArrowSchema.SerializedSchema.Memory);
                     }
                 }
                 catch (InvalidOperationException)
                 {
+                    // Stream has no rows - schema will be null
+                }
+                catch (AdbcException)
+                {
+                    // Retries exhausted - schema will be null, HasRows will be false
                 }
 
-                this.response = response;
                 this.first = true;
+            }
+
+            /// <summary>
+            /// Synchronous retry wrapper for the constructor's first MoveNextAsync call.
+            /// This is separate from MoveNextWithRetryAsync because the constructor cannot be async.
+            /// </summary>
+            private bool MoveNextWithRetrySyncForConstructor()
+            {
+                int retryCount = 0;
+                int delay = this.initialDelayMs;
+
+                while (true)
+                {
+                    try
+                    {
+                        return this.response.MoveNextAsync().GetAwaiter().GetResult();
+                    }
+                    catch (Exception) when (this.cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception) when (retryCount < this.maxRetries)
+                    {
+                        retryCount++;
+                        Task.Delay(delay, this.cancellationToken).GetAwaiter().GetResult();
+                        delay = Math.Min(2 * delay, 5000);
+
+                        // Re-create the gRPC stream
+                        try
+                        {
+                            this.response.DisposeAsync().GetAwaiter().GetResult();
+                        }
+                        catch
+                        {
+                            // Best-effort disposal of the broken stream
+                        }
+                        this.response = CreateEnumerator(0);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new AdbcException(
+                            $"Cannot initialize stream '{this.streamName}' after {this.maxRetries} retries. Last exception: {ex.GetType().Name}: {ex.Message}",
+                            AdbcStatusCode.IOError,
+                            ex);
+                    }
+                }
             }
 
             public Schema Schema => this.schema ?? throw new InvalidOperationException("Stream has no rows");
@@ -1278,12 +1343,72 @@ namespace AdbcDrivers.BigQuery
                 {
                     this.first = false;
                 }
-                else if (this.disposed || !await this.response.MoveNextAsync())
+                else
                 {
-                    return null;
+                    bool moved = await MoveNextWithRetryAsync().ConfigureAwait(false);
+                    if (!moved)
+                    {
+                        return null;
+                    }
                 }
 
+                long batchRowCount = this.response.Current.RowCount;
+                this.rowsRead += batchRowCount;
                 return ArrowSerializationHelpers.DeserializeRecordBatch(this.schema, this.response.Current.ArrowRecordBatch.SerializedRecordBatch.Memory);
+            }
+
+            private async ValueTask<bool> MoveNextWithRetryAsync()
+            {
+                if (this.disposed)
+                {
+                    return false;
+                }
+
+                int retryCount = 0;
+                int delay = this.initialDelayMs;
+
+                while (true)
+                {
+                    try
+                    {
+                        return await this.response.MoveNextAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception) when (this.cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception) when (retryCount < this.maxRetries)
+                    {
+                        retryCount++;
+                        await Task.Delay(delay, this.cancellationToken).ConfigureAwait(false);
+                        delay = Math.Min(2 * delay, 5000);
+
+                        // Re-create the gRPC stream starting from the offset of rows already read
+                        try
+                        {
+                            await this.response.DisposeAsync().ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Best-effort disposal of the broken stream
+                        }
+                        this.response = CreateEnumerator(this.rowsRead);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new AdbcException(
+                            $"Cannot read stream '{this.streamName}' after {this.maxRetries} retries at row offset {this.rowsRead}. Last exception: {ex.GetType().Name}: {ex.Message}",
+                            AdbcStatusCode.IOError,
+                            ex);
+                    }
+                }
+            }
+
+            private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset)
+            {
+                BigQueryReadClient.ReadRowsStream readRowsStream = this.client.ReadRows(
+                    new ReadRowsRequest { ReadStream = this.streamName, Offset = offset });
+                return readRowsStream.GetResponseStream().GetAsyncEnumerator(this.cancellationToken);
             }
 
             public void Dispose()

@@ -165,6 +165,50 @@ namespace AdbcDrivers.BigQuery
         public override string AssemblyVersion => BigQueryUtils.BigQueryAssemblyVersion;
 
         public override string AssemblyName => BigQueryUtils.BigQueryAssemblyName;
+        /// <summary>
+        /// Calculates the effective client timeout based on the configured values.
+        /// If ClientTimeout is less than GetQueryResultsOptionsTimeout + 30 seconds,
+        /// it will be adjusted to ensure the HTTP layer doesn't timeout before BigQuery responds.
+        /// </summary>
+        /// <returns>
+        /// A tuple containing:
+        /// - effectiveClientTimeout: The calculated timeout, or null if no timeout should be set
+        /// - wasAdjusted: True if the ClientTimeout was adjusted because it was too small
+        /// - wasSetFromQueryResults: True if the ClientTimeout was automatically set from GetQueryResultsOptionsTimeout
+        /// </returns>
+        internal (TimeSpan? effectiveClientTimeout, bool wasAdjusted, bool wasSetFromQueryResults) CalculateClientTimeout()
+        {
+            const int TimeoutBufferSeconds = 30;
+
+            int queryResultsTimeoutSeconds = 0;
+            if (this.properties.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? queryResultsTimeout) &&
+                int.TryParse(queryResultsTimeout, out int parsedQueryResultsTimeout) &&
+                parsedQueryResultsTimeout > 0)
+            {
+                queryResultsTimeoutSeconds = parsedQueryResultsTimeout;
+            }
+
+            if (this.properties.TryGetValue(BigQueryParameters.ClientTimeout, out string? timeoutSeconds) &&
+                int.TryParse(timeoutSeconds, out int seconds) &&
+                seconds > 0)
+            {
+                int minimumClientTimeout = queryResultsTimeoutSeconds + TimeoutBufferSeconds;
+                bool wasAdjusted = false;
+                if (queryResultsTimeoutSeconds > 0 && seconds < minimumClientTimeout)
+                {
+                    seconds = minimumClientTimeout;
+                    wasAdjusted = true;
+                }
+                return (TimeSpan.FromSeconds(seconds), wasAdjusted, false);
+            }
+            else if (queryResultsTimeoutSeconds > 0)
+            {
+                int minimumClientTimeout = queryResultsTimeoutSeconds + TimeoutBufferSeconds;
+                return (TimeSpan.FromSeconds(minimumClientTimeout), false, true);
+            }
+
+            return (null, false, false);
+        }
 
         /// <summary>
         /// Initializes the internal BigQuery connection
@@ -217,11 +261,20 @@ namespace AdbcDrivers.BigQuery
                     }
                 }
 
-                if (this.properties.TryGetValue(BigQueryParameters.ClientTimeout, out string? timeoutSeconds) &&
-                    int.TryParse(timeoutSeconds, out int seconds))
+                // Calculate client timeout using the centralized method
+                var (calculatedTimeout, wasAdjusted, wasSetFromQueryResults) = CalculateClientTimeout();
+                if (calculatedTimeout.HasValue)
                 {
-                    clientTimeout = TimeSpan.FromSeconds(seconds);
-                    activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, seconds);
+                    clientTimeout = calculatedTimeout.Value;
+                    if (wasAdjusted)
+                    {
+                        activity?.AddBigQueryTag("client.timeout.adjusted_for_query_results_timeout", true);
+                    }
+                    if (wasSetFromQueryResults)
+                    {
+                        activity?.AddBigQueryTag("client.timeout.set_from_query_results_timeout", true);
+                    }
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, (int)clientTimeout.Value.TotalSeconds);
                 }
 
                 if (this.properties.TryGetValue(BigQueryParameters.CreateLargeResultsDataset, out string? sCreateLargeResultDataset) &&
