@@ -86,21 +86,47 @@ namespace AdbcDrivers.BigQuery
 
         public override string AssemblyName => BigQueryUtils.BigQueryAssemblyName;
 
+        /// <summary>
+        /// Returns the effective query results timeout.
+        /// Uses a statement-level override (via <see cref="SetOption"/>) if present,
+        /// otherwise falls back to the connection's <see cref="BigQueryConnection.QueryResultsTimeout"/>.
+        /// Returns null if neither is set (BigQuery will use its server-side default of 5 minutes).
+        /// </summary>
+        private TimeSpan? GetEffectiveQueryResultsTimeout()
+        {
+            if (Options?.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? timeoutSeconds) == true)
+            {
+                // Already validated in SetOption
+                if (int.TryParse(timeoutSeconds, out int seconds) && seconds > 0)
+                {
+                    return TimeSpan.FromSeconds(seconds);
+                }
+            }
+
+            return this.bigQueryConnection.QueryResultsTimeout;
+        }
+
         public override void SetOption(string key, string value)
         {
             Options ??= [];
-
-            Options[key] = value;
 
             switch (key)
             {
                 case AdbcOptions.Telemetry.TraceParent:
                     SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
                     break;
+                case BigQueryParameters.GetQueryResultsOptionsTimeout:
+                    if (!int.TryParse(value, out int seconds) || seconds <= 0)
+                    {
+                        throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.GetQueryResultsOptionsTimeout}' is not a valid positive integer.");
+                    }
+                    break;
                 default:
                     // TODO: Throw an exception if setting value is unsupported at particular execution states.
                     break;
             }
+
+            Options[key] = value;
         }
 
         public override QueryResult ExecuteQuery()
@@ -132,12 +158,11 @@ namespace AdbcDrivers.BigQuery
                 JobReference jobReference = job.Reference;
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
 
-                if (Options?.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? timeoutSeconds) == true &&
-                    int.TryParse(timeoutSeconds, out int seconds) &&
-                    seconds > 0)
+                TimeSpan? queryResultsTimeout = GetEffectiveQueryResultsTimeout();
+                if (queryResultsTimeout.HasValue)
                 {
-                    getQueryResultsOptions.Timeout = TimeSpan.FromSeconds(seconds);
-                    activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
+                    getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
                 }
                 activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.Seconds);
 
@@ -699,12 +724,13 @@ namespace AdbcDrivers.BigQuery
             BigQueryReadClient bigQueryReadClient = clientMgr.ReadClient;
             ReadSession rrs = await bigQueryReadClient.CreateReadSessionAsync("projects/" + projectId, rs, maxStreamCount);
 
-            var readers = rrs.Streams
-                             .Select(s => ReadChunk(bigQueryReadClient, s.Name, activity, this.bigQueryConnection.IsSafeToTrace, cancellationToken))
-                             .Where(chunk => chunk != null)
-                             .Cast<IArrowReader>();
+            var tasks = rrs.Streams
+                .Select(s => ReadChunkAsync(bigQueryReadClient, s.Name, activity, this.bigQueryConnection.IsSafeToTrace, cancellationToken))
+                .ToList();
 
-            return readers;
+            IArrowReader?[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            return results.Where(r => r != null).Cast<IArrowReader>();
         }
 
         public override UpdateResult ExecuteUpdate()
@@ -749,12 +775,11 @@ namespace AdbcDrivers.BigQuery
             {
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
 
-                if (Options?.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? timeoutSeconds) == true &&
-                    int.TryParse(timeoutSeconds, out int seconds) &&
-                    seconds > 0)
+                TimeSpan? queryResultsTimeout = GetEffectiveQueryResultsTimeout();
+                if (queryResultsTimeout.HasValue)
                 {
-                    getQueryResultsOptions.Timeout = TimeSpan.FromSeconds(seconds);
-                    activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, seconds);
+                    getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
                 }
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
@@ -867,14 +892,12 @@ namespace AdbcDrivers.BigQuery
             return type;
         }
 
-        private IArrowReader? ReadChunk(BigQueryReadClient client, string streamName, Activity? activity, bool isSafeToTrace, CancellationToken cancellationToken = default)
+        private async Task<IArrowReader?> ReadChunkAsync(BigQueryReadClient client, string streamName, Activity? activity, bool isSafeToTrace, CancellationToken cancellationToken = default)
         {
-            // Ideally we wouldn't need to indirect through a stream, but the necessary APIs in Arrow
-            // are internal. (TODO: consider changing Arrow).
-            activity.AddEvent("read_chunk_started", isSafeToTrace ? [new("stream.name", streamName)] : null);
+            activity?.AddEvent("read_chunk_started", isSafeToTrace ? [new("stream.name", streamName)] : null);
 
-            ReadRowsStream stream = new ReadRowsStream(client, streamName, MaxRetryAttempts, RetryDelayMs, cancellationToken);
-            activity.AddEvent("read_chunk_completed", [new("read_stream.has_rows", stream.HasRows)]);
+            ReadRowsStream stream = await ReadRowsStream.CreateAsync(client, streamName, MaxRetryAttempts, RetryDelayMs, cancellationToken).ConfigureAwait(false);
+            activity?.AddEvent("read_chunk_completed", [new("read_stream.has_rows", stream.HasRows)]);
 
             return stream.HasRows ? stream : null;
         }
@@ -1324,13 +1347,13 @@ namespace AdbcDrivers.BigQuery
             readonly int maxRetries;
             readonly int initialDelayMs;
             readonly CancellationToken cancellationToken;
-            readonly Schema? schema;
+            Schema? schema;
             IAsyncEnumerator<ReadRowsResponse> response;
             long rowsRead;
             bool first;
             bool disposed;
 
-            public ReadRowsStream(BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+            private ReadRowsStream(BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
             {
                 this.client = client;
                 this.streamName = streamName;
@@ -1340,14 +1363,23 @@ namespace AdbcDrivers.BigQuery
 
                 this.response = CreateEnumerator(offset: 0);
                 this.rowsRead = 0;
+                this.first = true;
+            }
 
-                // First MoveNextAsync to get the schema - with retry logic
+            /// <summary>
+            /// Creates a new <see cref="ReadRowsStream"/> and performs the initial read
+            /// to obtain the schema from the first response.
+            /// </summary>
+            public static async Task<ReadRowsStream> CreateAsync(BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+            {
+                var stream = new ReadRowsStream(client, streamName, maxRetries, initialDelayMs, cancellationToken);
+
                 try
                 {
-                    bool moved = MoveNextWithRetrySyncForConstructor();
-                    if (moved && this.response.Current != null)
+                    bool moved = await stream.MoveNextWithRetryAsync().ConfigureAwait(false);
+                    if (moved && stream.response.Current != null)
                     {
-                        this.schema = ArrowSerializationHelpers.DeserializeSchema(this.response.Current.ArrowSchema.SerializedSchema.Memory);
+                        stream.schema = ArrowSerializationHelpers.DeserializeSchema(stream.response.Current.ArrowSchema.SerializedSchema.Memory);
                     }
                 }
                 catch (InvalidOperationException)
@@ -1359,53 +1391,7 @@ namespace AdbcDrivers.BigQuery
                     // Retries exhausted - schema will be null, HasRows will be false
                 }
 
-                this.first = true;
-            }
-
-            /// <summary>
-            /// Synchronous retry wrapper for the constructor's first MoveNextAsync call.
-            /// This is separate from MoveNextWithRetryAsync because the constructor cannot be async.
-            /// </summary>
-            private bool MoveNextWithRetrySyncForConstructor()
-            {
-                int retryCount = 0;
-                int delay = this.initialDelayMs;
-
-                while (true)
-                {
-                    try
-                    {
-                        return this.response.MoveNextAsync().GetAwaiter().GetResult();
-                    }
-                    catch (Exception) when (this.cancellationToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception) when (retryCount < this.maxRetries)
-                    {
-                        retryCount++;
-                        Task.Delay(delay, this.cancellationToken).GetAwaiter().GetResult();
-                        delay = Math.Min(2 * delay, 5000);
-
-                        // Re-create the gRPC stream starting from current offset (always 0 in constructor)
-                        try
-                        {
-                            this.response.DisposeAsync().GetAwaiter().GetResult();
-                        }
-                        catch
-                        {
-                            // Best-effort disposal of the broken stream
-                        }
-                        this.response = CreateEnumerator(this.rowsRead);
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new AdbcException(
-                            $"Cannot initialize stream '{this.streamName}' after {this.maxRetries} retries. Last exception: {ex.GetType().Name}: {ex.Message}",
-                            AdbcStatusCode.IOError,
-                            ex);
-                    }
-                }
+                return stream;
             }
 
             public Schema Schema => this.schema ?? throw new InvalidOperationException("Stream has no rows");

@@ -93,18 +93,14 @@ namespace AdbcDrivers.BigQuery.Tests
         [Theory]
         [InlineData("-1")]  // Negative value
         [InlineData("abc")] // Invalid string
-        public void Constructor_UsesDefaultMaxRetryAttempts_WhenInvalidValueProvided(string invalidValue)
+        public void Constructor_ThrowsArgumentException_WhenInvalidMaxRetryAttemptsProvided(string invalidValue)
         {
             // Arrange
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.maximum_retries"] = invalidValue;
 
-            // Act
-            var connection = new BigQueryConnection(properties);
-
-            // Assert
-            var maxRetryAttempts = GetPrivateProperty<int>(connection, "MaxRetryAttempts");
-            Assert.Equal(5, maxRetryAttempts); // Default is 5
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
         }
 
         [Fact]
@@ -126,18 +122,14 @@ namespace AdbcDrivers.BigQuery.Tests
         [Theory]
         [InlineData("-1")]  // Negative value
         [InlineData("abc")] // Invalid string
-        public void Constructor_UsesDefaultRetryDelayMs_WhenInvalidValueProvided(string invalidValue)
+        public void Constructor_ThrowsArgumentException_WhenInvalidRetryDelayMsProvided(string invalidValue)
         {
             // Arrange
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.retry_delay_ms"] = invalidValue;
 
-            // Act
-            var connection = new BigQueryConnection(properties);
-
-            // Assert
-            var retryDelayMs = GetPrivateProperty<int>(connection, "RetryDelayMs");
-            Assert.Equal(200, retryDelayMs); // Default is 200
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
         }
 
         [Fact]
@@ -161,7 +153,7 @@ namespace AdbcDrivers.BigQuery.Tests
         #region Timeout Configuration Tests
 
         [Fact]
-        public void Constructor_StoresGetQueryResultsOptionsTimeout_WhenProvided()
+        public void Constructor_ParsesQueryResultsTimeout_WhenValidValueProvided()
         {
             // Arrange
             var properties = CreateBaseProperties();
@@ -170,14 +162,14 @@ namespace AdbcDrivers.BigQuery.Tests
             // Act
             var connection = new BigQueryConnection(properties);
 
-            // Assert - verify the property is stored in the properties dictionary
-            var propsValue = GetPropertiesDictionary(connection);
-            Assert.True(propsValue.TryGetValue("adbc.bigquery.get_query_results_options.timeout", out string? value));
-            Assert.Equal("60", value);
+            // Assert
+            var timeout = GetPrivateProperty<TimeSpan?>(connection, "QueryResultsTimeout");
+            Assert.NotNull(timeout);
+            Assert.Equal(TimeSpan.FromSeconds(60), timeout.Value);
         }
 
         [Fact]
-        public void Constructor_StoresClientTimeout_WhenProvided()
+        public void Constructor_ParsesClientTimeout_WhenValidValueProvided()
         {
             // Arrange
             var properties = CreateBaseProperties();
@@ -186,14 +178,14 @@ namespace AdbcDrivers.BigQuery.Tests
             // Act
             var connection = new BigQueryConnection(properties);
 
-            // Assert - verify the property is stored in the properties dictionary
-            var propsValue = GetPropertiesDictionary(connection);
-            Assert.True(propsValue.TryGetValue("adbc.bigquery.client.timeout", out string? value));
-            Assert.Equal("120", value);
+            // Assert
+            var timeout = GetPrivateProperty<TimeSpan?>(connection, "ClientTimeout");
+            Assert.NotNull(timeout);
+            Assert.Equal(TimeSpan.FromSeconds(120), timeout.Value);
         }
 
         [Fact]
-        public void Constructor_StoresBothTimeoutProperties_WhenProvided()
+        public void Constructor_ParsesBothTimeoutProperties_WhenProvided()
         {
             // Arrange
             var properties = CreateBaseProperties();
@@ -203,14 +195,31 @@ namespace AdbcDrivers.BigQuery.Tests
             // Act
             var connection = new BigQueryConnection(properties);
 
-            // Assert - verify both properties are stored
-            var propsValue = GetPropertiesDictionary(connection);
+            // Assert
+            var queryResultsTimeout = GetPrivateProperty<TimeSpan?>(connection, "QueryResultsTimeout");
+            Assert.NotNull(queryResultsTimeout);
+            Assert.Equal(TimeSpan.FromSeconds(60), queryResultsTimeout.Value);
 
-            Assert.True(propsValue.TryGetValue("adbc.bigquery.get_query_results_options.timeout", out string? queryTimeout));
-            Assert.Equal("60", queryTimeout);
+            var clientTimeout = GetPrivateProperty<TimeSpan?>(connection, "ClientTimeout");
+            Assert.NotNull(clientTimeout);
+            Assert.Equal(TimeSpan.FromSeconds(120), clientTimeout.Value);
+        }
 
-            Assert.True(propsValue.TryGetValue("adbc.bigquery.client.timeout", out string? clientTimeout));
-            Assert.Equal("120", clientTimeout);
+        [Fact]
+        public void Constructor_LeavesTimeoutsNull_WhenNotProvided()
+        {
+            // Arrange
+            var properties = CreateBaseProperties();
+
+            // Act
+            var connection = new BigQueryConnection(properties);
+
+            // Assert
+            var queryResultsTimeout = GetPrivateProperty<TimeSpan?>(connection, "QueryResultsTimeout");
+            Assert.Null(queryResultsTimeout);
+
+            var clientTimeout = GetPrivateProperty<TimeSpan?>(connection, "ClientTimeout");
+            Assert.Null(clientTimeout);
         }
 
         [Theory]
@@ -218,20 +227,14 @@ namespace AdbcDrivers.BigQuery.Tests
         [InlineData("-1")]
         [InlineData("abc")]
         [InlineData("")]
-        public void Constructor_StoresInvalidGetQueryResultsOptionsTimeout_AsIs(string invalidValue)
+        public void Constructor_ThrowsArgumentException_WhenInvalidGetQueryResultsOptionsTimeoutProvided(string invalidValue)
         {
             // Arrange
-            // Invalid values are stored as-is; validation happens in CalculateClientTimeout()
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.get_query_results_options.timeout"] = invalidValue;
 
-            // Act
-            var connection = new BigQueryConnection(properties);
-
-            // Assert - property is stored even if invalid
-            var propsValue = GetPropertiesDictionary(connection);
-            Assert.True(propsValue.TryGetValue("adbc.bigquery.get_query_results_options.timeout", out string? value));
-            Assert.Equal(invalidValue, value);
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
         }
 
         [Theory]
@@ -239,20 +242,14 @@ namespace AdbcDrivers.BigQuery.Tests
         [InlineData("-1")]
         [InlineData("abc")]
         [InlineData("")]
-        public void Constructor_StoresInvalidClientTimeout_AsIs(string invalidValue)
+        public void Constructor_ThrowsArgumentException_WhenInvalidClientTimeoutProvided(string invalidValue)
         {
             // Arrange
-            // Invalid values are stored as-is; validation happens in CalculateClientTimeout()
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.client.timeout"] = invalidValue;
 
-            // Act
-            var connection = new BigQueryConnection(properties);
-
-            // Assert - property is stored even if invalid
-            var propsValue = GetPropertiesDictionary(connection);
-            Assert.True(propsValue.TryGetValue("adbc.bigquery.client.timeout", out string? value));
-            Assert.Equal(invalidValue, value);
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
         }
 
         #endregion
@@ -274,13 +271,11 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.NotNull(effectiveTimeout);
             Assert.Equal(TimeSpan.FromSeconds(90), effectiveTimeout.Value);
-            Assert.True(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
         }
 
         [Fact]
@@ -297,13 +292,11 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.NotNull(effectiveTimeout);
             Assert.Equal(TimeSpan.FromSeconds(120), effectiveTimeout.Value);
-            Assert.False(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
         }
 
         [Fact]
@@ -320,22 +313,20 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.NotNull(effectiveTimeout);
             Assert.Equal(TimeSpan.FromSeconds(90), effectiveTimeout.Value);
-            Assert.False(wasAdjusted);
-            Assert.True(wasSetFromQueryResults);
         }
 
         [Fact]
-        public void CalculateClientTimeout_UsesClientTimeoutAsIs_WhenQueryResultsTimeoutNotSet()
+        public void CalculateClientTimeout_AdjustsClientTimeout_WhenQueryResultsTimeoutNotSetAndClientTimeoutBelowDefault()
         {
             // Arrange
-            // GetQueryResultsOptionsTimeout = not set
-            // ClientTimeout = 45 seconds
-            // Expected: ClientTimeout should be 45 seconds (no adjustment needed)
+            // GetQueryResultsOptionsTimeout = not set (BigQuery default is 300 seconds)
+            // ClientTimeout = 45 seconds (less than 300 + 30 = 330)
+            // Expected: ClientTimeout should be adjusted to 330 seconds
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.client.timeout"] = "45";
             // Note: GetQueryResultsOptionsTimeout is intentionally not set
@@ -343,13 +334,32 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.NotNull(effectiveTimeout);
-            Assert.Equal(TimeSpan.FromSeconds(45), effectiveTimeout.Value);
-            Assert.False(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
+            Assert.Equal(TimeSpan.FromSeconds(330), effectiveTimeout.Value);
+        }
+
+        [Fact]
+        public void CalculateClientTimeout_UsesClientTimeoutAsIs_WhenQueryResultsTimeoutNotSetAndClientTimeoutAboveDefault()
+        {
+            // Arrange
+            // GetQueryResultsOptionsTimeout = not set (BigQuery default is 300 seconds)
+            // ClientTimeout = 600 seconds (greater than 300 + 30 = 330)
+            // Expected: ClientTimeout should remain 600 seconds
+            var properties = CreateBaseProperties();
+            properties["adbc.bigquery.client.timeout"] = "600";
+            // Note: GetQueryResultsOptionsTimeout is intentionally not set
+
+            var connection = new BigQueryConnection(properties);
+
+            // Act
+            var effectiveTimeout = connection.CalculateClientTimeout();
+
+            // Assert
+            Assert.NotNull(effectiveTimeout);
+            Assert.Equal(TimeSpan.FromSeconds(600), effectiveTimeout.Value);
         }
 
         [Fact]
@@ -364,61 +374,40 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.Null(effectiveTimeout);
-            Assert.False(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
         }
 
         [Theory]
-        [InlineData("0", "50")]   // QueryResultsTimeout = 0 (invalid), ClientTimeout = 50
-        [InlineData("-1", "50")]  // QueryResultsTimeout = -1 (invalid), ClientTimeout = 50
-        [InlineData("abc", "50")] // QueryResultsTimeout = invalid string, ClientTimeout = 50
-        public void CalculateClientTimeout_UsesClientTimeoutAsIs_WhenQueryResultsTimeoutInvalid(string queryResultsTimeout, string clientTimeout)
+        [InlineData("0", "50")]   // QueryResultsTimeout = 0 (invalid)
+        [InlineData("-1", "50")]  // QueryResultsTimeout = -1 (invalid)
+        [InlineData("abc", "50")] // QueryResultsTimeout = invalid string
+        public void Constructor_ThrowsArgumentException_WhenQueryResultsTimeoutInvalid(string queryResultsTimeout, string clientTimeout)
         {
             // Arrange
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.get_query_results_options.timeout"] = queryResultsTimeout;
             properties["adbc.bigquery.client.timeout"] = clientTimeout;
 
-            var connection = new BigQueryConnection(properties);
-
-            // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
-
-            // Assert
-            Assert.NotNull(effectiveTimeout);
-            Assert.Equal(TimeSpan.FromSeconds(50), effectiveTimeout.Value);
-            Assert.False(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
         }
 
         [Theory]
         [InlineData("60", "0")]    // ClientTimeout = 0 (invalid)
         [InlineData("60", "-1")]   // ClientTimeout = -1 (invalid)
         [InlineData("60", "abc")]  // ClientTimeout = invalid string
-        public void CalculateClientTimeout_SetsFromQueryResults_WhenClientTimeoutInvalid(string queryResultsTimeout, string clientTimeout)
+        public void Constructor_ThrowsArgumentException_WhenClientTimeoutInvalid(string queryResultsTimeout, string clientTimeout)
         {
             // Arrange
-            // When ClientTimeout is invalid but QueryResultsTimeout is valid,
-            // ClientTimeout should be set to QueryResultsTimeout + 30
             var properties = CreateBaseProperties();
             properties["adbc.bigquery.get_query_results_options.timeout"] = queryResultsTimeout;
             properties["adbc.bigquery.client.timeout"] = clientTimeout;
 
-            var connection = new BigQueryConnection(properties);
-
-            // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
-
-            // Assert
-            Assert.NotNull(effectiveTimeout);
-            // QueryResultsTimeout = 60, so ClientTimeout should be 60 + 30 = 90
-            Assert.Equal(TimeSpan.FromSeconds(90), effectiveTimeout.Value);
-            Assert.False(wasAdjusted);
-            Assert.True(wasSetFromQueryResults);
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
         }
 
         [Fact]
@@ -435,13 +424,11 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.NotNull(effectiveTimeout);
             Assert.Equal(TimeSpan.FromSeconds(90), effectiveTimeout.Value);
-            Assert.False(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
         }
 
         [Fact]
@@ -458,13 +445,11 @@ namespace AdbcDrivers.BigQuery.Tests
             var connection = new BigQueryConnection(properties);
 
             // Act
-            var (effectiveTimeout, wasAdjusted, wasSetFromQueryResults) = connection.CalculateClientTimeout();
+            var effectiveTimeout = connection.CalculateClientTimeout();
 
             // Assert
             Assert.NotNull(effectiveTimeout);
             Assert.Equal(TimeSpan.FromSeconds(330), effectiveTimeout.Value);
-            Assert.True(wasAdjusted);
-            Assert.False(wasSetFromQueryResults);
         }
 
         #endregion
@@ -518,6 +503,52 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.True(propsValue.TryGetValue("adbc.bigquery.large_decimals_as_string", out string? value));
             // Default is "true" based on BigQueryConstants.TreatLargeDecimalAsString
             Assert.Equal("true", value);
+        }
+
+        [Theory]
+        [InlineData("abc")]
+        [InlineData("123")]
+        [InlineData("")]
+        public void Constructor_ThrowsArgumentException_WhenInvalidLargeDecimalsAsStringProvided(string invalidValue)
+        {
+            // Arrange
+            var properties = CreateBaseProperties();
+            properties["adbc.bigquery.large_decimals_as_string"] = invalidValue;
+
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
+        }
+
+        [Theory]
+        [InlineData("invalid-region")]
+        [InlineData("abc")]
+        [InlineData("")]
+        public void Constructor_ThrowsArgumentException_WhenInvalidDefaultClientLocationProvided(string invalidValue)
+        {
+            // Arrange
+            var properties = CreateBaseProperties();
+            properties["adbc.bigquery.default_client_location"] = invalidValue;
+
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
+        }
+
+        [Theory]
+        [InlineData("US")]
+        [InlineData("EU")]
+        [InlineData("us-east1")]
+        public void Constructor_SetsDefaultClientLocation_WhenValidLocationProvided(string validLocation)
+        {
+            // Arrange
+            var properties = CreateBaseProperties();
+            properties["adbc.bigquery.default_client_location"] = validLocation;
+
+            // Act
+            var connection = new BigQueryConnection(properties);
+
+            // Assert
+            var location = GetPrivateProperty<string>(connection, "DefaultClientLocation");
+            Assert.Equal(validLocation, location);
         }
 
         #endregion

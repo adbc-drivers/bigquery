@@ -1,11 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <TargetFrameworks Condition="'$(IsWindows)'=='true'">net8.0;net472</TargetFrameworks>
     <TargetFrameworks Condition="'$(TargetFrameworks)'==''">net8.0</TargetFrameworks>
   </PropertyGroup>
     <ItemGroup>
-       <PackageReference Include="Apache.Arrow.Adbc.Client" Version="0.23.0" />
-       <PackageReference Include="Apache.Arrow.Adbc.Testing" Version="0.23.0" />
-       <PackageReference Include="Azure.Identity" Version="1.17.1" />
+     <PackageReference Include="Azure.Identity" Version="1.17.1" />
        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
        <PackageReference Include="System.Net.Http.WinHttpHandler" Version="8.0.2" Condition="'$(TargetFrameworkIdentifier)' == '.NETStandard'" />
        <PackageReference Include="xunit" Version="2.9.3" />
@@ -25,6 +24,8 @@
      </None>
    </ItemGroup>
    <ItemGroup>
+     <ProjectReference Include="..\arrow-adbc\csharp\src\Client\Apache.Arrow.Adbc.Client.csproj" />
+     <ProjectReference Include="..\arrow-adbc\csharp\test\Apache.Arrow.Adbc.Tests\Apache.Arrow.Adbc.Testing.csproj" />
      <ProjectReference Include="..\src\AdbcDrivers.BigQuery.csproj" />
    </ItemGroup>
  </Project>
