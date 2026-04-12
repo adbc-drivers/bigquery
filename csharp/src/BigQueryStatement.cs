@@ -27,6 +27,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
@@ -40,6 +41,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Bigquery.v2.Data;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Cloud.BigQuery.V2;
+using Grpc.Core;
 using TableFieldSchema = Google.Apis.Bigquery.v2.Data.TableFieldSchema;
 using TableSchema = Google.Apis.Bigquery.v2.Data.TableSchema;
 
@@ -258,7 +260,7 @@ namespace AdbcDrivers.BigQuery
 
                 string table = $"projects/{results.TableReference.ProjectId}/datasets/{results.TableReference.DatasetId}/tables/{results.TableReference.TableId}";
 
-                int maxStreamCount = 1;
+                int maxStreamCount = 0; // server decides the number of streams when maxStreamCount is 0 or not set
 
                 if (Options?.TryGetValue(BigQueryParameters.MaxFetchConcurrency, out string? maxStreamCountString) == true)
                 {
@@ -722,15 +724,24 @@ namespace AdbcDrivers.BigQuery
         {
             ReadSession rs = new ReadSession { Table = table, DataFormat = DataFormat.Arrow };
             BigQueryReadClient bigQueryReadClient = clientMgr.ReadClient;
+            activity?.AddEvent("create_read_session_started");
             ReadSession rrs = await bigQueryReadClient.CreateReadSessionAsync("projects/" + projectId, rs, maxStreamCount);
+            activity?.AddEvent("create_read_session_completed", [
+                new("read_session.name", rrs.Name),
+                new("read_session.stream_count", rrs.Streams.Count),
+            ]);
 
-            var tasks = rrs.Streams
-                .Select(s => ReadChunkAsync(bigQueryReadClient, s.Name, activity, this.bigQueryConnection.IsSafeToTrace, cancellationToken))
-                .ToList();
+            // Build readers lazily � each ReadRowsStream is initialized on-demand
+            // when MultiArrowReader iterates to it, avoiding the cost of opening
+            // all gRPC streams up-front.
+            var readers = new List<IArrowReader>(rrs.Streams.Count);
+            foreach (var stream in rrs.Streams)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                readers.Add(new ReadRowsStream(this, bigQueryReadClient, stream.Name, MaxRetryAttempts, RetryDelayMs, cancellationToken));
+            }
 
-            IArrowReader?[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-
-            return results.Where(r => r != null).Cast<IArrowReader>();
+            return readers;
         }
 
         public override UpdateResult ExecuteUpdate()
@@ -890,16 +901,6 @@ namespace AdbcDrivers.BigQuery
                 return new ListType(type);
 
             return type;
-        }
-
-        private async Task<IArrowReader?> ReadChunkAsync(BigQueryReadClient client, string streamName, Activity? activity, bool isSafeToTrace, CancellationToken cancellationToken = default)
-        {
-            activity?.AddEvent("read_chunk_started", isSafeToTrace ? [new("stream.name", streamName)] : null);
-
-            ReadRowsStream stream = await ReadRowsStream.CreateAsync(client, streamName, MaxRetryAttempts, RetryDelayMs, cancellationToken).ConfigureAwait(false);
-            activity?.AddEvent("read_chunk_completed", [new("read_stream.has_rows", stream.HasRows)]);
-
-            return stream.HasRows ? stream : null;
         }
 
         private QueryOptions ValidateOptions(Activity? activity)
@@ -1262,15 +1263,25 @@ namespace AdbcDrivers.BigQuery
 
             readonly Schema schema;
             readonly CancellationContext cancellationContext;
-            IEnumerator<IArrowReader>? readers;
-            IArrowReader? reader;
+            readonly CancellationTokenSource linkedCts;
+            readonly List<IArrowReader> readerList;
+            readonly Channel<RecordBatch> channel;
+            Task? producerTask;
             bool disposed;
 
             public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, CancellationContext cancellationContext) : base(statement)
             {
                 this.schema = schema;
-                this.readers = readers.GetEnumerator();
+                this.readerList = readers.ToList();
                 this.cancellationContext = cancellationContext;
+                this.linkedCts = CancellationTokenSource.CreateLinkedTokenSource(this.cancellationContext.CancellationToken);
+                // Bounded channel provides backpressure: each producer can buffer one batch
+                this.channel = System.Threading.Channels.Channel.CreateBounded<RecordBatch>(new BoundedChannelOptions(Math.Max(this.readerList.Count, 1))
+                {
+                    SingleWriter = false,
+                    SingleReader = true,
+                    FullMode = BoundedChannelFullMode.Wait
+                });
             }
 
             public override Schema Schema { get { return this.schema; } }
@@ -1279,44 +1290,82 @@ namespace AdbcDrivers.BigQuery
 
             public override string AssemblyName => s_assemblyName;
 
+            private void EnsureProducersStarted()
+            {
+                if (this.producerTask != null) return;
+
+                var tasks = new Task[this.readerList.Count];
+                for (int i = 0; i < this.readerList.Count; i++)
+                {
+                    var reader = this.readerList[i];
+                    tasks[i] = ProduceAsync(reader);
+                }
+
+                this.producerTask = Task.Run(async () =>
+                {
+                    Exception? error = null;
+                    try
+                    {
+                        await Task.WhenAll(tasks).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        error = ex;
+                    }
+                    this.channel.Writer.Complete(error);
+                });
+            }
+
+            private async Task ProduceAsync(IArrowReader reader)
+            {
+                try
+                {
+                    while (true)
+                    {
+                        this.linkedCts.Token.ThrowIfCancellationRequested();
+                        RecordBatch? batch = await reader.ReadNextRecordBatchAsync(this.linkedCts.Token).ConfigureAwait(false);
+                        if (batch == null) break;
+                        await this.channel.Writer.WriteAsync(batch, this.linkedCts.Token).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) when (this.linkedCts.IsCancellationRequested)
+                {
+                    // Graceful shutdown: either user cancellation or another producer failed.
+                    // Swallow so Task.WhenAll only surfaces the root cause.
+                }
+                catch (Exception)
+                {
+                    // A real failure in this producer — cancel siblings and propagate.
+                    this.linkedCts.Cancel();
+                    throw;
+                }
+            }
+
             public override async ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken = default)
             {
                 return await this.TraceActivityAsync(async activity =>
                 {
-                    if (this.readers == null)
+                    // Register the caller's token for this call; the linked CTS
+                    // already includes the cancellationContext token.
+                    using var callerReg = cancellationToken.CanBeCanceled
+                        ? cancellationToken.Register(() => this.linkedCts.Cancel())
+                        : default;
+
+                    EnsureProducersStarted();
+
+                    CancellationToken ct = this.linkedCts.Token;
+
+                    if (await this.channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
                     {
-                        activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
-                        return null;
+                        if (this.channel.Reader.TryRead(out RecordBatch? batch))
+                        {
+                            activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, batch.Length);
+                            return batch;
+                        }
                     }
 
-                    using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.cancellationContext.CancellationToken);
-
-                    while (true)
-                    {
-                        linkedCts.Token.ThrowIfCancellationRequested();
-                        if (this.reader == null)
-                        {
-                            if (!this.readers.MoveNext())
-                            {
-                                activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
-                                this.readers.Dispose();
-                                this.readers = null;
-                                return null;
-                            }
-                            this.reader = this.readers.Current;
-                        }
-
-                        RecordBatch result = await this.reader.ReadNextRecordBatchAsync(linkedCts.Token).ConfigureAwait(false);
-
-                        if (result != null)
-                        {
-                            long rowCount = result.Length;
-                            activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, rowCount);
-                            return result;
-                        }
-
-                        this.reader = null;
-                    }
+                    activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
+                    return null;
                 }, ClassName + "." + nameof(ReadNextRecordBatchAsync));
             }
 
@@ -1326,11 +1375,13 @@ namespace AdbcDrivers.BigQuery
                 {
                     if (!this.disposed)
                     {
-                        if (this.readers != null)
+                        this.linkedCts.Cancel();
+                        try { this.producerTask?.GetAwaiter().GetResult(); } catch { /* producers reported errors via channel */ }
+                        foreach (var reader in this.readerList)
                         {
-                            this.readers.Dispose();
-                            this.readers = null;
+                            if (reader is IDisposable d) d.Dispose();
                         }
+                        this.linkedCts.Dispose();
                         this.cancellationContext.Dispose();
                         this.disposed = true;
                     }
@@ -1342,66 +1393,46 @@ namespace AdbcDrivers.BigQuery
 
         sealed class ReadRowsStream : IArrowArrayStream
         {
+            readonly IActivityTracer tracer;
             readonly BigQueryReadClient client;
             readonly string streamName;
             readonly int maxRetries;
             readonly int initialDelayMs;
             readonly CancellationToken cancellationToken;
             Schema? schema;
-            IAsyncEnumerator<ReadRowsResponse> response;
+            IAsyncEnumerator<ReadRowsResponse>? response;
             long rowsRead;
-            bool first;
+            bool initialized;
             bool disposed;
 
-            private ReadRowsStream(BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+            public ReadRowsStream(IActivityTracer tracer, BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
             {
+                this.tracer = tracer;
                 this.client = client;
                 this.streamName = streamName;
                 this.maxRetries = maxRetries;
                 this.initialDelayMs = initialDelayMs;
                 this.cancellationToken = cancellationToken;
-
-                this.response = CreateEnumerator(offset: 0);
                 this.rowsRead = 0;
-                this.first = true;
-            }
-
-            /// <summary>
-            /// Creates a new <see cref="ReadRowsStream"/> and performs the initial read
-            /// to obtain the schema from the first response.
-            /// </summary>
-            public static async Task<ReadRowsStream> CreateAsync(BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
-            {
-                var stream = new ReadRowsStream(client, streamName, maxRetries, initialDelayMs, cancellationToken);
-
-                try
-                {
-                    bool moved = await stream.MoveNextWithRetryAsync().ConfigureAwait(false);
-                    if (moved && stream.response.Current != null)
-                    {
-                        stream.schema = ArrowSerializationHelpers.DeserializeSchema(stream.response.Current.ArrowSchema.SerializedSchema.Memory);
-                    }
-                }
-                catch (InvalidOperationException)
-                {
-                    // Stream has no rows - schema will be null
-                }
-                catch (AdbcException)
-                {
-                    // Retries exhausted - schema will be null, HasRows will be false
-                }
-
-                return stream;
             }
 
             public Schema Schema => this.schema ?? throw new InvalidOperationException("Stream has no rows");
-            public bool HasRows => this.schema != null;
 
             public async ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken)
             {
-                if (this.first)
+                // Lazy initialization: open the gRPC stream on the first call
+                if (!this.initialized)
                 {
-                    this.first = false;
+                    this.initialized = true;
+                    this.response = CreateEnumerator(offset: 0);
+
+                    bool moved = await MoveNextWithRetryAsync().ConfigureAwait(false);
+                    if (!moved || this.response!.Current == null)
+                    {
+                        return null;
+                    }
+
+                    this.schema = ArrowSerializationHelpers.DeserializeSchema(this.response.Current.ArrowSchema.SerializedSchema.Memory);
                 }
                 else
                 {
@@ -1412,56 +1443,65 @@ namespace AdbcDrivers.BigQuery
                     }
                 }
 
-                long batchRowCount = this.response.Current.RowCount;
+                long batchRowCount = this.response!.Current.RowCount;
                 this.rowsRead += batchRowCount;
                 return ArrowSerializationHelpers.DeserializeRecordBatch(this.schema, this.response.Current.ArrowRecordBatch.SerializedRecordBatch.Memory);
             }
 
             private async ValueTask<bool> MoveNextWithRetryAsync()
             {
-                if (this.disposed)
+                return await this.tracer.TraceActivityAsync(async activity =>
                 {
-                    return false;
-                }
-
-                int retryCount = 0;
-                int delay = this.initialDelayMs;
-
-                while (true)
-                {
-                    try
+                    if (this.disposed || this.response == null)
                     {
-                        return await this.response.MoveNextAsync().ConfigureAwait(false);
+                        return false;
                     }
-                    catch (Exception) when (this.cancellationToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception) when (retryCount < this.maxRetries)
-                    {
-                        retryCount++;
-                        await Task.Delay(delay, this.cancellationToken).ConfigureAwait(false);
-                        delay = Math.Min(2 * delay, 5000);
 
-                        // Re-create the gRPC stream starting from the offset of rows already read
+                    int retryCount = 0;
+                    int delay = this.initialDelayMs;
+
+                    while (true)
+                    {
                         try
                         {
-                            await this.response.DisposeAsync().ConfigureAwait(false);
+                            return await this.response.MoveNextAsync().ConfigureAwait(false);
                         }
-                        catch
+                        catch (Exception) when (this.cancellationToken.IsCancellationRequested)
                         {
-                            // Best-effort disposal of the broken stream
+                            throw;
                         }
-                        this.response = CreateEnumerator(this.rowsRead);
+                        catch (Exception ex) when (retryCount < this.maxRetries)
+                        {
+                            activity?.AddException(ex, BuildExceptionTagList(retryCount, ex));
+                            retryCount++;
+                            await Task.Delay(delay, this.cancellationToken).ConfigureAwait(false);
+                            delay = Math.Min(2 * delay, 5000);
+
+                            // Re-create the gRPC stream starting from the offset of rows already read
+                            try
+                            {
+                                await this.response.DisposeAsync().ConfigureAwait(false);
+                            }
+                            catch
+                            {
+                                // Best-effort disposal of the broken stream
+                            }
+                            this.response = CreateEnumerator(this.rowsRead);
+                            activity?.AddEvent("stream_reconnected", [
+                                new("stream.name", this.streamName),
+                                new("stream.row_offset", this.rowsRead),
+                                new("retry.attempt", retryCount),
+                            ]);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new AdbcException(
+                                $"Cannot read stream '{this.streamName}' after {this.maxRetries} retries at row offset {this.rowsRead}. Last exception: {ex.GetType().Name}: {ex.Message}",
+                                AdbcStatusCode.IOError,
+                                ex);
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        throw new AdbcException(
-                            $"Cannot read stream '{this.streamName}' after {this.maxRetries} retries at row offset {this.rowsRead}. Last exception: {ex.GetType().Name}: {ex.Message}",
-                            AdbcStatusCode.IOError,
-                            ex);
-                    }
-                }
+                }, ClassName + "." + nameof(MoveNextWithRetryAsync));
             }
 
             private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset)
@@ -1471,11 +1511,39 @@ namespace AdbcDrivers.BigQuery
                 return readRowsStream.GetResponseStream().GetAsyncEnumerator(this.cancellationToken);
             }
 
+            private TagList BuildExceptionTagList(int retryCount, Exception ex)
+            {
+                List<KeyValuePair<string, object?>> tags =
+                [
+                    new("retry.attempt", retryCount),
+                    new($"retry.attempt_{retryCount}.stream_name", this.streamName),
+                    new($"retry.attempt_{retryCount}.row_offset", this.rowsRead),
+                ];
+
+                if (ex is RpcException rpcEx)
+                {
+                    tags.AddRange([
+                        new($"retry.attempt_{retryCount}.grpc_status_code", rpcEx.StatusCode.ToString()),
+                        new($"retry.attempt_{retryCount}.grpc_status_detail", rpcEx.Status.Detail),
+                    ]);
+                }
+                else if (ex is GoogleApiException googleEx)
+                {
+                    tags.AddRange([
+                        new($"retry.attempt_{retryCount}.http_status_code", (int)googleEx.HttpStatusCode),
+                        new($"retry.attempt_{retryCount}.error_code", googleEx.Error?.Code),
+                        new($"retry.attempt_{retryCount}.error_message", googleEx.Error?.Message),
+                    ]);
+                }
+
+                return new TagList(tags.ToArray());
+            }
+
             public void Dispose()
             {
                 if (!this.disposed)
                 {
-                    this.response.DisposeAsync().GetAwaiter().GetResult();
+                    this.response?.DisposeAsync().GetAwaiter().GetResult();
                     this.disposed = true;
                 }
             }
