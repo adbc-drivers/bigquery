@@ -166,7 +166,11 @@ namespace AdbcDrivers.BigQuery
                     getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
                 }
-                activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.Seconds);
+
+                // Ensure the HTTP client timeout is sufficient for the effective query results timeout,
+                // which may have been overridden at the statement level.
+                this.bigQueryConnection.EnsureClientTimeoutSufficient(queryResultsTimeout, activity);
+                activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.TotalSeconds);
 
                 using JobCancellationContext cancellationContext = new JobCancellationContext(cancellationRegistry, job);
 
@@ -731,7 +735,7 @@ namespace AdbcDrivers.BigQuery
                 new("read_session.stream_count", rrs.Streams.Count),
             ]);
 
-            // Build readers lazily � each ReadRowsStream is initialized on-demand
+            // Build readers lazily - each ReadRowsStream is initialized on-demand
             // when MultiArrowReader iterates to it, avoiding the cost of opening
             // all gRPC streams up-front.
             var readers = new List<IArrowReader>(rrs.Streams.Count);
@@ -792,6 +796,10 @@ namespace AdbcDrivers.BigQuery
                     getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
                 }
+
+                // Ensure the HTTP client timeout is sufficient for the effective query results timeout,
+                // which may have been overridden at the statement level.
+                this.bigQueryConnection.EnsureClientTimeoutSufficient(queryResultsTimeout, activity);
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
 
@@ -1420,13 +1428,20 @@ namespace AdbcDrivers.BigQuery
 
             public async ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken)
             {
+                // Link the per-call token with the stream-level token so that
+                // either one can cancel retries, MoveNextAsync, and gRPC streams.
+                using var linkedCts = cancellationToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(this.cancellationToken, cancellationToken)
+                    : null;
+                CancellationToken effectiveToken = linkedCts?.Token ?? this.cancellationToken;
+
                 // Lazy initialization: open the gRPC stream on the first call
                 if (!this.initialized)
                 {
                     this.initialized = true;
-                    this.response = CreateEnumerator(offset: 0);
+                    this.response = CreateEnumerator(offset: 0, effectiveToken);
 
-                    bool moved = await MoveNextWithRetryAsync().ConfigureAwait(false);
+                    bool moved = await MoveNextWithRetryAsync(effectiveToken).ConfigureAwait(false);
                     if (!moved || this.response!.Current == null)
                     {
                         return null;
@@ -1436,7 +1451,7 @@ namespace AdbcDrivers.BigQuery
                 }
                 else
                 {
-                    bool moved = await MoveNextWithRetryAsync().ConfigureAwait(false);
+                    bool moved = await MoveNextWithRetryAsync(effectiveToken).ConfigureAwait(false);
                     if (!moved)
                     {
                         return null;
@@ -1448,7 +1463,7 @@ namespace AdbcDrivers.BigQuery
                 return ArrowSerializationHelpers.DeserializeRecordBatch(this.schema, this.response.Current.ArrowRecordBatch.SerializedRecordBatch.Memory);
             }
 
-            private async ValueTask<bool> MoveNextWithRetryAsync()
+            private async ValueTask<bool> MoveNextWithRetryAsync(CancellationToken effectiveToken)
             {
                 return await this.tracer.TraceActivityAsync(async activity =>
                 {
@@ -1466,7 +1481,7 @@ namespace AdbcDrivers.BigQuery
                         {
                             return await this.response.MoveNextAsync().ConfigureAwait(false);
                         }
-                        catch (Exception) when (this.cancellationToken.IsCancellationRequested)
+                        catch (Exception) when (effectiveToken.IsCancellationRequested)
                         {
                             throw;
                         }
@@ -1477,7 +1492,7 @@ namespace AdbcDrivers.BigQuery
                                 new($"retry.attempt_{retryCount}.row_offset", this.rowsRead),
                             ]));
                             retryCount++;
-                            await Task.Delay(delay, this.cancellationToken).ConfigureAwait(false);
+                            await Task.Delay(delay, effectiveToken).ConfigureAwait(false);
                             delay = Math.Min(2 * delay, 5000);
 
                             // Re-create the gRPC stream starting from the offset of rows already read
@@ -1489,7 +1504,7 @@ namespace AdbcDrivers.BigQuery
                             {
                                 // Best-effort disposal of the broken stream
                             }
-                            this.response = CreateEnumerator(this.rowsRead);
+                            this.response = CreateEnumerator(this.rowsRead, effectiveToken);
                             activity?.AddEvent("stream_reconnected", [
                                 new("stream.name", this.streamName),
                                 new("stream.row_offset", this.rowsRead),
@@ -1507,11 +1522,11 @@ namespace AdbcDrivers.BigQuery
                 }, ClassName + "." + nameof(MoveNextWithRetryAsync));
             }
 
-            private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset)
+            private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset, CancellationToken effectiveToken)
             {
                 BigQueryReadClient.ReadRowsStream readRowsStream = this.client.ReadRows(
                     new ReadRowsRequest { ReadStream = this.streamName, Offset = offset });
-                return readRowsStream.GetResponseStream().GetAsyncEnumerator(this.cancellationToken);
+                return readRowsStream.GetResponseStream().GetAsyncEnumerator(effectiveToken);
             }
 
             public void Dispose()

@@ -53,6 +53,7 @@ namespace AdbcDrivers.BigQuery
     {
         readonly Dictionary<string, string> properties;
         readonly HttpClient httpClient;
+        private readonly object _clientTimeoutLock = new object();
         const string ClassName = nameof(BigQueryConnection);
         const string infoDriverName = "ADBC BigQuery Driver";
         const string infoVendorName = "BigQuery";
@@ -263,6 +264,36 @@ namespace AdbcDrivers.BigQuery
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Ensures that the HTTP client timeout is at least as large as the effective
+        /// query results timeout plus a buffer, so the HTTP layer does not expire before
+        /// BigQuery returns. This is called at statement execution time when a
+        /// statement-level override may have increased the query results timeout beyond
+        /// what was configured at connection open time.
+        /// </summary>
+        /// <param name="effectiveQueryResultsTimeout">The effective query results timeout for the current statement.</param>
+        /// <param name="activity">Optional tracing activity for diagnostic logging.</param>
+        internal void EnsureClientTimeoutSufficient(TimeSpan? effectiveQueryResultsTimeout, Activity? activity = null)
+        {
+            if (Client == null || !effectiveQueryResultsTimeout.HasValue)
+                return;
+
+            const int TimeoutBufferSeconds = 30;
+            int requiredSeconds = (int)effectiveQueryResultsTimeout.Value.TotalSeconds + TimeoutBufferSeconds;
+            TimeSpan requiredTimeout = TimeSpan.FromSeconds(requiredSeconds);
+
+            lock (_clientTimeoutLock)
+            {
+                TimeSpan currentTimeout = Client.Service.HttpClient.Timeout;
+                if (requiredTimeout > currentTimeout)
+                {
+                    Client.Service.HttpClient.Timeout = requiredTimeout;
+                    activity?.AddBigQueryTag("client.timeout.adjusted_for_statement_override", true);
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, requiredSeconds);
+                }
+            }
         }
 
         /// <summary>
