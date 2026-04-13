@@ -23,13 +23,14 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Apache.Arrow;
+using Apache.Arrow.Adbc;
+using Apache.Arrow.Adbc.Tracing;
 using Apache.Arrow.Ipc;
 using Google.Api.Gax.Grpc;
-using Google.Apis.Auth.OAuth2;
 using Google.Cloud.BigQuery.Storage.V1;
 using Grpc.Core;
 using Moq;
@@ -39,34 +40,125 @@ namespace AdbcDrivers.BigQuery.Tests
 {
     public class BigQueryStatementTests
     {
-        [Theory]
-        [InlineData(true)]  //.MoveNextAsync throws the error
-        [InlineData(false)] //.Current throws the error
-        public void ReadChunkWithRetries_ThrowsInvalidOperationExceptionOnReadRowsResponse(bool moveNextThrowsError)
+        [Fact]
+        public async Task ReadRowsStream_ThrowsAdbcException_WhenMoveNextFailsAfterRetries()
         {
-            var clientMgr = GetMockTokenProtectedReadClientManger();
-            var mockReadRowsStream = GetMockReadRowsStream(clientMgr);
+            // Arrange - MoveNextAsync always throws, so retries are exhausted
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
 
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() => CreateFailingReadRowsStream());
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 0);
+
+            // Act & Assert - exception should propagate after retries are exhausted
+            var ex = await Assert.ThrowsAsync<AdbcException>(() =>
+                stream.ReadNextRecordBatchAsync(CancellationToken.None).AsTask());
+            Assert.Contains("test-stream", ex.Message);
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_ThrowsAdbcException_AfterExhaustingRetries()
+        {
+            // Arrange - MoveNextAsync always throws with a gRPC error,
+            // and maxRetries=2 so it retries twice then fails.
+            int callCount = 0;
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() =>
+                {
+                    callCount++;
+                    return CreateFailingReadRowsStream(
+                        new RpcException(new Status(StatusCode.Unavailable, "Stream temporarily unavailable")));
+                });
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 2, retryDelayMs: 10);
+
+            // Act & Assert - should retry twice then throw AdbcException
+            var ex = await Assert.ThrowsAsync<AdbcException>(() =>
+                stream.ReadNextRecordBatchAsync(CancellationToken.None).AsTask());
+            Assert.Contains("test-stream", ex.Message);
+            // 1 initial call + 2 retries = 3 calls to ReadRows (1 initial + 2 reconnects)
+            Assert.Equal(3, callCount);
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_RetriesAndSucceeds_WhenMoveNextFailsThenRecovers()
+        {
+            // Arrange - First stream fails on MoveNext, second stream (after reconnect) returns data
+            int callCount = 0;
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() =>
+                {
+                    callCount++;
+                    if (callCount == 1)
+                    {
+                        // First call fails
+                        return CreateFailingReadRowsStream(
+                            new RpcException(new Status(StatusCode.Unavailable, "Stream temporarily unavailable")));
+                    }
+                    // Second call (retry) returns an empty stream (MoveNext returns false = no data)
+                    return CreateEmptyReadRowsStream();
+                });
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 2, retryDelayMs: 10);
+
+            // Act - should retry and get null (empty stream after reconnect)
+            var result = await stream.ReadNextRecordBatchAsync(CancellationToken.None);
+
+            // Assert - reconnect succeeded, returned null because stream was empty
+            Assert.Null(result);
+            Assert.Equal(2, callCount); // 1 initial + 1 reconnect
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_ThrowsException_WhenCurrentThrowsAfterSuccessfulMoveNext()
+        {
+            // Arrange - MoveNextAsync succeeds but .Current throws
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() => CreateCurrentThrowsReadRowsStream());
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 0);
+
+            // Act & Assert - exception should propagate, not be silently swallowed
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                stream.ReadNextRecordBatchAsync(CancellationToken.None).AsTask());
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_ReturnsNull_WhenMoveNextReturnsFalse()
+        {
+            // Arrange - MoveNextAsync returns false (empty stream)
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() => CreateEmptyReadRowsStream());
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream");
+
+            // Act
+            var result = await stream.ReadNextRecordBatchAsync(CancellationToken.None);
+
+            // Assert - empty stream returns null
+            Assert.Null(result);
+        }
+
+        private static BigQueryReadClient.ReadRowsStream CreateMockReadRowsStream(Action<Mock<IAsyncStreamReader<ReadRowsResponse>>> configureMock)
+        {
             var mockAsyncResponseStream = new Mock<IAsyncStreamReader<ReadRowsResponse>>();
+            configureMock(mockAsyncResponseStream);
 
-            if (moveNextThrowsError)
-            {
-                mockAsyncResponseStream
-                    .Setup(s => s.MoveNext(CancellationToken.None))
-                    .Throws(new InvalidOperationException("No current element is available."));
-            }
-            else
-            {
-                mockAsyncResponseStream
-                    .Setup(s => s.MoveNext(CancellationToken.None))
-                    .Returns(Task.FromResult(true));
-
-                mockAsyncResponseStream
-                    .SetupGet(s => s.Current)
-                    .Throws(new InvalidOperationException("No current element is available."));
-            }
-
-            AsyncResponseStream<ReadRowsResponse>? mockedResponseStream = typeof(AsyncResponseStream<ReadRowsResponse>)
+            var mockedResponseStream = typeof(AsyncResponseStream<ReadRowsResponse>)
                 .GetConstructor(
                     BindingFlags.Instance | BindingFlags.NonPublic,
                     null,
@@ -74,84 +166,304 @@ namespace AdbcDrivers.BigQuery.Tests
                     null)?
                 .Invoke(new object[] { mockAsyncResponseStream.Object }) as AsyncResponseStream<ReadRowsResponse>;
 
-            Assert.True(mockedResponseStream != null);
-
+            var mockReadRowsStream = new Mock<BigQueryReadClient.ReadRowsStream>();
             mockReadRowsStream
                 .Setup(c => c.GetResponseStream())
-                .Returns(mockedResponseStream);
+                .Returns(mockedResponseStream!);
 
-            var statement = CreateBigQueryStatementForTest();
-            SetupRetryValues(statement);
+            return mockReadRowsStream.Object;
+        }
 
-            var result = statement.ReadChunkWithRetriesForTest(clientMgr, "test-stream", null);
+        private static BigQueryReadClient.ReadRowsStream CreateFailingReadRowsStream(Exception? exception = null)
+        {
+            exception ??= new InvalidOperationException("No current element is available.");
+            return CreateMockReadRowsStream(mock =>
+                mock.Setup(s => s.MoveNext(It.IsAny<CancellationToken>()))
+                    .Throws(exception));
+        }
+
+        private static BigQueryReadClient.ReadRowsStream CreateCurrentThrowsReadRowsStream()
+        {
+            return CreateMockReadRowsStream(mock =>
+            {
+                mock.Setup(s => s.MoveNext(It.IsAny<CancellationToken>()))
+                    .Returns(Task.FromResult(true));
+                mock.SetupGet(s => s.Current)
+                    .Throws(new InvalidOperationException("No current element is available."));
+            });
+        }
+
+        private static BigQueryReadClient.ReadRowsStream CreateEmptyReadRowsStream()
+        {
+            return CreateMockReadRowsStream(mock =>
+                mock.Setup(s => s.MoveNext(It.IsAny<CancellationToken>()))
+                    .Returns(Task.FromResult(false)));
+        }
+
+        private static IActivityTracer CreateStubTracer()
+        {
+            var trace = new ActivityTrace("BigQueryStatementTests");
+            var mock = new Mock<IActivityTracer>();
+            mock.Setup(t => t.Trace).Returns(trace);
+            mock.Setup(t => t.TraceParent).Returns((string?)null);
+            return mock.Object;
+        }
+
+        private static IArrowArrayStream CreateReadRowsStreamForTest(
+            BigQueryReadClient client,
+            string streamName,
+            int maxRetryAttempts = 3,
+            int retryDelayMs = 100,
+            CancellationToken streamCancellationToken = default)
+        {
+            // Use reflection to create ReadRowsStream since it's a private nested class.
+            // Constructor: ReadRowsStream(IActivityTracer, BigQueryReadClient, string, int, int, CancellationToken)
+            var readRowsStreamType = typeof(BigQueryStatement).GetNestedType("ReadRowsStream", BindingFlags.NonPublic);
+            Assert.NotNull(readRowsStreamType);
+
+            return (IArrowArrayStream)Activator.CreateInstance(
+                readRowsStreamType,
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                new object[] { CreateStubTracer(), client, streamName, maxRetryAttempts, retryDelayMs, streamCancellationToken },
+                null)!;
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_PerCallCancellationToken_StopsRetryDelay()
+        {
+            // Arrange - MoveNextAsync always throws, retries=2, delay=5000ms
+            // but per-call token is cancelled immediately so delay should not complete
+            var perCallCts = new CancellationTokenSource();
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() => CreateFailingReadRowsStream(
+                    new RpcException(new Status(StatusCode.Unavailable, "Stream temporarily unavailable"))));
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 2, retryDelayMs: 5000);
+
+            // Cancel the per-call token after a short delay so it fires during the retry delay
+            perCallCts.CancelAfter(100);
+
+            // Act & Assert - should throw OperationCanceledException quickly, not wait the full 5s delay
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                stream.ReadNextRecordBatchAsync(perCallCts.Token).AsTask());
+            sw.Stop();
+
+            // Should complete well under the 5000ms retry delay
+            Assert.True(sw.ElapsedMilliseconds < 3000, $"Expected cancellation to stop the retry delay quickly, but took {sw.ElapsedMilliseconds}ms");
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_PerCallCancellationToken_AlreadyCancelled_ThrowsImmediately()
+        {
+            // Arrange - per-call token is already cancelled before calling ReadNextRecordBatchAsync
+            var perCallCts = new CancellationTokenSource();
+            perCallCts.Cancel();
+
+            int callCount = 0;
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() =>
+                {
+                    callCount++;
+                    return CreateFailingReadRowsStream(
+                        new RpcException(new Status(StatusCode.Unavailable, "Stream temporarily unavailable")));
+                });
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 2, retryDelayMs: 5000);
+
+            // Act & Assert - should throw immediately without retrying.
+            // When the token is already cancelled and MoveNext throws, the code detects
+            // cancellation and re-throws the original exception instead of retrying.
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await Assert.ThrowsAsync<RpcException>(() =>
+                stream.ReadNextRecordBatchAsync(perCallCts.Token).AsTask());
+            sw.Stop();
+
+            // Should not have retried (only 1 call to ReadRows for initial setup)
+            Assert.Equal(1, callCount);
+            // Should complete nearly instantly, not wait for retry delays
+            Assert.True(sw.ElapsedMilliseconds < 1000, $"Expected immediate throw but took {sw.ElapsedMilliseconds}ms");
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_StreamLevelCancellationToken_StillWorks_WhenPerCallTokenIsDefault()
+        {
+            // Arrange - stream-level token is cancelled, per-call token is CancellationToken.None
+            var streamCts = new CancellationTokenSource();
+
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() => CreateFailingReadRowsStream(
+                    new RpcException(new Status(StatusCode.Unavailable, "Stream temporarily unavailable"))));
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 2, retryDelayMs: 5000, streamCancellationToken: streamCts.Token);
+
+            // Cancel the stream-level token after a short delay
+            streamCts.CancelAfter(100);
+
+            // Act & Assert - should throw OperationCanceledException via the stream-level token
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                stream.ReadNextRecordBatchAsync(CancellationToken.None).AsTask());
+            sw.Stop();
+
+            Assert.True(sw.ElapsedMilliseconds < 3000, $"Expected stream-level cancellation to stop the retry delay quickly, but took {sw.ElapsedMilliseconds}ms");
+        }
+
+        [Fact]
+        public async Task ReadRowsStream_PerCallCancellationToken_CancelsBeforeMoveNext()
+        {
+            // Arrange - MoveNextAsync blocks until cancellation, per-call token fires quickly
+            var perCallCts = new CancellationTokenSource();
+
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() =>
+                {
+                    return CreateMockReadRowsStream(mock =>
+                        mock.Setup(s => s.MoveNext(It.IsAny<CancellationToken>()))
+                            .Returns(async (CancellationToken ct) =>
+                            {
+                                // Simulate a slow gRPC call that respects cancellation
+                                await Task.Delay(Timeout.Infinite, ct);
+                                return false;
+                            }));
+                });
+
+            var stream = CreateReadRowsStreamForTest(mockReadClient.Object, "test-stream", maxRetryAttempts: 0);
+
+            // Cancel after a short delay
+            perCallCts.CancelAfter(200);
+
+            // Act & Assert - per-call cancellation should stop the blocking MoveNext
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                stream.ReadNextRecordBatchAsync(perCallCts.Token).AsTask());
+            sw.Stop();
+
+            Assert.True(sw.ElapsedMilliseconds < 3000, $"Expected per-call cancellation to stop MoveNext quickly, but took {sw.ElapsedMilliseconds}ms");
+        }
+
+        #region GetEffectiveQueryResultsTimeout tests
+
+        [Fact]
+        public void GetEffectiveQueryResultsTimeout_ReturnsNull_WhenNeitherConnectionNorStatementSetsTimeout()
+        {
+            // Arrange - no timeout set anywhere
+            var connection = new BigQueryConnection(new Dictionary<string, string>());
+            var statement = new BigQueryStatement(connection);
+
+            // Act
+            TimeSpan? result = InvokeGetEffectiveQueryResultsTimeout(statement);
+
+            // Assert
             Assert.Null(result);
         }
 
-        private Mock<BigQueryReadClient.ReadRowsStream> GetMockReadRowsStream(TokenProtectedReadClientManger clientMgr)
+        [Fact]
+        public void GetEffectiveQueryResultsTimeout_ReturnsConnectionValue_WhenOnlyConnectionSetsTimeout()
         {
-            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
-            typeof(TokenProtectedReadClientManger)
-                .GetField("bigQueryReadClient", BindingFlags.NonPublic | BindingFlags.Instance)?
-                .SetValue(clientMgr, mockReadClient.Object);
-
-            var mockReadRowsStream = new Mock<BigQueryReadClient.ReadRowsStream>();
-            mockReadClient
-                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
-                .Returns(mockReadRowsStream.Object);
-
-            return mockReadRowsStream;
-        }
-
-        private TokenProtectedReadClientManger GetMockTokenProtectedReadClientManger()
-        {
-            var credential = GoogleCredential.FromAccessToken("dummy-token");
-            var clientMgr = new TokenProtectedReadClientManger(credential);
-            return clientMgr;
-        }
-
-        private void SetupRetryValues(BigQueryStatement statement)
-        {
-            var connection = typeof(BigQueryStatement)
-                .GetField("bigQueryConnection", BindingFlags.NonPublic | BindingFlags.Instance)?
-                .GetValue(statement) as BigQueryConnection;
-
-            if (connection != null)
+            // Arrange - connection sets timeout to 120 seconds
+            var connection = new BigQueryConnection(new Dictionary<string, string>
             {
-                typeof(BigQueryConnection)
-                    .GetField("maxRetryAttempts", BindingFlags.NonPublic | BindingFlags.Instance)?
-                    .SetValue(connection, 2);
+                { BigQueryParameters.GetQueryResultsOptionsTimeout, "120" }
+            });
+            var statement = new BigQueryStatement(connection);
 
-                typeof(BigQueryConnection)
-                    .GetField("retryDelayMs", BindingFlags.NonPublic | BindingFlags.Instance)?
-                    .SetValue(connection, 50);
-            }
+            // Act
+            TimeSpan? result = InvokeGetEffectiveQueryResultsTimeout(statement);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal(TimeSpan.FromSeconds(120), result!.Value);
         }
 
-        private BigQueryStatement CreateBigQueryStatementForTest()
+        [Fact]
+        public void GetEffectiveQueryResultsTimeout_ReturnsStatementValue_WhenOnlyStatementSetsTimeout()
         {
-            var properties = new Dictionary<string, string>
+            // Arrange - no connection timeout, statement sets 60 seconds
+            var connection = new BigQueryConnection(new Dictionary<string, string>());
+            var statement = new BigQueryStatement(connection);
+            statement.SetOption(BigQueryParameters.GetQueryResultsOptionsTimeout, "60");
+
+            // Act
+            TimeSpan? result = InvokeGetEffectiveQueryResultsTimeout(statement);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal(TimeSpan.FromSeconds(60), result!.Value);
+        }
+
+        [Fact]
+        public void GetEffectiveQueryResultsTimeout_StatementOverridesConnection()
+        {
+            // Arrange - connection sets 120s, statement overrides to 30s
+            var connection = new BigQueryConnection(new Dictionary<string, string>
             {
-                ["projectid"] = "test-project"
-            };
+                { BigQueryParameters.GetQueryResultsOptionsTimeout, "120" }
+            });
+            var statement = new BigQueryStatement(connection);
+            statement.SetOption(BigQueryParameters.GetQueryResultsOptionsTimeout, "30");
 
-            var connection = new BigQueryConnection(properties);
-            return new BigQueryStatement(connection);
+            // Act
+            TimeSpan? result = InvokeGetEffectiveQueryResultsTimeout(statement);
+
+            // Assert - statement value should take precedence
+            Assert.NotNull(result);
+            Assert.Equal(TimeSpan.FromSeconds(30), result!.Value);
         }
-    }
 
-    public static class BigQueryStatementExtensions
-    {
-        internal static IArrowReader? ReadChunkWithRetriesForTest(
-            this BigQueryStatement statement,
-            TokenProtectedReadClientManger clientMgr,
-            string streamName,
-            Activity? activity)
+        [Fact]
+        public void GetEffectiveQueryResultsTimeout_FallsBackToConnection_WhenStatementNotSet()
         {
-            var method = typeof(BigQueryStatement).GetMethod(
-                "ReadChunkWithRetries",
-                BindingFlags.NonPublic | BindingFlags.Instance);
+            // Arrange - connection sets 300s, statement does not override
+            var connection = new BigQueryConnection(new Dictionary<string, string>
+            {
+                { BigQueryParameters.GetQueryResultsOptionsTimeout, "300" }
+            });
+            var statement = new BigQueryStatement(connection);
 
-            return (IArrowReader?)method?.Invoke(statement, new object[] { clientMgr, streamName, activity! });
+            // Act
+            TimeSpan? result = InvokeGetEffectiveQueryResultsTimeout(statement);
+
+            // Assert - should fall back to connection value
+            Assert.NotNull(result);
+            Assert.Equal(TimeSpan.FromSeconds(300), result!.Value);
         }
+
+        [Fact]
+        public void SetOption_ThrowsArgumentException_WhenTimeoutIsNotPositiveInteger()
+        {
+            var connection = new BigQueryConnection(new Dictionary<string, string>());
+            var statement = new BigQueryStatement(connection);
+
+            Assert.Throws<ArgumentException>(() =>
+                statement.SetOption(BigQueryParameters.GetQueryResultsOptionsTimeout, "0"));
+            Assert.Throws<ArgumentException>(() =>
+                statement.SetOption(BigQueryParameters.GetQueryResultsOptionsTimeout, "-5"));
+            Assert.Throws<ArgumentException>(() =>
+                statement.SetOption(BigQueryParameters.GetQueryResultsOptionsTimeout, "abc"));
+        }
+
+        private static TimeSpan? InvokeGetEffectiveQueryResultsTimeout(BigQueryStatement statement)
+        {
+            const BindingFlags bindingAttr = BindingFlags.NonPublic | BindingFlags.Instance;
+            var method = typeof(BigQueryStatement).GetMethod("GetEffectiveQueryResultsTimeout", bindingAttr);
+            Assert.NotNull(method);
+            return (TimeSpan?)method!.Invoke(statement, null);
+        }
+
+        #endregion
     }
 }

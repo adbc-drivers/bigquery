@@ -53,6 +53,7 @@ namespace AdbcDrivers.BigQuery
     {
         readonly Dictionary<string, string> properties;
         readonly HttpClient httpClient;
+        private readonly object _clientTimeoutLock = new object();
         const string ClassName = nameof(BigQueryConnection);
         const string infoDriverName = "ADBC BigQuery Driver";
         const string infoVendorName = "BigQuery";
@@ -89,10 +90,15 @@ namespace AdbcDrivers.BigQuery
             {
                 this.SetTraceParent(traceParent);
             }
+
             if (this.properties.TryGetValue(BigQueryParameters.LargeDecimalsAsString, out string? sLargeDecimalsAsString) &&
                 bool.TryParse(sLargeDecimalsAsString, out bool largeDecimalsAsString))
             {
                 this.properties[BigQueryParameters.LargeDecimalsAsString] = largeDecimalsAsString.ToString();
+            }
+            else if (sLargeDecimalsAsString != null)
+            {
+                throw new ArgumentException($"The value '{sLargeDecimalsAsString}' for parameter '{BigQueryParameters.LargeDecimalsAsString}' is not a valid boolean.");
             }
             else
             {
@@ -100,17 +106,23 @@ namespace AdbcDrivers.BigQuery
             }
 
             if (this.properties.TryGetValue(BigQueryParameters.MaximumRetryAttempts, out string? sRetryAttempts) &&
-                int.TryParse(sRetryAttempts, out int retries) &&
-                retries >= 0)
+                int.TryParse(sRetryAttempts, out int retries) && retries >= 0)
             {
                 MaxRetryAttempts = retries;
             }
+            else if (sRetryAttempts != null)
+            {
+                throw new ArgumentException($"The value '{sRetryAttempts}' for parameter '{BigQueryParameters.MaximumRetryAttempts}' is not a valid non-negative integer.");
+            }
 
             if (this.properties.TryGetValue(BigQueryParameters.RetryDelayMs, out string? sRetryDelay) &&
-                int.TryParse(sRetryDelay, out int delay) &&
-                delay >= 0)
+                int.TryParse(sRetryDelay, out int delay) && delay >= 0)
             {
                 RetryDelayMs = delay;
+            }
+            else if (sRetryDelay != null)
+            {
+                throw new ArgumentException($"The value '{sRetryDelay}' for parameter '{BigQueryParameters.RetryDelayMs}' is not a valid non-negative integer.");
             }
 
             if (this.properties.TryGetValue(BigQueryParameters.DefaultClientLocation, out string? location) &&
@@ -119,22 +131,30 @@ namespace AdbcDrivers.BigQuery
             {
                 DefaultClientLocation = location;
             }
-        }
+            else if (location != null)
+            {
+                throw new ArgumentException($"The value '{location}' for parameter '{BigQueryParameters.DefaultClientLocation}' is not a valid BigQuery location.");
+            }
 
-        private bool TryInitTracerProvider(out FileActivityListener? fileActivityListener)
-        {
-            properties.TryGetValue(ListenersOptions.Exporter, out string? exporterOption);
-            // This listener will only listen for activity from this specific connection instance.
-            bool shouldListenTo(ActivitySource source) => source.Tags?.Any(t => ReferenceEquals(t.Key, _traceInstanceId)) == true;
-            return FileActivityListener.TryActivateFileListener(AssemblyName, exporterOption, out fileActivityListener, shouldListenTo: shouldListenTo);
-        }
+            if (this.properties.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? sQueryResultsTimeout) &&
+                int.TryParse(sQueryResultsTimeout, out int parsedQueryResultsTimeout) && parsedQueryResultsTimeout > 0)
+            {
+                QueryResultsTimeout = TimeSpan.FromSeconds(parsedQueryResultsTimeout);
+            }
+            else if (sQueryResultsTimeout != null)
+            {
+                throw new ArgumentException($"The value '{sQueryResultsTimeout}' for parameter '{BigQueryParameters.GetQueryResultsOptionsTimeout}' is not a valid positive integer.");
+            }
 
-        public override IEnumerable<KeyValuePair<string, object?>>? GetActivitySourceTags(IReadOnlyDictionary<string, string> properties)
-        {
-            IEnumerable<KeyValuePair<string, object?>>? tags = base.GetActivitySourceTags(properties);
-            tags ??= [];
-            tags = tags.Concat([new(_traceInstanceId, null)]);
-            return tags;
+            if (this.properties.TryGetValue(BigQueryParameters.ClientTimeout, out string? sClientTimeout) &&
+                int.TryParse(sClientTimeout, out int parsedClientTimeout) && parsedClientTimeout > 0)
+            {
+                ClientTimeout = TimeSpan.FromSeconds(parsedClientTimeout);
+            }
+            else if (sClientTimeout != null)
+            {
+                throw new ArgumentException($"The value '{sClientTimeout}' for parameter '{BigQueryParameters.ClientTimeout}' is not a valid positive integer.");
+            }
         }
 
         /// <summary>
@@ -166,11 +186,115 @@ namespace AdbcDrivers.BigQuery
         // if this value is null, the BigQuery API chooses the location (typically the `US` multi-region)
         internal string? DefaultClientLocation { get; private set; }
 
+        /// <summary>
+        /// The parsed GetQueryResultsOptions timeout, or null if not set by the user.
+        /// When null, BigQuery uses its server-side default of 5 minutes.
+        /// </summary>
+        internal TimeSpan? QueryResultsTimeout { get; private set; }
+
+        /// <summary>
+        /// The parsed client (HTTP) timeout, or null if not set by the user.
+        /// </summary>
+        internal TimeSpan? ClientTimeout { get; private set; }
+
         internal bool IncludePublicProjectIds { get; private set; } = false;
 
         public override string AssemblyVersion => BigQueryUtils.BigQueryAssemblyVersion;
 
         public override string AssemblyName => BigQueryUtils.BigQueryAssemblyName;
+
+        private bool TryInitTracerProvider(out FileActivityListener? fileActivityListener)
+        {
+            properties.TryGetValue(ListenersOptions.Exporter, out string? exporterOption);
+            // This listener will only listen for activity from this specific connection instance.
+            bool shouldListenTo(ActivitySource source) => source.Tags?.Any(t => ReferenceEquals(t.Key, _traceInstanceId)) == true;
+            return FileActivityListener.TryActivateFileListener(AssemblyName, exporterOption, out fileActivityListener, shouldListenTo: shouldListenTo);
+        }
+
+        public override IEnumerable<KeyValuePair<string, object?>>? GetActivitySourceTags(IReadOnlyDictionary<string, string> properties)
+        {
+            IEnumerable<KeyValuePair<string, object?>>? tags = base.GetActivitySourceTags(properties);
+            tags ??= [];
+            tags = tags.Concat([new(_traceInstanceId, null)]);
+            return tags;
+        }
+
+        /// <summary>
+        /// Calculates the effective client timeout based on the configured values.
+        /// If ClientTimeout is less than the effective query results timeout + 30 seconds,
+        /// it will be adjusted to ensure the HTTP layer doesn't timeout before BigQuery responds.
+        /// </summary>
+        /// <remarks>
+        /// The effective query results timeout is the user-configured <see cref="QueryResultsTimeout"/>,
+        /// or BigQuery's server-side default of 5 minutes (300 seconds) when not set.
+        /// This ensures the client timeout calculation is correct regardless of whether the user
+        /// explicitly sets a query results timeout.
+        /// </remarks>
+        /// <param name="activity">Optional tracing activity for diagnostic logging.</param>
+        /// <returns>The effective client timeout, or null if no timeout should be set.</returns>
+        internal TimeSpan? CalculateClientTimeout(Activity? activity = null)
+        {
+            const int TimeoutBufferSeconds = 30;
+
+            // Use the user-configured value, or BigQuery's server-side default of 5 minutes.
+            int queryResultsTimeoutSeconds = QueryResultsTimeout.HasValue
+                ? (int)QueryResultsTimeout.Value.TotalSeconds
+                : BigQueryConstants.DefaultQueryResultsTimeoutSeconds;
+
+            if (ClientTimeout.HasValue)
+            {
+                int clientTimeoutSeconds = (int)ClientTimeout.Value.TotalSeconds;
+                int minimumClientTimeout = queryResultsTimeoutSeconds + TimeoutBufferSeconds;
+                if (clientTimeoutSeconds < minimumClientTimeout)
+                {
+                    clientTimeoutSeconds = minimumClientTimeout;
+                    activity?.AddBigQueryTag("client.timeout.adjusted_for_query_results_timeout", true);
+                }
+                activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, clientTimeoutSeconds);
+                return TimeSpan.FromSeconds(clientTimeoutSeconds);
+            }
+            else if (QueryResultsTimeout.HasValue)
+            {
+                // User set query results timeout but not client timeout;
+                // auto-set client timeout to ensure it doesn't expire first.
+                int minimumClientTimeout = queryResultsTimeoutSeconds + TimeoutBufferSeconds;
+                activity?.AddBigQueryTag("client.timeout.set_from_query_results_timeout", true);
+                activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, minimumClientTimeout);
+                return TimeSpan.FromSeconds(minimumClientTimeout);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Ensures that the HTTP client timeout is at least as large as the effective
+        /// query results timeout plus a buffer, so the HTTP layer does not expire before
+        /// BigQuery returns. This is called at statement execution time when a
+        /// statement-level override may have increased the query results timeout beyond
+        /// what was configured at connection open time.
+        /// </summary>
+        /// <param name="effectiveQueryResultsTimeout">The effective query results timeout for the current statement.</param>
+        /// <param name="activity">Optional tracing activity for diagnostic logging.</param>
+        internal void EnsureClientTimeoutSufficient(TimeSpan? effectiveQueryResultsTimeout, Activity? activity = null)
+        {
+            if (Client == null || !effectiveQueryResultsTimeout.HasValue)
+                return;
+
+            const int TimeoutBufferSeconds = 30;
+            int requiredSeconds = (int)effectiveQueryResultsTimeout.Value.TotalSeconds + TimeoutBufferSeconds;
+            TimeSpan requiredTimeout = TimeSpan.FromSeconds(requiredSeconds);
+
+            lock (_clientTimeoutLock)
+            {
+                TimeSpan currentTimeout = Client.Service.HttpClient.Timeout;
+                if (requiredTimeout > currentTimeout)
+                {
+                    Client.Service.HttpClient.Timeout = requiredTimeout;
+                    activity?.AddBigQueryTag("client.timeout.adjusted_for_statement_override", true);
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, requiredSeconds);
+                }
+            }
+        }
 
         /// <summary>
         /// Initializes the internal BigQuery connection
@@ -218,23 +342,32 @@ namespace AdbcDrivers.BigQuery
                 {
                     if (!string.IsNullOrEmpty(result))
                     {
-                        this.IncludePublicProjectIds = Convert.ToBoolean(result);
-                        activity?.AddBigQueryParameterTag(BigQueryParameters.IncludePublicProjectId, this.IncludePublicProjectIds);
+                        if (bool.TryParse(result, out bool includePublic))
+                        {
+                            this.IncludePublicProjectIds = includePublic;
+                            activity?.AddBigQueryParameterTag(BigQueryParameters.IncludePublicProjectId, this.IncludePublicProjectIds);
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"The value '{result}' for parameter '{BigQueryParameters.IncludePublicProjectId}' is not a valid boolean.");
+                        }
                     }
                 }
 
-                if (this.properties.TryGetValue(BigQueryParameters.ClientTimeout, out string? timeoutSeconds) &&
-                    int.TryParse(timeoutSeconds, out int seconds))
-                {
-                    clientTimeout = TimeSpan.FromSeconds(seconds);
-                    activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, seconds);
-                }
+                // Calculate client timeout using the centralized method
+                clientTimeout = CalculateClientTimeout(activity);
 
-                if (this.properties.TryGetValue(BigQueryParameters.CreateLargeResultsDataset, out string? sCreateLargeResultDataset) &&
-                   bool.TryParse(sCreateLargeResultDataset, out bool createLargeResultDataset))
+                if (this.properties.TryGetValue(BigQueryParameters.CreateLargeResultsDataset, out string? sCreateLargeResultDataset))
                 {
-                    CreateLargeResultsDataset = createLargeResultDataset;
-                    activity?.AddBigQueryParameterTag(BigQueryParameters.CreateLargeResultsDataset, createLargeResultDataset);
+                    if (bool.TryParse(sCreateLargeResultDataset, out bool createLargeResultDataset))
+                    {
+                        CreateLargeResultsDataset = createLargeResultDataset;
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.CreateLargeResultsDataset, createLargeResultDataset);
+                    }
+                    else
+                    {
+                        throw new ArgumentException($"The value '{sCreateLargeResultDataset}' for parameter '{BigQueryParameters.CreateLargeResultsDataset}' is not a valid boolean.");
+                    }
                 }
 
                 SetCredential();
@@ -1380,7 +1513,6 @@ namespace AdbcDrivers.BigQuery
                 BigQueryParameters.LargeDecimalsAsString,
                 BigQueryParameters.LargeResultsDataset,
                 BigQueryParameters.LargeResultsDestinationTable,
-                BigQueryParameters.GetQueryResultsOptionsTimeout,
                 BigQueryParameters.MaxFetchConcurrency,
                 BigQueryParameters.StatementType,
                 BigQueryParameters.StatementIndex,

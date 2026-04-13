@@ -108,6 +108,10 @@ namespace AdbcDrivers.BigQuery
         // default value per https://pkg.go.dev/cloud.google.com/go/bigquery#section-readme
         public const string DetectProjectId = "*detect-project-id*";
 
+        // BigQuery's server-side default for GetQueryResultsOptions.Timeout when not set (null) is 5 minutes.
+        // See: https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs/getQueryResults
+        public const int DefaultQueryResultsTimeoutSeconds = 300;
+
         // matches the pattern for odbc, but for adbc
         public const string DefaultLargeDatasetId = "_bqadbc_temp_tables";
 

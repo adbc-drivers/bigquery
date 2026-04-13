@@ -21,10 +21,7 @@
 * limitations under the License.
 */
 using Apache.Arrow.Adbc;
-using Google;
-using Google.Apis.Requests;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -63,7 +60,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     // Note: OperationCanceledException could be thrown from the call,
                     // but we only want to break out when the cancellation was requested from the caller.
-                    activity?.AddException(ex, BuildExceptionTagList(retryCount, ex));
+                    activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex));
 
                     retryCount++;
                     if (retryCount >= maxRetries)
@@ -96,29 +93,6 @@ namespace AdbcDrivers.BigQuery
             }
 
             throw new AdbcException($"Could not successfully call {action.Method.Name}", AdbcStatusCode.UnknownError);
-        }
-
-        private static TagList BuildExceptionTagList(int retryCount, Exception ex)
-        {
-            List<KeyValuePair<string, object?>> tags = [new KeyValuePair<string, object?>("retry.attempt", retryCount)];
-            // Add HTTP status code if available
-            if (ex is GoogleApiException googleEx)
-            {
-                tags.AddRange([
-                    new($"retry.attempt_{retryCount}.http_status_code", (int)googleEx.HttpStatusCode),
-                        new($"retry.attempt_{retryCount}.error_code", googleEx.Error?.Code),
-                        new($"retry.attempt_{retryCount}.error_message", googleEx.Error?.Message),
-                    ]);
-                if (googleEx.Error?.Errors != null)
-                {
-                    for (int i = 0; i < googleEx.Error.Errors.Count; i++)
-                    {
-                        SingleError error = googleEx.Error.Errors[i];
-                        tags.Add(new($"retry.attempt_{retryCount}.error_{i}_details", error.ToString()));
-                    }
-                }
-            }
-            return new TagList(tags.ToArray());
         }
     }
 }

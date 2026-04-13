@@ -9,12 +9,12 @@
 		<PackageReference Include="Google.Cloud.BigQuery.Storage.V1" Version="3.17.0" />
 		<PackageReference Include="Google.Cloud.BigQuery.V2" Version="3.11.0" />
 	</ItemGroup>
-	<ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net6.0'))">
-		<PackageReference Include="System.Text.Json" Version="9.0.9" />
-	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\arrow-adbc\csharp\src\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj" />
 		<ProjectReference Include="..\arrow-adbc\csharp\src\Telemetry\Traces\Listeners\Apache.Arrow.Adbc.Telemetry.Traces.Listeners.csproj" />
+	</ItemGroup>
+	<ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net6.0'))">
+		<PackageReference Include="System.Text.Json" Version="9.0.9" />
 	</ItemGroup>
 	<ItemGroup>
 		<Content Include="readme.md">
