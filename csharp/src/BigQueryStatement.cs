@@ -1390,10 +1390,13 @@ namespace AdbcDrivers.BigQuery
                         if (this.channel.Reader.TryRead(out RecordBatch? batch))
                         {
                             Interlocked.Increment(ref this.totalBatchesRead);
-                            long currentMemory = GC.GetTotalMemory(false);
-                            InterlockedMax(ref this.peakMemory, currentMemory);
+                            if (activity != null)
+                            {
+                                long currentMemory = GC.GetTotalMemory(false);
+                                InterlockedMax(ref this.peakMemory, currentMemory);
+                                activity.AddBigQueryTag("memory.current_bytes", currentMemory);
+                            }
                             activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, batch.Length);
-                            activity?.AddBigQueryTag("memory.current_bytes", currentMemory);
                             return batch;
                         }
                     }
