@@ -1472,7 +1472,10 @@ namespace AdbcDrivers.BigQuery
                         }
                         catch (Exception ex) when (retryCount < this.maxRetries)
                         {
-                            activity?.AddException(ex, BuildExceptionTagList(retryCount, ex));
+                            activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex, [
+                                new($"retry.attempt_{retryCount}.stream_name", this.streamName),
+                                new($"retry.attempt_{retryCount}.row_offset", this.rowsRead),
+                            ]));
                             retryCount++;
                             await Task.Delay(delay, this.cancellationToken).ConfigureAwait(false);
                             delay = Math.Min(2 * delay, 5000);
@@ -1509,34 +1512,6 @@ namespace AdbcDrivers.BigQuery
                 BigQueryReadClient.ReadRowsStream readRowsStream = this.client.ReadRows(
                     new ReadRowsRequest { ReadStream = this.streamName, Offset = offset });
                 return readRowsStream.GetResponseStream().GetAsyncEnumerator(this.cancellationToken);
-            }
-
-            private TagList BuildExceptionTagList(int retryCount, Exception ex)
-            {
-                List<KeyValuePair<string, object?>> tags =
-                [
-                    new("retry.attempt", retryCount),
-                    new($"retry.attempt_{retryCount}.stream_name", this.streamName),
-                    new($"retry.attempt_{retryCount}.row_offset", this.rowsRead),
-                ];
-
-                if (ex is RpcException rpcEx)
-                {
-                    tags.AddRange([
-                        new($"retry.attempt_{retryCount}.grpc_status_code", rpcEx.StatusCode.ToString()),
-                        new($"retry.attempt_{retryCount}.grpc_status_detail", rpcEx.Status.Detail),
-                    ]);
-                }
-                else if (ex is GoogleApiException googleEx)
-                {
-                    tags.AddRange([
-                        new($"retry.attempt_{retryCount}.http_status_code", (int)googleEx.HttpStatusCode),
-                        new($"retry.attempt_{retryCount}.error_code", googleEx.Error?.Code),
-                        new($"retry.attempt_{retryCount}.error_message", googleEx.Error?.Message),
-                    ]);
-                }
-
-                return new TagList(tags.ToArray());
             }
 
             public void Dispose()
