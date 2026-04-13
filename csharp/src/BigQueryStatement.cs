@@ -291,7 +291,7 @@ namespace AdbcDrivers.BigQuery
                 IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
 
                 // Note: MultiArrowReader must dispose the cancellationContext.
-                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, new CancellationContext(cancellationRegistry));
+                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, new CancellationContext(cancellationRegistry), maxStreamCount);
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
                 return new QueryResult(totalRows, stream);
             }, ClassName + "." + nameof(ExecuteQueryInternalAsync));
@@ -1266,6 +1266,7 @@ namespace AdbcDrivers.BigQuery
         private class MultiArrowReader : TracingReader
         {
             private const string ClassName = BigQueryStatement.ClassName + ".MultiArrowReader";
+            private const int DefaultMaxConcurrency = 10;
             private static readonly string s_assemblyName = BigQueryUtils.GetAssemblyName(typeof(BigQueryStatement));
             private static readonly string s_assemblyVersion = BigQueryUtils.GetAssemblyVersion(typeof(BigQueryStatement));
 
@@ -1274,17 +1275,27 @@ namespace AdbcDrivers.BigQuery
             readonly CancellationTokenSource linkedCts;
             readonly List<IArrowReader> readerList;
             readonly Channel<RecordBatch> channel;
+            readonly SemaphoreSlim concurrencyGate;
             Task? producerTask;
+            long memoryAtStart;
+            long peakMemory;
+            long totalBatchesRead;
             bool disposed;
 
-            public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, CancellationContext cancellationContext) : base(statement)
+            public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, CancellationContext cancellationContext, int maxConcurrency = 0) : base(statement)
             {
                 this.schema = schema;
                 this.readerList = readers.ToList();
                 this.cancellationContext = cancellationContext;
                 this.linkedCts = CancellationTokenSource.CreateLinkedTokenSource(this.cancellationContext.CancellationToken);
-                // Bounded channel provides backpressure: each producer can buffer one batch
-                this.channel = System.Threading.Channels.Channel.CreateBounded<RecordBatch>(new BoundedChannelOptions(Math.Max(this.readerList.Count, 1))
+                int effectiveConcurrency = maxConcurrency > 0
+                    ? Math.Min(maxConcurrency, this.readerList.Count)
+                    : Math.Min(DefaultMaxConcurrency, this.readerList.Count);
+                effectiveConcurrency = Math.Max(effectiveConcurrency, 1);
+                this.concurrencyGate = new SemaphoreSlim(effectiveConcurrency, effectiveConcurrency);
+                // Bounded channel provides backpressure: capacity is based on the
+                // concurrency limit so only active producers can buffer a batch.
+                this.channel = System.Threading.Channels.Channel.CreateBounded<RecordBatch>(new BoundedChannelOptions(effectiveConcurrency)
                 {
                     SingleWriter = false,
                     SingleReader = true,
@@ -1301,6 +1312,9 @@ namespace AdbcDrivers.BigQuery
             private void EnsureProducersStarted()
             {
                 if (this.producerTask != null) return;
+
+                this.memoryAtStart = GC.GetTotalMemory(false);
+                this.peakMemory = this.memoryAtStart;
 
                 var tasks = new Task[this.readerList.Count];
                 for (int i = 0; i < this.readerList.Count; i++)
@@ -1328,12 +1342,20 @@ namespace AdbcDrivers.BigQuery
             {
                 try
                 {
-                    while (true)
+                    await this.concurrencyGate.WaitAsync(this.linkedCts.Token).ConfigureAwait(false);
+                    try
                     {
-                        this.linkedCts.Token.ThrowIfCancellationRequested();
-                        RecordBatch? batch = await reader.ReadNextRecordBatchAsync(this.linkedCts.Token).ConfigureAwait(false);
-                        if (batch == null) break;
-                        await this.channel.Writer.WriteAsync(batch, this.linkedCts.Token).ConfigureAwait(false);
+                        while (true)
+                        {
+                            this.linkedCts.Token.ThrowIfCancellationRequested();
+                            RecordBatch? batch = await reader.ReadNextRecordBatchAsync(this.linkedCts.Token).ConfigureAwait(false);
+                            if (batch == null) break;
+                            await this.channel.Writer.WriteAsync(batch, this.linkedCts.Token).ConfigureAwait(false);
+                        }
+                    }
+                    finally
+                    {
+                        this.concurrencyGate.Release();
                     }
                 }
                 catch (OperationCanceledException) when (this.linkedCts.IsCancellationRequested)
@@ -1367,12 +1389,20 @@ namespace AdbcDrivers.BigQuery
                     {
                         if (this.channel.Reader.TryRead(out RecordBatch? batch))
                         {
+                            Interlocked.Increment(ref this.totalBatchesRead);
+                            long currentMemory = GC.GetTotalMemory(false);
+                            InterlockedMax(ref this.peakMemory, currentMemory);
                             activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, batch.Length);
+                            activity?.AddBigQueryTag("memory.current_bytes", currentMemory);
                             return batch;
                         }
                     }
 
                     activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
+                    activity?.AddBigQueryTag("memory.peak_bytes", Interlocked.Read(ref this.peakMemory));
+                    activity?.AddBigQueryTag("memory.start_bytes", this.memoryAtStart);
+                    activity?.AddBigQueryTag("memory.peak_delta_bytes", Interlocked.Read(ref this.peakMemory) - this.memoryAtStart);
+                    activity?.AddBigQueryTag("batches.total_read", Interlocked.Read(ref this.totalBatchesRead));
                     return null;
                 }, ClassName + "." + nameof(ReadNextRecordBatchAsync));
             }
@@ -1390,12 +1420,24 @@ namespace AdbcDrivers.BigQuery
                             if (reader is IDisposable d) d.Dispose();
                         }
                         this.linkedCts.Dispose();
+                        this.concurrencyGate.Dispose();
                         this.cancellationContext.Dispose();
                         this.disposed = true;
                     }
                 }
 
                 base.Dispose(disposing);
+            }
+
+            private static void InterlockedMax(ref long location, long value)
+            {
+                long current = Interlocked.Read(ref location);
+                while (value > current)
+                {
+                    long original = Interlocked.CompareExchange(ref location, value, current);
+                    if (original == current) break;
+                    current = original;
+                }
             }
         }
 
