@@ -61,6 +61,15 @@ type databaseImpl struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	// disableStorageReadClient disables the BigQuery Storage Read API (gRPC/HTTP2).
+	// When true, falls back to the standard REST API.
+	// Useful in environments where HTTP/2 is blocked (e.g., SSL inspection proxies).
+	disableStorageReadClient bool
+
+	// storageReadAPIEndpoint overrides the Storage Read API gRPC endpoint.
+	// Empty string means use the default Google endpoint.
+	storageReadAPIEndpoint string
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
@@ -86,6 +95,8 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		quotaProject:               d.quotaProject,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
+		disableStorageReadClient:   d.disableStorageReadClient,
+		storageReadAPIEndpoint:     d.storageReadAPIEndpoint,
 	}
 
 	err := conn.newClient(ctx)
@@ -148,6 +159,10 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 			return OptionValueCompressionNone, nil
 		}
 		return d.bulkIngestCompression, nil
+	case OptionBoolDisableStorageReadClient:
+		return strconv.FormatBool(d.disableStorageReadClient), nil
+	case OptionStringStorageReadAPIEndpoint:
+		return d.storageReadAPIEndpoint, nil
 	default:
 		return d.DatabaseImplBase.GetOption(key)
 	}
@@ -279,6 +294,17 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 			}
 		}
 		d.bulkIngestCompression = value
+	case OptionBoolDisableStorageReadClient:
+		val, err := strconv.ParseBool(value)
+		if err != nil {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bool value for %s: %s", key, value),
+			}
+		}
+		d.disableStorageReadClient = val
+	case OptionStringStorageReadAPIEndpoint:
+		d.storageReadAPIEndpoint = value
 	default:
 		return d.DatabaseImplBase.SetOption(key, value)
 	}

@@ -26,9 +26,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -122,8 +124,48 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 				Msg:  "[bq] Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282",
 			}
 		}
-		if arrowIterator, err = iter.ArrowIterator(); err != nil {
-			return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results")
+
+		// ArrowIterator() opens a gRPC read session via BigQuery Storage API
+		// (CreateReadSession RPC). In environments where HTTP/2 is blocked
+		// (e.g. VPN with SSL inspection proxy), this call hangs indefinitely.
+		// We apply a 30s timeout so the caller gets a clear error instead of
+		// blocking forever. The goroutine may outlive the timeout if the
+		// underlying gRPC connection does not respect context cancellation,
+		// but it will be cleaned up when the connection is closed.
+		type arrowIterResult struct {
+			ai  bigquery.ArrowIterator
+			err error
+		}
+		ch := make(chan arrowIterResult, 1)
+		go func() {
+			ai, err := iter.ArrowIterator()
+			ch <- arrowIterResult{ai, err}
+		}()
+
+		storageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		select {
+		case r := <-ch:
+			if r.err != nil {
+				return nil, -1, errToAdbcErr(adbc.StatusInternal, r.err, "read Arrow query results")
+			}
+			arrowIterator = r.ai
+		case <-storageCtx.Done():
+			if ctx.Err() != nil {
+				// Parent context was cancelled by the caller — propagate it.
+				return nil, -1, adbc.Error{
+					Code: adbc.StatusCancelled,
+					Msg:  fmt.Sprintf("[bq] context cancelled while opening BigQuery Storage read session: %s", ctx.Err()),
+				}
+			}
+			// Our own 30s timeout fired — the Storage Read API is unreachable.
+			return nil, -1, adbc.Error{
+				Code: adbc.StatusTimeout,
+				Msg: "[bq] BigQuery Storage Read API timed out after 30s. " +
+					"This may be caused by HTTP/2 being blocked by a VPN or SSL inspection proxy. " +
+					"Set " + OptionBoolDisableStorageReadClient + "=true to disable the Storage Read API.",
+			}
 		}
 	} else {
 		arrowIterator = emptyArrowIterator{iter.Schema}

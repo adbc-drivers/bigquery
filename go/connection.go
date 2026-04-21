@@ -82,6 +82,16 @@ type connectionImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
+	// disableStorageReadClient disables the BigQuery Storage Read API (gRPC/HTTP2).
+	// When true, falls back to the standard REST API.
+	// Useful in environments where HTTP/2 is blocked (e.g., SSL inspection proxies).
+	disableStorageReadClient bool
+
+	// storageReadAPIEndpoint overrides the Storage Read API gRPC endpoint.
+	// Empty string means use the default Google endpoint.
+	// Useful for testing with a local fake server or BigQuery emulator.
+	storageReadAPIEndpoint string
+
 	client *bigquery.Client
 }
 
@@ -673,6 +683,17 @@ func (c *connectionImpl) SetOption(key string, value string) error {
 			}
 		}
 		c.bulkIngestCompression = value
+	case OptionBoolDisableStorageReadClient:
+		val, err := strconv.ParseBool(value)
+		if err != nil {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bool value for %s: %s", key, value),
+			}
+		}
+		c.disableStorageReadClient = val
+	case OptionStringStorageReadAPIEndpoint:
+		c.storageReadAPIEndpoint = value
 	default:
 		return c.ConnectionImplBase.SetOption(key, value)
 	}
@@ -832,10 +853,25 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		client.Location = c.location
 	}
 
-	// Use original authOptions without custom endpoint for Storage Read API
-	err = client.EnableStorageReadClient(ctx, authOptions...)
-	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")
+	// Use original authOptions without custom endpoint for Storage Read API.
+	// EnableStorageReadClient uses gRPC (HTTP/2) which may hang in environments
+	// where HTTP/2 is blocked (e.g., SSL inspection proxies). The option
+	// OptionBoolDisableStorageReadClient allows falling back to the REST API.
+	if !c.disableStorageReadClient {
+		storageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		storageAuthOptions := authOptions
+		if c.storageReadAPIEndpoint != "" {
+			storageAuthOptions = append(storageAuthOptions, option.WithEndpoint(c.storageReadAPIEndpoint))
+		}
+		if err := client.EnableStorageReadClient(storageCtx, storageAuthOptions...); err != nil {
+			if storageCtx.Err() != nil {
+				c.Logger.Warn("BigQuery Storage Read API timed out after 30s (possible HTTP/2 proxy issue), falling back to REST API. Set " + OptionBoolDisableStorageReadClient + "=true to skip this.")
+			} else {
+				c.Logger.Warn("BigQuery Storage Read API unavailable, falling back to REST API", "err", err)
+			}
+			// non-fatal: continue without Storage Read API
+		}
 	}
 
 	c.client = client

@@ -1659,6 +1659,88 @@ func TestAuthTypeConsolidation(t *testing.T) {
 	}
 }
 
+func TestDisableStorageReadClientOption(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	drv := driver.NewDriver(mem)
+
+	// Default value should be false
+	db, err := drv.NewDatabase(nil)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer validation.CheckedClose(t, db)
+
+	getSetDB, ok := db.(adbc.GetSetOptions)
+	if !ok {
+		t.Fatal("Database does not implement adbc.GetSetOptions")
+	}
+
+	val, err := getSetDB.GetOption(driver.OptionBoolDisableStorageReadClient)
+	if err != nil {
+		t.Fatalf("Failed to get option: %v", err)
+	}
+	if val != "false" {
+		t.Errorf("Expected default value 'false', got '%s'", val)
+	}
+
+	// Setting true via SetOptions should work
+	err = db.SetOptions(map[string]string{driver.OptionBoolDisableStorageReadClient: "true"})
+	if err != nil {
+		t.Fatalf("Failed to set option to true: %v", err)
+	}
+	val, err = getSetDB.GetOption(driver.OptionBoolDisableStorageReadClient)
+	if err != nil {
+		t.Fatalf("Failed to get option: %v", err)
+	}
+	if val != "true" {
+		t.Errorf("Expected 'true', got '%s'", val)
+	}
+
+	// Setting false should work
+	err = db.SetOptions(map[string]string{driver.OptionBoolDisableStorageReadClient: "false"})
+	if err != nil {
+		t.Fatalf("Failed to set option to false: %v", err)
+	}
+	val, err = getSetDB.GetOption(driver.OptionBoolDisableStorageReadClient)
+	if err != nil {
+		t.Fatalf("Failed to get option: %v", err)
+	}
+	if val != "false" {
+		t.Errorf("Expected 'false', got '%s'", val)
+	}
+
+	// Setting via NewDatabase should work
+	db2, err := drv.NewDatabase(map[string]string{
+		driver.OptionBoolDisableStorageReadClient: "true",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create database with option: %v", err)
+	}
+	defer validation.CheckedClose(t, db2)
+
+	getSetDB2, ok := db2.(adbc.GetSetOptions)
+	if !ok {
+		t.Fatal("Database does not implement adbc.GetSetOptions")
+	}
+	val, err = getSetDB2.GetOption(driver.OptionBoolDisableStorageReadClient)
+	if err != nil {
+		t.Fatalf("Failed to get option from db2: %v", err)
+	}
+	if val != "true" {
+		t.Errorf("Expected 'true' from NewDatabase, got '%s'", val)
+	}
+
+	// Invalid value should return an error
+	err = db.SetOptions(map[string]string{driver.OptionBoolDisableStorageReadClient: "not-a-bool"})
+	if err == nil {
+		t.Error("Expected error for invalid bool value")
+	} else if !strings.Contains(err.Error(), "invalid bool value") {
+		t.Errorf("Expected error message to contain 'invalid bool value', got: %v", err)
+	}
+}
+
 type BigQueryTestSuite struct {
 	suite.Suite
 	project string
