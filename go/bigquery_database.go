@@ -62,10 +62,11 @@ type databaseImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
-	// disableStorageReadClient disables the BigQuery Storage Read API (gRPC/HTTP2).
-	// When true, falls back to the standard REST API.
-	// Useful in environments where HTTP/2 is blocked (e.g., SSL inspection proxies).
-	disableStorageReadClient bool
+	// queryBackendAPI selects which BigQuery API is used to read query results.
+	// Valid values: OptionValueQueryBackendAPIStorageRead (default), OptionValueQueryBackendAPIJobs.
+	// See issue #66. The REST fallback is not yet implemented; selecting "jobs"
+	// currently returns an error when results are read.
+	queryBackendAPI string
 
 	// storageReadAPIEndpoint overrides the Storage Read API gRPC endpoint.
 	// Empty string means use the default Google endpoint.
@@ -95,7 +96,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		quotaProject:               d.quotaProject,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
-		disableStorageReadClient:   d.disableStorageReadClient,
+		queryBackendAPI:            d.queryBackendAPI,
 		storageReadAPIEndpoint:     d.storageReadAPIEndpoint,
 	}
 
@@ -159,8 +160,11 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 			return OptionValueCompressionNone, nil
 		}
 		return d.bulkIngestCompression, nil
-	case OptionBoolDisableStorageReadClient:
-		return strconv.FormatBool(d.disableStorageReadClient), nil
+	case OptionStringQueryBackendAPI:
+		if d.queryBackendAPI == "" {
+			return OptionValueQueryBackendAPIStorageRead, nil
+		}
+		return d.queryBackendAPI, nil
 	case OptionStringStorageReadAPIEndpoint:
 		return d.storageReadAPIEndpoint, nil
 	default:
@@ -294,15 +298,15 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 			}
 		}
 		d.bulkIngestCompression = value
-	case OptionBoolDisableStorageReadClient:
-		val, err := strconv.ParseBool(value)
-		if err != nil {
+	case OptionStringQueryBackendAPI:
+		if value != OptionValueQueryBackendAPIStorageRead &&
+			value != OptionValueQueryBackendAPIJobs {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid bool value for %s: %s", key, value),
+				Msg:  fmt.Sprintf("[bq] invalid value for %s: %q (expected %q or %q)", key, value, OptionValueQueryBackendAPIStorageRead, OptionValueQueryBackendAPIJobs),
 			}
 		}
-		d.disableStorageReadClient = val
+		d.queryBackendAPI = value
 	case OptionStringStorageReadAPIEndpoint:
 		d.storageReadAPIEndpoint = value
 	default:

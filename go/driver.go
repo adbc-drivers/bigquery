@@ -71,10 +71,20 @@ const (
 	OptionStringQueryWriteDisposition  = "adbc.bigquery.sql.query.write_disposition"
 	OptionBoolQueryDisableQueryCache   = "adbc.bigquery.sql.query.disable_query_cache"
 
-	// OptionBoolDisableStorageReadClient disables the BigQuery Storage Read API (gRPC/HTTP2).
-	// When set to "true", the driver falls back to the standard REST API.
-	// Useful in environments where HTTP/2 is blocked or unavailable (e.g., SSL inspection proxies).
-	OptionBoolDisableStorageReadClient = "adbc.bigquery.sql.disable_storage_read_client"
+	// OptionStringQueryBackendAPI selects which BigQuery API is used to read
+	// query results. See issue #66 for design discussion.
+	//
+	// Valid values:
+	//   - OptionValueQueryBackendAPIStorageRead (default): use the Storage Read
+	//     API (gRPC/HTTP2). Required for Arrow-format streaming reads.
+	//   - OptionValueQueryBackendAPIJobs: select the REST Jobs API. NOTE: the
+	//     actual REST fallback is not yet implemented in this driver; setting
+	//     this value currently returns an error when reading results. The option
+	//     is added as infrastructure so callers can opt in once the fallback is
+	//     implemented in a follow-up PR.
+	OptionStringQueryBackendAPI             = "adbc.bigquery.query.backend_api"
+	OptionValueQueryBackendAPIStorageRead   = "storage_read"
+	OptionValueQueryBackendAPIJobs          = "jobs"
 
 	// OptionStringStorageReadAPIEndpoint overrides the endpoint used for the
 	// BigQuery Storage Read API (gRPC). Defaults to the public Google endpoint.

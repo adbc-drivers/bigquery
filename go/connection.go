@@ -82,10 +82,11 @@ type connectionImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
-	// disableStorageReadClient disables the BigQuery Storage Read API (gRPC/HTTP2).
-	// When true, falls back to the standard REST API.
-	// Useful in environments where HTTP/2 is blocked (e.g., SSL inspection proxies).
-	disableStorageReadClient bool
+	// queryBackendAPI selects which BigQuery API is used to read query results.
+	// Valid values: OptionValueQueryBackendAPIStorageRead (default), OptionValueQueryBackendAPIJobs.
+	// See issue #66. The REST fallback is not yet implemented; selecting "jobs"
+	// currently returns an error when results are read.
+	queryBackendAPI string
 
 	// storageReadAPIEndpoint overrides the Storage Read API gRPC endpoint.
 	// Empty string means use the default Google endpoint.
@@ -683,15 +684,15 @@ func (c *connectionImpl) SetOption(key string, value string) error {
 			}
 		}
 		c.bulkIngestCompression = value
-	case OptionBoolDisableStorageReadClient:
-		val, err := strconv.ParseBool(value)
-		if err != nil {
+	case OptionStringQueryBackendAPI:
+		if value != OptionValueQueryBackendAPIStorageRead &&
+			value != OptionValueQueryBackendAPIJobs {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid bool value for %s: %s", key, value),
+				Msg:  fmt.Sprintf("[bq] invalid value for %s: %q (expected %q or %q)", key, value, OptionValueQueryBackendAPIStorageRead, OptionValueQueryBackendAPIJobs),
 			}
 		}
-		c.disableStorageReadClient = val
+		c.queryBackendAPI = value
 	case OptionStringStorageReadAPIEndpoint:
 		c.storageReadAPIEndpoint = value
 	default:
@@ -853,11 +854,15 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		client.Location = c.location
 	}
 
-	// Use original authOptions without custom endpoint for Storage Read API.
 	// EnableStorageReadClient uses gRPC (HTTP/2) which may hang in environments
-	// where HTTP/2 is blocked (e.g., SSL inspection proxies). The option
-	// OptionBoolDisableStorageReadClient allows falling back to the REST API.
-	if !c.disableStorageReadClient {
+	// where HTTP/2 is blocked (e.g., SSL inspection proxies). Guard with a 30s
+	// timeout so the driver fails fast instead of hanging indefinitely.
+	//
+	// When OptionStringQueryBackendAPI is set to "jobs", we skip initialising
+	// the Storage Read client entirely. Note: the actual REST-based fallback
+	// for reading query results is not yet implemented (see issue #66); reads
+	// will return an explicit error in that case.
+	if c.queryBackendAPI != OptionValueQueryBackendAPIJobs {
 		storageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		storageAuthOptions := authOptions
@@ -866,11 +871,12 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		if err := client.EnableStorageReadClient(storageCtx, storageAuthOptions...); err != nil {
 			if storageCtx.Err() != nil {
-				c.Logger.Warn("BigQuery Storage Read API timed out after 30s (possible HTTP/2 proxy issue), falling back to REST API. Set " + OptionBoolDisableStorageReadClient + "=true to skip this.")
+				c.Logger.Warn("BigQuery Storage Read API timed out after 30s (possible HTTP/2 proxy issue). Set " + OptionStringQueryBackendAPI + "=" + OptionValueQueryBackendAPIJobs + " to skip this once the REST fallback is implemented (issue #66).")
 			} else {
-				c.Logger.Warn("BigQuery Storage Read API unavailable, falling back to REST API", "err", err)
+				c.Logger.Warn("BigQuery Storage Read API unavailable", "err", err)
 			}
-			// non-fatal: continue without Storage Read API
+			// non-fatal: continue without Storage Read API; record_reader will
+			// surface an appropriate error when a caller tries to stream rows.
 		}
 	}
 

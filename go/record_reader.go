@@ -63,7 +63,19 @@ func checkContext(ctx context.Context, maybeErr error) error {
 	return ctx.Err()
 }
 
-func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, int64, error) {
+func runQuery(ctx context.Context, logger *slog.Logger, queryBackendAPI string, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, int64, error) {
+	// Jobs API backend is not yet implemented (see issue #66). Fail fast with
+	// a clear error rather than hanging or returning a misleading permission
+	// error downstream.
+	if !executeUpdate && queryBackendAPI == OptionValueQueryBackendAPIJobs {
+		return nil, -1, adbc.Error{
+			Code: adbc.StatusNotImplemented,
+			Msg: "[bq] " + OptionStringQueryBackendAPI + "=" + OptionValueQueryBackendAPIJobs +
+				" is not yet implemented. The REST-based fallback for reading query results has not been added to this driver (see issue #66). " +
+				"Use " + OptionStringQueryBackendAPI + "=" + OptionValueQueryBackendAPIStorageRead + " (the default) until the fallback is available.",
+		}
+	}
+
 	job, err := query.Run(ctx)
 	if err != nil {
 		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
@@ -163,8 +175,9 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 			return nil, -1, adbc.Error{
 				Code: adbc.StatusTimeout,
 				Msg: "[bq] BigQuery Storage Read API timed out after 30s. " +
-					"This may be caused by HTTP/2 being blocked by a VPN or SSL inspection proxy. " +
-					"Set " + OptionBoolDisableStorageReadClient + "=true to disable the Storage Read API.",
+					"This may be caused by HTTP/2 being blocked by a VPN or SSL inspection proxy, " +
+					"or by running the driver inside a c-shared DLL where the gRPC stream stalls. " +
+					"See " + OptionStringQueryBackendAPI + " (issue #66) for the future REST fallback.",
 			}
 		}
 	} else {
@@ -209,8 +222,8 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 	return parameters, nil
 }
 
-func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int) (bigqueryRdr *reader, totalRows int64, err error) {
-	arrowIterator, totalRows, err := runQuery(ctx, logger, query, false)
+func runPlainQuery(ctx context.Context, logger *slog.Logger, queryBackendAPI string, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int) (bigqueryRdr *reader, totalRows int64, err error) {
+	arrowIterator, totalRows, err := runQuery(ctx, logger, queryBackendAPI, query, false)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -255,7 +268,7 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Que
 	return bigqueryRdr, totalRows, nil
 }
 
-func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema)) (int64, error) {
+func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, queryBackendAPI string, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema)) (int64, error) {
 	totalRows := int64(-1)
 	for i := range int(rec.NumRows()) {
 		parameters, err := getQueryParameter(rec, i, parameterMode)
@@ -266,7 +279,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			query.Parameters = parameters
 		}
 
-		arrowIterator, rows, err := runQuery(ctx, logger, query, false)
+		arrowIterator, rows, err := runQuery(ctx, logger, queryBackendAPI, query, false)
 		if err != nil {
 			return -1, err
 		}
@@ -291,9 +304,9 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 
 // kicks off a goroutine for each endpoint and returns a reader which
 // gathers all of the records as they come in.
-func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int) (bigqueryRdr *reader, totalRows int64, err error) {
+func newRecordReader(ctx context.Context, logger *slog.Logger, queryBackendAPI string, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int) (bigqueryRdr *reader, totalRows int64, err error) {
 	if boundParameters == nil {
-		return runPlainQuery(ctx, logger, query, alloc, resultRecordBufferSize)
+		return runPlainQuery(ctx, logger, queryBackendAPI, query, alloc, resultRecordBufferSize)
 	}
 	defer boundParameters.Release()
 
@@ -329,7 +342,7 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Q
 		// Each call to Record() on the record reader is allowed to release the previous record
 		// and since we're doing this sequentially
 		// we don't need to call rec.Retain() here and call call rec.Release() in queryRecordWithSchemaCallback
-		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
+		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, queryBackendAPI, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
 			bigqueryRdr.schema = schema
 		})
 		if err != nil {
