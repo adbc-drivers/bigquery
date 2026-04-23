@@ -15,8 +15,8 @@
 */
 
 using System;
-using Google;
 using System.Net;
+using Google;
 using Grpc.Core;
 using Xunit;
 

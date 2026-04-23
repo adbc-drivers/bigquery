@@ -20,11 +20,11 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-using Apache.Arrow.Adbc;
 using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Apache.Arrow.Adbc;
 
 namespace AdbcDrivers.BigQuery
 {
