@@ -1518,6 +1518,7 @@ namespace AdbcDrivers.BigQuery
                     }
 
                     int retryCount = 0;
+                    int tokenRefreshCount = 0;
                     int delay = this.initialDelayMs;
 
                     while (true)
@@ -1536,13 +1537,17 @@ namespace AdbcDrivers.BigQuery
                             // For OAuth: trades refresh_token for a new access token.
                             // For Entra ID: re-trades the (hopefully still valid) Entra token at Google STS.
                             // For service account: re-mints from the JSON private key.
-                            if (this.clientMgr.UpdateToken != null)
+                            // Token refresh attempts are tracked separately from general retries
+                            // to avoid double-counting when both error types occur.
+                            if (this.clientMgr.UpdateToken != null && tokenRefreshCount < maxRetries)
                             {
+                                tokenRefreshCount++;
                                 try
                                 {
                                     activity?.AddEvent("token_refresh_started", [
                                         new("stream.name", this.streamName),
                                         new("stream.row_offset", this.rowsRead),
+                                        new("token_refresh.attempt", tokenRefreshCount),
                                     ]);
                                     await this.clientMgr.UpdateToken().ConfigureAwait(false);
                                     activity?.AddEvent("token_refresh_completed");
@@ -1568,6 +1573,7 @@ namespace AdbcDrivers.BigQuery
                                     // Token refresh failed (e.g., Entra ID token also expired).
                                     activity?.AddException(refreshEx, [
                                         new KeyValuePair<string, object?>("token_refresh.failed", true),
+                                        new KeyValuePair<string, object?>("token_refresh.attempt", tokenRefreshCount),
                                     ]);
                                 }
                             }

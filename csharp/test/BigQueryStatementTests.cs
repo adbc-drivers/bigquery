@@ -626,6 +626,67 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Contains("Authentication failed", ex.Message);
         }
 
+
+        [Fact]
+        public async Task ReadRowsStream_TokenRefreshAndGeneralRetries_TrackedSeparately()
+        {
+            // Arrange - Validates that token refresh attempts don't consume general retry budget.
+            // Scenario:
+            // 1. First call: Unauthenticated -> token refresh (tokenRefreshCount=1)
+            // 2. Second call: Unavailable -> general retry (retryCount=1)
+            // 3. Third call: Unauthenticated -> token refresh (tokenRefreshCount=2)
+            // 4. Fourth call: Unavailable -> general retry (retryCount=2, exhausted)
+            // 5. Fifth call: Should fail with IOError (general retries exhausted)
+            // With maxRetries=2, both budgets should be independent.
+            int callCount = 0;
+            int tokenRefreshCount = 0;
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() =>
+                {
+                    callCount++;
+                    // First 2 calls: auth errors (to test token refresh budget)
+                    // Remaining calls: transient errors (to test general retry budget)
+                    if (callCount <= 2)
+                    {
+                        return CreateFailingReadRowsStream(
+                            new RpcException(new Status(StatusCode.Unauthenticated,
+                                "Request had invalid authentication credentials.")));
+                    }
+                    else
+                    {
+                        return CreateFailingReadRowsStream(
+                            new RpcException(new Status(StatusCode.Unavailable,
+                                "Stream temporarily unavailable")));
+                    }
+                });
+
+            var stream = CreateReadRowsStreamForTest(
+                mockReadClient.Object, "test-stream",
+                maxRetryAttempts: 2, retryDelayMs: 10,
+                updateToken: () => { tokenRefreshCount++; return Task.CompletedTask; });
+
+            // Act
+            var ex = await Assert.ThrowsAsync<AdbcException>(() =>
+                stream.ReadNextRecordBatchAsync(CancellationToken.None).AsTask());
+
+            // Assert - general retries exhausted (IOError), not auth error
+            // This proves token refreshes didn't consume the general retry budget.
+            Assert.Equal(AdbcStatusCode.IOError, ex.Status);
+            Assert.Contains("2 retries", ex.Message); // maxRetries was 2
+
+            // Should have had multiple token refreshes AND multiple general retries:
+            // Call 1: Unauth -> token refresh 1 -> reconnect
+            // Call 2: Unavailable -> general retry 1 -> reconnect
+            // Call 3: Unauth -> token refresh 2 -> reconnect
+            // Call 4: Unavailable -> general retry 2 -> reconnect
+            // Call 5: Unavailable -> general retries exhausted -> throw IOError
+            Assert.Equal(2, tokenRefreshCount);
+            Assert.Equal(5, callCount); // 1 initial + 2 token refresh reconnects + 2 general retry reconnects
+        }
+
         #endregion
     }
 }
