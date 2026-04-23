@@ -40,8 +40,18 @@ namespace AdbcDrivers.BigQuery
             {
                 result = true;
             }
+            else if (IsGrpcUnauthenticated(ex))
+            {
+                result = true;
+            }
 
             return result;
+        }
+
+        internal static bool IsGrpcUnauthenticated(Exception ex)
+        {
+            return ContainsException<RpcException>(ex, out RpcException? rpcEx)
+                && rpcEx!.StatusCode == Grpc.Core.StatusCode.Unauthenticated;
         }
 
         internal static string BigQueryAssemblyName = GetAssemblyName(typeof(BigQueryConnection));

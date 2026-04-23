@@ -156,7 +156,8 @@ namespace AdbcDrivers.BigQuery
                     return await ExecuteMetadataCommandQuery(activity);
                 }
 
-                BigQueryJob job = await Client.CreateQueryJobAsync(SqlQuery, null, queryOptions);
+                BigQueryJob job = await ExecuteWithRetriesAsync(
+                    () => Client.CreateQueryJobAsync(SqlQuery, null, queryOptions), activity).ConfigureAwait(false);
                 JobReference jobReference = job.Reference;
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
 
@@ -742,7 +743,7 @@ namespace AdbcDrivers.BigQuery
             foreach (var stream in rrs.Streams)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                readers.Add(new ReadRowsStream(this, bigQueryReadClient, stream.Name, MaxRetryAttempts, RetryDelayMs, cancellationToken));
+                readers.Add(new ReadRowsStream(this, clientMgr, stream.Name, MaxRetryAttempts, RetryDelayMs, cancellationToken));
             }
 
             return readers;
@@ -1447,7 +1448,7 @@ namespace AdbcDrivers.BigQuery
         sealed class ReadRowsStream : IArrowArrayStream
         {
             readonly IActivityTracer tracer;
-            readonly BigQueryReadClient client;
+            readonly TokenProtectedReadClientManger clientMgr;
             readonly string streamName;
             readonly int maxRetries;
             readonly int initialDelayMs;
@@ -1458,10 +1459,10 @@ namespace AdbcDrivers.BigQuery
             bool initialized;
             bool disposed;
 
-            public ReadRowsStream(IActivityTracer tracer, BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+            public ReadRowsStream(IActivityTracer tracer, TokenProtectedReadClientManger clientMgr, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
             {
                 this.tracer = tracer;
-                this.client = client;
+                this.clientMgr = clientMgr;
                 this.streamName = streamName;
                 this.maxRetries = maxRetries;
                 this.initialDelayMs = initialDelayMs;
@@ -1530,6 +1531,53 @@ namespace AdbcDrivers.BigQuery
                         {
                             throw;
                         }
+                        catch (Exception ex) when (BigQueryUtils.IsGrpcUnauthenticated(ex))
+                        {
+                            // Try to refresh the Google access token and reconnect.
+                            // For OAuth: trades refresh_token for a new access token.
+                            // For Entra ID: re-trades the (hopefully still valid) Entra token at Google STS.
+                            // For service account: re-mints from the JSON private key.
+                            if (this.clientMgr.UpdateToken != null)
+                            {
+                                try
+                                {
+                                    activity?.AddEvent("token_refresh_started", [
+                                        new("stream.name", this.streamName),
+                                        new("stream.row_offset", this.rowsRead),
+                                    ]);
+                                    await this.clientMgr.UpdateToken().ConfigureAwait(false);
+                                    activity?.AddEvent("token_refresh_completed");
+
+                                    // Dispose the old stream and reconnect with the refreshed client
+                                    try
+                                    {
+                                        await this.response!.DisposeAsync().ConfigureAwait(false);
+                                    }
+                                    catch
+                                    {
+                                        // Best-effort disposal of the broken stream
+                                    }
+                                    this.response = CreateEnumerator(this.rowsRead, effectiveToken);
+                                    activity?.AddEvent("stream_reconnected_after_token_refresh", [
+                                        new("stream.name", this.streamName),
+                                        new("stream.row_offset", this.rowsRead),
+                                    ]);
+                                    continue;
+                                }
+                                catch (Exception refreshEx)
+                                {
+                                    // Token refresh failed (e.g., Entra ID token also expired).
+                                    activity?.AddException(refreshEx, [
+                                        new KeyValuePair<string, object?>("token_refresh.failed", true),
+                                    ]);
+                                }
+                            }
+
+                            throw new AdbcException(
+                                $"Authentication failed reading stream '{this.streamName}' at row offset {this.rowsRead}. {ex.GetType().Name}: {ex.Message}",
+                                AdbcStatusCode.Unauthenticated,
+                                ex);
+                        }
                         catch (Exception ex) when (retryCount < this.maxRetries)
                         {
                             activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex, [
@@ -1558,9 +1606,13 @@ namespace AdbcDrivers.BigQuery
                         }
                         catch (Exception ex)
                         {
+                            AdbcStatusCode statusCode = BigQueryUtils.IsGrpcUnauthenticated(ex)
+                                ? AdbcStatusCode.Unauthenticated
+                                : AdbcStatusCode.IOError;
+
                             throw new AdbcException(
                                 $"Cannot read stream '{this.streamName}' after {this.maxRetries} retries at row offset {this.rowsRead}. Last exception: {ex.GetType().Name}: {ex.Message}",
-                                AdbcStatusCode.IOError,
+                                statusCode,
                                 ex);
                         }
                     }
@@ -1569,7 +1621,7 @@ namespace AdbcDrivers.BigQuery
 
             private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset, CancellationToken effectiveToken)
             {
-                BigQueryReadClient.ReadRowsStream readRowsStream = this.client.ReadRows(
+                BigQueryReadClient.ReadRowsStream readRowsStream = this.clientMgr.ReadClient.ReadRows(
                     new ReadRowsRequest { ReadStream = this.streamName, Offset = offset });
                 return readRowsStream.GetResponseStream().GetAsyncEnumerator(effectiveToken);
             }

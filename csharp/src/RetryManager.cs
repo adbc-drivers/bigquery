@@ -46,10 +46,11 @@ namespace AdbcDrivers.BigQuery
                 throw new AdbcException("There is no method to retry", AdbcStatusCode.InvalidArgument);
             }
 
-            int retryCount = 0;
+            int attempt = 0;
+            int maxAttempts = maxRetries + 1; // maxRetries=0 means 1 attempt, maxRetries=5 means 6 attempts
             int delay = initialDelayMilliseconds;
 
-            while (retryCount < maxRetries)
+            while (attempt < maxAttempts)
             {
                 try
                 {
@@ -60,21 +61,21 @@ namespace AdbcDrivers.BigQuery
                 {
                     // Note: OperationCanceledException could be thrown from the call,
                     // but we only want to break out when the cancellation was requested from the caller.
-                    activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex));
+                    activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(attempt, ex));
 
-                    retryCount++;
-                    if (retryCount >= maxRetries)
+                    attempt++;
+                    if (attempt >= maxAttempts)
                     {
                         if ((tokenProtectedResource?.UpdateToken != null))
                         {
                             if (tokenProtectedResource?.TokenRequiresUpdate(ex) == true)
                             {
                                 activity?.AddBigQueryTag("update_token.status", "Expired");
-                                throw new AdbcException($"Cannot update access token after {maxRetries} tries. Last exception: {ex.GetType().Name}: {ex.Message}", AdbcStatusCode.Unauthenticated, ex);
+                                throw new AdbcException($"Cannot update access token after {maxAttempts} attempt(s). Last exception: {ex.GetType().Name}: {ex.Message}", AdbcStatusCode.Unauthenticated, ex);
                             }
                         }
 
-                        throw new AdbcException($"Cannot execute {action.Method.Name} after {maxRetries} tries. Last exception: {ex.GetType().Name}: {ex.Message}", AdbcStatusCode.UnknownError, ex);
+                        throw new AdbcException($"Cannot execute {action.Method.Name} after {maxAttempts} attempt(s). Last exception: {ex.GetType().Name}: {ex.Message}", AdbcStatusCode.UnknownError, ex);
                     }
 
                     if ((tokenProtectedResource?.UpdateToken != null))
@@ -87,11 +88,12 @@ namespace AdbcDrivers.BigQuery
                         }
                     }
 
-                    await Task.Delay(delay);
+                    await Task.Delay(delay, cancellationToken);
                     delay = Math.Min(2 * delay, 5000);
                 }
             }
 
+            // This should be unreachable, but kept as a safety net
             throw new AdbcException($"Could not successfully call {action.Method.Name}", AdbcStatusCode.UnknownError);
         }
     }
