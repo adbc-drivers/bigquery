@@ -1552,19 +1552,8 @@ namespace AdbcDrivers.BigQuery
                                     await this.clientMgr.UpdateToken().ConfigureAwait(false);
                                     activity?.AddEvent("token_refresh_completed");
 
-                                    // Dispose the old stream and reconnect with the refreshed client
-                                    try
-                                    {
-                                        await this.response!.DisposeAsync().ConfigureAwait(false);
-                                    }
-                                    catch
-                                    {
-                                        // Best-effort disposal of the broken stream
-                                    }
-                                    this.response = CreateEnumerator(this.rowsRead, effectiveToken);
-                                    activity?.AddEvent("stream_reconnected_after_token_refresh", [
-                                        new("stream.name", this.streamName),
-                                        new("stream.row_offset", this.rowsRead),
+                                    await ReconnectStreamAsync("token_refresh", effectiveToken, activity, [
+                                        new("token_refresh.attempt", tokenRefreshCount),
                                     ]);
                                     continue;
                                 }
@@ -1593,19 +1582,7 @@ namespace AdbcDrivers.BigQuery
                             await Task.Delay(delay, effectiveToken).ConfigureAwait(false);
                             delay = Math.Min(2 * delay, 5000);
 
-                            // Re-create the gRPC stream starting from the offset of rows already read
-                            try
-                            {
-                                await this.response.DisposeAsync().ConfigureAwait(false);
-                            }
-                            catch
-                            {
-                                // Best-effort disposal of the broken stream
-                            }
-                            this.response = CreateEnumerator(this.rowsRead, effectiveToken);
-                            activity?.AddEvent("stream_reconnected", [
-                                new("stream.name", this.streamName),
-                                new("stream.row_offset", this.rowsRead),
+                            await ReconnectStreamAsync("general_retry", effectiveToken, activity, [
                                 new("retry.attempt", retryCount),
                             ]);
                         }
@@ -1622,6 +1599,53 @@ namespace AdbcDrivers.BigQuery
                         }
                     }
                 }, ClassName + "." + nameof(MoveNextWithRetryAsync));
+            }
+
+            /// <summary>
+            /// Disposes the current stream (best-effort) and creates a new enumerator starting from the current row offset.
+            /// </summary>
+            /// <param name="context">A description of why reconnection is happening (e.g., "token_refresh", "general_retry").</param>
+            /// <param name="effectiveToken">The cancellation token to use for the new stream.</param>
+            /// <param name="activity">Optional activity for telemetry.</param>
+            /// <param name="additionalTags">Optional additional tags to include in the reconnection event.</param>
+            private async Task ReconnectStreamAsync(
+                string context,
+                CancellationToken effectiveToken,
+                Activity? activity,
+                IEnumerable<KeyValuePair<string, object?>>? additionalTags = null)
+            {
+                // Dispose the old stream (best-effort)
+                try
+                {
+                    await this.response!.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception disposeEx)
+                {
+                    // Log disposal failure but don't fail the reconnection
+                    activity?.AddEvent("stream_dispose_failed", [
+                        new("stream.name", this.streamName),
+                        new("stream.row_offset", this.rowsRead),
+                        new("dispose.context", context),
+                        new("dispose.exception_type", disposeEx.GetType().Name),
+                        new("dispose.exception_message", disposeEx.Message),
+                    ]);
+                }
+
+                // Create new enumerator starting from current offset
+                this.response = CreateEnumerator(this.rowsRead, effectiveToken);
+
+                // Log the reconnection
+                var tags = new List<KeyValuePair<string, object?>>
+                {
+                    new("stream.name", this.streamName),
+                    new("stream.row_offset", this.rowsRead),
+                    new("reconnect.context", context),
+                };
+                if (additionalTags != null)
+                {
+                    tags.AddRange(additionalTags);
+                }
+                activity?.AddEvent("stream_reconnected", tags);
             }
 
             private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset, CancellationToken effectiveToken)
