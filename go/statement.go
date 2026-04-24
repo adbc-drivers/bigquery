@@ -63,28 +63,28 @@ type statement struct {
 	bulkIngestCompression string
 }
 
-func (st *statement) GetOptionBytes(key string) ([]byte, error) {
+func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
 	return nil, adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotFound,
 	}
 }
 
-func (st *statement) GetOptionDouble(key string) (float64, error) {
+func (st *statement) GetOptionDouble(ctx context.Context, key string) (float64, error) {
 	return 0, adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotFound,
 	}
 }
 
-func (st *statement) SetOptionBytes(key string, value []byte) error {
+func (st *statement) SetOptionBytes(ctx context.Context, key string, value []byte) error {
 	return adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotImplemented,
 	}
 }
 
-func (st *statement) SetOptionDouble(key string, value float64) error {
+func (st *statement) SetOptionDouble(ctx context.Context, key string, value float64) error {
 	return adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotImplemented,
@@ -95,7 +95,7 @@ func (st *statement) SetOptionDouble(key string, value float64) error {
 // and closes it (particularly if it is a prepared statement).
 //
 // A statement instance should not be used after Close is called.
-func (st *statement) Close() error {
+func (st *statement) Close(ctx context.Context) error {
 	if st.cnxn == nil {
 		return adbc.Error{
 			Msg:  "[bq] statement already closed",
@@ -108,10 +108,10 @@ func (st *statement) Close() error {
 	return nil
 }
 
-func (st *statement) GetOption(key string) (string, error) {
+func (st *statement) GetOption(ctx context.Context, key string) (string, error) {
 	switch key {
 	case OptionStringProjectID:
-		val, err := st.cnxn.GetOption(OptionStringProjectID)
+		val, err := st.cnxn.GetOption(ctx, OptionStringProjectID)
 		if err != nil {
 			return "", err
 		} else {
@@ -148,15 +148,15 @@ func (st *statement) GetOption(key string) (string, error) {
 		if st.bulkIngestMethod != "" {
 			return st.bulkIngestMethod, nil
 		}
-		return st.cnxn.GetOption(key)
+		return st.cnxn.GetOption(ctx, key)
 	case OptionStringBulkIngestCompression:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestCompression != "" {
 			return st.bulkIngestCompression, nil
 		}
-		return st.cnxn.GetOption(key)
+		return st.cnxn.GetOption(ctx, key)
 	default:
-		val, err := st.cnxn.GetOption(key)
+		val, err := st.cnxn.GetOption(ctx, key)
 		if err == nil {
 			return val, nil
 		}
@@ -164,7 +164,7 @@ func (st *statement) GetOption(key string) (string, error) {
 	}
 }
 
-func (st *statement) GetOptionInt(key string) (int64, error) {
+func (st *statement) GetOptionInt(ctx context.Context, key string) (int64, error) {
 	switch key {
 	case OptionIntQueryMaxBillingTier:
 		return int64(st.queryConfig.MaxBillingTier), nil
@@ -177,7 +177,7 @@ func (st *statement) GetOptionInt(key string) (int64, error) {
 	case OptionIntQueryPrefetchConcurrency:
 		return int64(st.prefetchConcurrency), nil
 	default:
-		val, err := st.cnxn.GetOptionInt(key)
+		val, err := st.cnxn.GetOptionInt(ctx, key)
 		if err == nil {
 			return val, nil
 		}
@@ -185,7 +185,7 @@ func (st *statement) GetOptionInt(key string) (int64, error) {
 	}
 }
 
-func (st *statement) SetOption(key string, v string) error {
+func (st *statement) SetOption(ctx context.Context, key string, v string) error {
 	switch key {
 	case adbc.OptionKeyIngestTargetTable:
 		st.ingest.TableName = v
@@ -332,7 +332,7 @@ func (st *statement) SetOption(key string, v string) error {
 	return nil
 }
 
-func (st *statement) SetOptionInt(key string, value int64) error {
+func (st *statement) SetOptionInt(ctx context.Context, key string, value int64) error {
 	switch key {
 	case OptionIntQueryMaxBillingTier:
 		st.queryConfig.MaxBillingTier = int(value)
@@ -360,7 +360,7 @@ func (st *statement) SetOptionInt(key string, value int64) error {
 // The query can then be executed with any of the Execute methods.
 // For queries expected to be executed repeatedly, Prepare should be
 // called before execution.
-func (st *statement) SetSqlQuery(query string) error {
+func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 	st.ingest.TableName = ""
 	st.queryConfig.Q = query
 	return nil
@@ -488,7 +488,7 @@ func (st *statement) Prepare(_ context.Context) error {
 // Like SetSqlQuery, after this is called the query can be executed
 // using any of the Execute methods. If the query is expected to be
 // executed repeatedly, Prepare should be called first on the statement.
-func (st *statement) SetSubstraitPlan(plan []byte) error {
+func (st *statement) SetSubstraitPlan(ctx context.Context, plan []byte) error {
 	return adbc.Error{
 		Code: adbc.StatusNotImplemented,
 		Msg:  "[bq] Substrait not yet implemented for BigQuery driver",
@@ -886,7 +886,7 @@ func (st *statement) BindStream(_ context.Context, stream array.RecordReader) er
 //
 // This should return an error with StatusNotImplemented if the schema
 // cannot be determined.
-func (st *statement) GetParameterSchema() (*arrow.Schema, error) {
+func (st *statement) GetParameterSchema(ctx context.Context) (*arrow.Schema, error) {
 	// We could look at UndeclaredParameters but BQ seems to just error if it sees
 	// parameters in a dry run
 	return nil, adbc.Error{
@@ -921,7 +921,7 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	}
 
 	// Check which implementation to use (statement-level option takes precedence)
-	method, err := st.GetOption(OptionStringBulkIngestMethod)
+	method, err := st.GetOption(ctx, OptionStringBulkIngestMethod)
 	if err != nil {
 		method = OptionValueBulkIngestMethodLoad
 	}
@@ -966,4 +966,4 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	return manager.ExecuteIngest()
 }
 
-var _ adbc.GetSetOptions = (*statement)(nil)
+var _ adbc.GetSetOptionsWithContext = (*statement)(nil)

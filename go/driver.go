@@ -155,7 +155,7 @@ type driverImpl struct {
 }
 
 // NewDriver creates a new BigQuery driver using the given Arrow allocator.
-func NewDriver(alloc memory.Allocator) adbc.Driver {
+func NewDriver(alloc memory.Allocator) driverbase.Driver {
 	info := driverbase.DefaultDriverInfo("BigQuery")
 	info.MustRegister(map[adbc.InfoCode]any{
 		adbc.InfoDriverName:      "ADBC Driver Foundry Driver for BigQuery",
@@ -168,11 +168,7 @@ func NewDriver(alloc memory.Allocator) adbc.Driver {
 	})
 }
 
-func (d *driverImpl) NewDatabase(opts map[string]string) (adbc.Database, error) {
-	return d.NewDatabaseWithContext(context.Background(), opts)
-}
-
-func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string]string) (adbc.Database, error) {
+func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string]string) (adbc.DatabaseWithContext, error) {
 	dbBase, err := driverbase.NewDatabaseImplBase(ctx, &d.DriverImplBase)
 	if err != nil {
 		return nil, err
@@ -181,7 +177,7 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 		DatabaseImplBase: dbBase,
 		authType:         OptionValueAuthTypeDefault,
 	}
-	if err := db.SetOptions(opts); err != nil {
+	if err := db.SetOptions(ctx, opts); err != nil {
 		return nil, err
 	}
 

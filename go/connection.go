@@ -277,23 +277,23 @@ type bigQueryTokenResponse struct {
 }
 
 // GetCurrentCatalog implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) GetCurrentCatalog() (string, error) {
+func (c *connectionImpl) GetCurrentCatalog(ctx context.Context) (string, error) {
 	return c.catalog, nil
 }
 
 // GetCurrentDbSchema implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) GetCurrentDbSchema() (string, error) {
+func (c *connectionImpl) GetCurrentDbSchema(ctx context.Context) (string, error) {
 	return c.dbSchema, nil
 }
 
 // SetCurrentCatalog implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) SetCurrentCatalog(value string) error {
+func (c *connectionImpl) SetCurrentCatalog(ctx context.Context, value string) error {
 	c.catalog = value
 	return nil
 }
 
 // SetCurrentDbSchema implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) SetCurrentDbSchema(value string) error {
+func (c *connectionImpl) SetCurrentDbSchema(ctx context.Context, value string) error {
 	sanitized, err := sanitizeDataset(value)
 	if err != nil {
 		return err
@@ -344,9 +344,7 @@ func (c *connectionImpl) exec(ctx context.Context, stmt string, config func(*big
 }
 
 // SetAutocommit implements driverbase.AutocommitSetter.
-func (c *connectionImpl) SetAutocommit(enabled bool) error {
-	// TODO(https://github.com/apache/arrow-adbc/issues/2772)
-	ctx := context.Background()
+func (c *connectionImpl) SetAutocommit(ctx context.Context, enabled bool) error {
 	if enabled {
 		if c.sessionID == nil {
 			// This should never happen
@@ -429,7 +427,7 @@ func (c *connectionImpl) Rollback(ctx context.Context) error {
 }
 
 // Close closes this connection and releases any associated resources.
-func (c *connectionImpl) Close() error {
+func (c *connectionImpl) Close(ctx context.Context) error {
 	err := c.client.Close()
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "close client")
@@ -547,7 +545,7 @@ func (c *connectionImpl) GetTableSchema(ctx context.Context, catalog *string, db
 }
 
 // NewStatement initializes a new statement object tied to this connection
-func (c *connectionImpl) NewStatement() (adbc.Statement, error) {
+func (c *connectionImpl) NewStatement(ctx context.Context) (adbc.StatementWithContext, error) {
 	return &statement{
 		alloc:                  c.Alloc,
 		cnxn:                   c,
@@ -562,7 +560,7 @@ func (c *connectionImpl) NewStatement() (adbc.Statement, error) {
 	}, nil
 }
 
-func (c *connectionImpl) GetOption(key string) (string, error) {
+func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, error) {
 	switch key {
 	case OptionStringAuthType:
 		return c.authType, nil
@@ -604,11 +602,11 @@ func (c *connectionImpl) GetOption(key string) (string, error) {
 		}
 		return c.bulkIngestCompression, nil
 	default:
-		return c.ConnectionImplBase.GetOption(key)
+		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
 }
 
-func (c *connectionImpl) SetOption(key string, value string) error {
+func (c *connectionImpl) SetOption(ctx context.Context, key string, value string) error {
 	switch key {
 	case OptionStringAuthType:
 		c.authType = value
@@ -674,23 +672,23 @@ func (c *connectionImpl) SetOption(key string, value string) error {
 		}
 		c.bulkIngestCompression = value
 	default:
-		return c.ConnectionImplBase.SetOption(key, value)
+		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
 	return nil
 }
 
-func (c *connectionImpl) GetOptionInt(key string) (int64, error) {
+func (c *connectionImpl) GetOptionInt(ctx context.Context, key string) (int64, error) {
 	switch key {
 	case OptionIntQueryResultBufferSize:
 		return int64(c.resultRecordBufferSize), nil
 	case OptionIntQueryPrefetchConcurrency:
 		return int64(c.prefetchConcurrency), nil
 	default:
-		return c.ConnectionImplBase.GetOptionInt(key)
+		return c.ConnectionImplBase.GetOptionInt(ctx, key)
 	}
 }
 
-func (c *connectionImpl) SetOptionInt(key string, value int64) error {
+func (c *connectionImpl) SetOptionInt(ctx context.Context, key string, value int64) error {
 	switch key {
 	case OptionIntQueryResultBufferSize:
 		c.resultRecordBufferSize = int(value)
@@ -699,7 +697,7 @@ func (c *connectionImpl) SetOptionInt(key string, value int64) error {
 		c.prefetchConcurrency = int(value)
 		return nil
 	default:
-		return c.ConnectionImplBase.SetOptionInt(key, value)
+		return c.ConnectionImplBase.SetOptionInt(ctx, key, value)
 	}
 }
 

@@ -27,7 +27,7 @@ type ErrorTestSuite struct {
 func (s *ErrorTestSuite) TestBadQuery() {
 	ctx := context.Background()
 
-	s.NoError(s.stmt.SetSqlQuery("this syntax ain't right"))
+	s.NoError(s.stmt.SetSqlQuery(ctx, "this syntax ain't right"))
 	_, err := s.stmt.ExecuteUpdate(ctx)
 	var adbcError adbc.Error
 	s.ErrorAs(err, &adbcError)
@@ -38,7 +38,7 @@ func (s *ErrorTestSuite) TestBadQuery() {
 func (s *ErrorTestSuite) TestNonexistentTable() {
 	ctx := context.Background()
 
-	s.NoError(s.stmt.SetSqlQuery("SELECT * FROM thistabledoesnotexist"))
+	s.NoError(s.stmt.SetSqlQuery(ctx, "SELECT * FROM thistabledoesnotexist"))
 	_, err := s.stmt.ExecuteUpdate(ctx)
 	var adbcError adbc.Error
 	s.ErrorAs(err, &adbcError)
