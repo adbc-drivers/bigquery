@@ -722,6 +722,7 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 
 	stream, err := array.NewRecordReader(input, []arrow.RecordBatch{rec})
 	suite.Require().NoError(err)
+	defer stream.Release()
 
 	err = suite.Quirks.CreateSampleTableWithStreams(bulkInsertTableName, stream)
 	suite.Require().NoError(err)
@@ -763,6 +764,7 @@ func (suite *BigQueryTests) TestBulkInsertWrite() {
 
 	stream, err := array.NewRecordReader(schema, []arrow.RecordBatch{rec, rec2})
 	suite.Require().NoError(err)
+	defer stream.Release()
 
 	suite.Require().NoError(suite.stmt.BindStream(suite.ctx, stream))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionKeyIngestTargetTable, table))
