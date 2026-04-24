@@ -63,7 +63,7 @@ type databaseImpl struct {
 	bulkIngestCompression string
 }
 
-func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
+func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
 	conn := &connectionImpl{
 		ConnectionImplBase:         driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
 		authType:                   d.authType,
@@ -101,9 +101,9 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		Connection(), nil
 }
 
-func (d *databaseImpl) Close() error { return nil }
+func (d *databaseImpl) Close(ctx context.Context) error { return nil }
 
-func (d *databaseImpl) GetOption(key string) (string, error) {
+func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {
 	switch key {
 	case OptionStringAuthType:
 		return d.authType, nil
@@ -149,16 +149,16 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 		}
 		return d.bulkIngestCompression, nil
 	default:
-		return d.DatabaseImplBase.GetOption(key)
+		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
 }
 
-func (d *databaseImpl) SetOptions(options map[string]string) error {
+func (d *databaseImpl) SetOptions(ctx context.Context, options map[string]string) error {
 	// Process "uri" first so that URI-parsed defaults (e.g. auth_type=ADC) are
 	// set before any explicit options. Subsequent options will then override
 	// those defaults, regardless of Go's non-deterministic map iteration order.
 	if uri, ok := options["uri"]; ok {
-		if err := d.SetOption("uri", uri); err != nil {
+		if err := d.SetOption(ctx, "uri", uri); err != nil {
 			return err
 		}
 	}
@@ -166,7 +166,7 @@ func (d *databaseImpl) SetOptions(options map[string]string) error {
 		if k == "uri" {
 			continue // already processed above
 		}
-		err := d.SetOption(k, v)
+		err := d.SetOption(ctx, k, v)
 		if err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func (d *databaseImpl) hasImpersonationOptions() bool {
 		len(d.impersonateScopes) > 0
 }
 
-func (d *databaseImpl) SetOption(key string, value string) error {
+func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) error {
 	switch key {
 	case "uri":
 		params, err := ParseBigQueryURIToParams(value)
@@ -189,7 +189,7 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		}
 
 		for paramKey, paramValue := range params {
-			if err := d.SetOption(paramKey, paramValue); err != nil {
+			if err := d.SetOption(ctx, paramKey, paramValue); err != nil {
 				return err
 			}
 		}
@@ -280,7 +280,7 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		}
 		d.bulkIngestCompression = value
 	default:
-		return d.DatabaseImplBase.SetOption(key, value)
+		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}
 	return nil
 }
