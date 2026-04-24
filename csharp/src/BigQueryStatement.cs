@@ -41,7 +41,6 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Bigquery.v2.Data;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Cloud.BigQuery.V2;
-using Grpc.Core;
 using TableFieldSchema = Google.Apis.Bigquery.v2.Data.TableFieldSchema;
 using TableSchema = Google.Apis.Bigquery.v2.Data.TableSchema;
 
@@ -156,7 +155,8 @@ namespace AdbcDrivers.BigQuery
                     return await ExecuteMetadataCommandQuery(activity);
                 }
 
-                BigQueryJob job = await Client.CreateQueryJobAsync(SqlQuery, null, queryOptions);
+                BigQueryJob job = await ExecuteWithRetriesAsync(
+                    () => Client.CreateQueryJobAsync(SqlQuery, null, queryOptions), activity).ConfigureAwait(false);
                 JobReference jobReference = job.Reference;
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
 
@@ -742,7 +742,7 @@ namespace AdbcDrivers.BigQuery
             foreach (var stream in rrs.Streams)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                readers.Add(new ReadRowsStream(this, bigQueryReadClient, stream.Name, MaxRetryAttempts, RetryDelayMs, cancellationToken));
+                readers.Add(new ReadRowsStream(this, clientMgr, stream.Name, MaxRetryAttempts, RetryDelayMs, cancellationToken));
             }
 
             return readers;
@@ -1447,7 +1447,7 @@ namespace AdbcDrivers.BigQuery
         sealed class ReadRowsStream : IArrowArrayStream
         {
             readonly IActivityTracer tracer;
-            readonly BigQueryReadClient client;
+            readonly TokenProtectedReadClientManger clientMgr;
             readonly string streamName;
             readonly int maxRetries;
             readonly int initialDelayMs;
@@ -1458,10 +1458,10 @@ namespace AdbcDrivers.BigQuery
             bool initialized;
             bool disposed;
 
-            public ReadRowsStream(IActivityTracer tracer, BigQueryReadClient client, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+            public ReadRowsStream(IActivityTracer tracer, TokenProtectedReadClientManger clientMgr, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
             {
                 this.tracer = tracer;
-                this.client = client;
+                this.clientMgr = clientMgr;
                 this.streamName = streamName;
                 this.maxRetries = maxRetries;
                 this.initialDelayMs = initialDelayMs;
@@ -1518,6 +1518,7 @@ namespace AdbcDrivers.BigQuery
                     }
 
                     int retryCount = 0;
+                    int tokenRefreshCount = 0;
                     int delay = this.initialDelayMs;
 
                     while (true)
@@ -1530,6 +1531,47 @@ namespace AdbcDrivers.BigQuery
                         {
                             throw;
                         }
+                        catch (Exception ex) when (BigQueryUtils.IsGrpcUnauthenticated(ex))
+                        {
+                            // Try to refresh the Google access token and reconnect.
+                            // For OAuth: trades refresh_token for a new access token.
+                            // For Entra ID: re-trades the (hopefully still valid) Entra token at Google STS.
+                            // For service account: re-mints from the JSON private key.
+                            // Token refresh attempts are tracked separately from general retries
+                            // to avoid double-counting when both error types occur.
+                            if (this.clientMgr.UpdateToken != null && tokenRefreshCount < maxRetries)
+                            {
+                                tokenRefreshCount++;
+                                try
+                                {
+                                    activity?.AddEvent("token_refresh_started", [
+                                        new("stream.name", this.streamName),
+                                        new("stream.row_offset", this.rowsRead),
+                                        new("token_refresh.attempt", tokenRefreshCount),
+                                    ]);
+                                    await this.clientMgr.UpdateToken().ConfigureAwait(false);
+                                    activity?.AddEvent("token_refresh_completed");
+
+                                    await ReconnectStreamAsync("token_refresh", effectiveToken, activity, [
+                                        new("token_refresh.attempt", tokenRefreshCount),
+                                    ]);
+                                    continue;
+                                }
+                                catch (Exception refreshEx)
+                                {
+                                    // Token refresh failed (e.g., Entra ID token also expired).
+                                    activity?.AddException(refreshEx, [
+                                        new KeyValuePair<string, object?>("token_refresh.failed", true),
+                                        new KeyValuePair<string, object?>("token_refresh.attempt", tokenRefreshCount),
+                                    ]);
+                                }
+                            }
+
+                            throw new AdbcException(
+                                $"Authentication failed reading stream '{this.streamName}' at row offset {this.rowsRead}. {ex.GetType().Name}: {ex.Message}",
+                                AdbcStatusCode.Unauthenticated,
+                                ex);
+                        }
                         catch (Exception ex) when (retryCount < this.maxRetries)
                         {
                             activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex, [
@@ -1540,36 +1582,75 @@ namespace AdbcDrivers.BigQuery
                             await Task.Delay(delay, effectiveToken).ConfigureAwait(false);
                             delay = Math.Min(2 * delay, 5000);
 
-                            // Re-create the gRPC stream starting from the offset of rows already read
-                            try
-                            {
-                                await this.response.DisposeAsync().ConfigureAwait(false);
-                            }
-                            catch
-                            {
-                                // Best-effort disposal of the broken stream
-                            }
-                            this.response = CreateEnumerator(this.rowsRead, effectiveToken);
-                            activity?.AddEvent("stream_reconnected", [
-                                new("stream.name", this.streamName),
-                                new("stream.row_offset", this.rowsRead),
+                            await ReconnectStreamAsync("general_retry", effectiveToken, activity, [
                                 new("retry.attempt", retryCount),
                             ]);
                         }
                         catch (Exception ex)
                         {
+                            AdbcStatusCode statusCode = BigQueryUtils.IsGrpcUnauthenticated(ex)
+                                ? AdbcStatusCode.Unauthenticated
+                                : AdbcStatusCode.IOError;
+
                             throw new AdbcException(
                                 $"Cannot read stream '{this.streamName}' after {this.maxRetries} retries at row offset {this.rowsRead}. Last exception: {ex.GetType().Name}: {ex.Message}",
-                                AdbcStatusCode.IOError,
+                                statusCode,
                                 ex);
                         }
                     }
                 }, ClassName + "." + nameof(MoveNextWithRetryAsync));
             }
 
+            /// <summary>
+            /// Disposes the current stream (best-effort) and creates a new enumerator starting from the current row offset.
+            /// </summary>
+            /// <param name="context">A description of why reconnection is happening (e.g., "token_refresh", "general_retry").</param>
+            /// <param name="effectiveToken">The cancellation token to use for the new stream.</param>
+            /// <param name="activity">Optional activity for telemetry.</param>
+            /// <param name="additionalTags">Optional additional tags to include in the reconnection event.</param>
+            private async Task ReconnectStreamAsync(
+                string context,
+                CancellationToken effectiveToken,
+                Activity? activity,
+                IEnumerable<KeyValuePair<string, object?>>? additionalTags = null)
+            {
+                // Dispose the old stream (best-effort)
+                try
+                {
+                    await this.response!.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception disposeEx)
+                {
+                    // Log disposal failure but don't fail the reconnection
+                    activity?.AddEvent("stream_dispose_failed", [
+                        new("stream.name", this.streamName),
+                        new("stream.row_offset", this.rowsRead),
+                        new("dispose.context", context),
+                        new("dispose.exception_type", disposeEx.GetType().Name),
+                        new("dispose.exception_message", disposeEx.Message),
+                    ]);
+                }
+
+                // Create new enumerator starting from current offset
+                this.response = CreateEnumerator(this.rowsRead, effectiveToken);
+
+                // Log the reconnection
+                var tags = new List<KeyValuePair<string, object?>>
+                {
+                    new("stream.name", this.streamName),
+                    new("stream.row_offset", this.rowsRead),
+                    new("reconnect.context", context),
+                };
+                if (additionalTags != null)
+                {
+                    tags.AddRange(additionalTags);
+                }
+                activity?.AddEvent("stream_reconnected", tags);
+            }
+
             private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset, CancellationToken effectiveToken)
             {
-                BigQueryReadClient.ReadRowsStream readRowsStream = this.client.ReadRows(
+                BigQueryReadClient.ReadRowsStream readRowsStream = this.clientMgr.ReadClient.ReadRows(
                     new ReadRowsRequest { ReadStream = this.streamName, Offset = offset });
                 return readRowsStream.GetResponseStream().GetAsyncEnumerator(effectiveToken);
             }
