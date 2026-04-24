@@ -854,9 +854,9 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		client.Location = c.location
 	}
 
-	// EnableStorageReadClient uses gRPC (HTTP/2) which may hang in environments
-	// where HTTP/2 is blocked (e.g., SSL inspection proxies). Guard with a 30s
-	// timeout so the driver fails fast instead of hanging indefinitely.
+	// EnableStorageReadClient opens a gRPC connection to the BigQuery Storage
+	// Read API. Guard with a 30s timeout so the driver fails fast instead of
+	// hanging indefinitely if the call does not return.
 	//
 	// When OptionStringQueryBackendAPI is set to "jobs", we skip initialising
 	// the Storage Read client entirely. Note: the actual REST-based fallback
@@ -871,7 +871,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		if err := client.EnableStorageReadClient(storageCtx, storageAuthOptions...); err != nil {
 			if storageCtx.Err() != nil {
-				c.Logger.Warn("BigQuery Storage Read API timed out after 30s (possible HTTP/2 proxy issue). Set " + OptionStringQueryBackendAPI + "=" + OptionValueQueryBackendAPIJobs + " to skip this once the REST fallback is implemented (issue #66).")
+				c.Logger.Warn("BigQuery Storage Read API timed out after 30s. See " + OptionStringQueryBackendAPI + " (issue #66) for the future REST fallback.")
 			} else {
 				c.Logger.Warn("BigQuery Storage Read API unavailable", "err", err)
 			}

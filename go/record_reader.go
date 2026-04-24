@@ -138,12 +138,12 @@ func runQuery(ctx context.Context, logger *slog.Logger, queryBackendAPI string, 
 		}
 
 		// ArrowIterator() opens a gRPC read session via BigQuery Storage API
-		// (CreateReadSession RPC). In environments where HTTP/2 is blocked
-		// (e.g. VPN with SSL inspection proxy), this call hangs indefinitely.
-		// We apply a 30s timeout so the caller gets a clear error instead of
-		// blocking forever. The goroutine may outlive the timeout if the
-		// underlying gRPC connection does not respect context cancellation,
-		// but it will be cleaned up when the connection is closed.
+		// (CreateReadSession RPC). The call does not accept a context, and
+		// has been observed to hang indefinitely in some environments. Apply
+		// a 30s timeout so the caller gets a clear error instead of blocking
+		// forever. The goroutine may outlive the timeout since the underlying
+		// gRPC call cannot be cancelled from here, but it will be cleaned up
+		// when the connection is closed.
 		type arrowIterResult struct {
 			ai  bigquery.ArrowIterator
 			err error
@@ -175,8 +175,6 @@ func runQuery(ctx context.Context, logger *slog.Logger, queryBackendAPI string, 
 			return nil, -1, adbc.Error{
 				Code: adbc.StatusTimeout,
 				Msg: "[bq] BigQuery Storage Read API timed out after 30s. " +
-					"This may be caused by HTTP/2 being blocked by a VPN or SSL inspection proxy, " +
-					"or by running the driver inside a c-shared DLL where the gRPC stream stalls. " +
 					"See " + OptionStringQueryBackendAPI + " (issue #66) for the future REST fallback.",
 			}
 		}
