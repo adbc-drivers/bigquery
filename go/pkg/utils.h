@@ -90,6 +90,7 @@ AdbcStatusCode BigQueryStatementSetSqlQuery(struct AdbcStatement* stmt, const ch
 AdbcStatusCode BigQueryStatementSetSubstraitPlan(struct AdbcStatement* stmt, const uint8_t* plan, size_t length, struct AdbcError* err);
 
 AdbcStatusCode AdbcDriverBigQueryInit(int version, void* rawDriver, struct AdbcError* err);
+AdbcStatusCode AdbcDriverBigqueryInit(int version, void* rawDriver, struct AdbcError* err);
 AdbcStatusCode BigQueryDriverInit(int version, void* rawDriver, struct AdbcError* err);
 
 static inline void BigQueryerrRelease(struct AdbcError* error) {
