@@ -824,30 +824,6 @@ func (st *statement) clearParameters() {
 	}
 }
 
-// SetParameters takes a record batch to send as the parameter bindings when
-// executing. It should match the schema from ParameterSchema.
-//
-// This will call Retain on the record to ensure it doesn't get released out
-// from under the statement. Release will be called on a previous binding
-// record or reader if it existed, and will be called upon calling Close on the
-// PreparedStatement.
-func (st *statement) SetParameters(binding arrow.RecordBatch) {
-	st.clearParameters()
-	st.params, _ = array.NewRecordReader(binding.Schema(), []arrow.RecordBatch{binding})
-}
-
-// SetRecordReader takes a RecordReader to send as the parameter bindings when
-// executing. It should match the schema from ParameterSchema.
-//
-// This will call Retain on the reader to ensure it doesn't get released out
-// from under the statement. Release will be called on a previous binding
-// record or reader if it existed, and will be called upon calling Close on the
-// PreparedStatement.
-func (st *statement) SetRecordReader(binding array.RecordReader) {
-	st.clearParameters()
-	st.params = binding
-}
-
 // Bind uses an arrow record batch to bind parameters to the query.
 //
 // This can be used for bulk inserts or for prepared statements.
@@ -855,7 +831,14 @@ func (st *statement) SetRecordReader(binding array.RecordReader) {
 // but it may not do this until the statement is closed or another
 // record is bound.
 func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
-	st.SetParameters(values)
+	st.clearParameters()
+	if values != nil {
+		stream, err := array.NewRecordReader(values.Schema(), []arrow.RecordBatch{values})
+		if err != nil {
+			return err
+		}
+		st.params = stream
+	}
 	return nil
 }
 
@@ -865,7 +848,11 @@ func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
 // The driver will call Release on the record reader, but may not do this
 // until Close is called.
 func (st *statement) BindStream(_ context.Context, stream array.RecordReader) error {
-	st.SetRecordReader(stream)
+	st.clearParameters()
+	if stream != nil {
+		st.params = stream
+		stream.Retain()
+	}
 	return nil
 }
 
