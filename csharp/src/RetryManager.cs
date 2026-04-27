@@ -20,16 +20,18 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-using Apache.Arrow.Adbc;
 using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Apache.Arrow.Adbc;
 
 namespace AdbcDrivers.BigQuery
 {
     /// <summary>
     /// Class that will retry calling a method with a backoff.
+    /// Only transient errors (server errors, rate limiting, connection issues) are retried.
+    /// Non-transient errors (invalid SQL, permission issues) fail immediately.
     /// </summary>
     internal class RetryManager
     {
@@ -46,10 +48,12 @@ namespace AdbcDrivers.BigQuery
                 throw new AdbcException("There is no method to retry", AdbcStatusCode.InvalidArgument);
             }
 
-            int retryCount = 0;
+            int attempt = 0;
+            int tokenRefreshAttempts = 0;
+            int maxAttempts = maxRetries + 1; // maxRetries=0 means 1 attempt, maxRetries=5 means 6 attempts
             int delay = initialDelayMilliseconds;
 
-            while (retryCount < maxRetries)
+            while (attempt < maxAttempts)
             {
                 try
                 {
@@ -60,38 +64,58 @@ namespace AdbcDrivers.BigQuery
                 {
                     // Note: OperationCanceledException could be thrown from the call,
                     // but we only want to break out when the cancellation was requested from the caller.
-                    activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex));
+                    activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(attempt, ex));
 
-                    retryCount++;
-                    if (retryCount >= maxRetries)
+                    // Check if this is an authentication error that requires token refresh
+                    bool isAuthError = tokenProtectedResource?.TokenRequiresUpdate(ex) == true;
+
+                    // Check if this is a retryable transient error
+                    bool isRetryable = BigQueryUtils.IsRetryableException(ex);
+
+                    // Only retry if it's an auth error (with token refresh) or a transient error
+                    if (!isAuthError && !isRetryable)
                     {
-                        if ((tokenProtectedResource?.UpdateToken != null))
-                        {
-                            if (tokenProtectedResource?.TokenRequiresUpdate(ex) == true)
-                            {
-                                activity?.AddBigQueryTag("update_token.status", "Expired");
-                                throw new AdbcException($"Cannot update access token after {maxRetries} tries. Last exception: {ex.GetType().Name}: {ex.Message}", AdbcStatusCode.Unauthenticated, ex);
-                            }
-                        }
-
-                        throw new AdbcException($"Cannot execute {action.Method.Name} after {maxRetries} tries. Last exception: {ex.GetType().Name}: {ex.Message}", AdbcStatusCode.UnknownError, ex);
+                        // Non-retryable error: fail fast to preserve error fidelity
+                        activity?.AddBigQueryTag("retry.skipped", "non_retryable_error");
+                        throw;
                     }
 
-                    if ((tokenProtectedResource?.UpdateToken != null))
+                    attempt++;
+                    if (attempt >= maxAttempts)
                     {
-                        if (tokenProtectedResource.TokenRequiresUpdate(ex) == true)
-                        {
-                            activity?.AddBigQueryTag("update_token.status", "Required");
-                            await tokenProtectedResource.UpdateToken();
-                            activity?.AddBigQueryTag("update_token.status", "Completed");
-                        }
+                        // Build a clear error message that describes what actually happened
+                        string tokenRefreshInfo = tokenRefreshAttempts > 0
+                            ? $" ({tokenRefreshAttempts} token refresh(es) attempted)"
+                            : string.Empty;
+
+                        AdbcStatusCode statusCode = isAuthError
+                            ? AdbcStatusCode.Unauthenticated
+                            : AdbcStatusCode.UnknownError;
+
+                        activity?.AddBigQueryTag("retry.token_refresh_attempts", tokenRefreshAttempts);
+
+                        throw new AdbcException(
+                            $"Operation failed after {maxAttempts} attempt(s){tokenRefreshInfo}. Last exception: {ex.GetType().Name}: {ex.Message}",
+                            statusCode,
+                            ex);
                     }
 
-                    await Task.Delay(delay);
+                    // Attempt token refresh if needed
+                    if (isAuthError && tokenProtectedResource?.UpdateToken != null)
+                    {
+                        tokenRefreshAttempts++;
+                        activity?.AddBigQueryTag("update_token.status", "Required");
+                        activity?.AddBigQueryTag("update_token.attempt", tokenRefreshAttempts);
+                        await tokenProtectedResource.UpdateToken();
+                        activity?.AddBigQueryTag("update_token.status", "Completed");
+                    }
+
+                    await Task.Delay(delay, cancellationToken);
                     delay = Math.Min(2 * delay, 5000);
                 }
             }
 
+            // This should be unreachable, but kept as a safety net
             throw new AdbcException($"Could not successfully call {action.Method.Name}", AdbcStatusCode.UnknownError);
         }
     }

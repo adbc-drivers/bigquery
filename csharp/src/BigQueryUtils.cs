@@ -40,8 +40,96 @@ namespace AdbcDrivers.BigQuery
             {
                 result = true;
             }
+            else if (IsGrpcUnauthenticated(ex))
+            {
+                result = true;
+            }
 
             return result;
+        }
+
+        internal static bool IsGrpcUnauthenticated(Exception ex)
+        {
+            return ContainsException<RpcException>(ex, out RpcException? rpcEx)
+                && rpcEx!.StatusCode == Grpc.Core.StatusCode.Unauthenticated;
+        }
+
+        /// <summary>
+        /// Determines if an exception represents a transient error that should be retried.
+        /// Non-transient errors (invalid SQL, permission issues, etc.) should fail immediately
+        /// to preserve fast feedback and error fidelity.
+        /// </summary>
+        /// <remarks>
+        /// Retryable conditions:
+        /// - HTTP 429 (Too Many Requests)
+        /// - HTTP 5xx (Server errors: 500, 502, 503, 504)
+        /// - gRPC Unavailable, DeadlineExceeded, ResourceExhausted, Aborted, Internal
+        /// - GoogleApiException with "backendError" or "internalError" reason
+        /// - Connection-related errors (connection reset, connection refused)
+        /// </remarks>
+        internal static bool IsRetryableException(Exception ex)
+        {
+            // Check for GoogleApiException (HTTP errors)
+            if (ContainsException<GoogleApiException>(ex, out GoogleApiException? googleEx))
+            {
+                // Retryable HTTP status codes
+                int statusCode = (int)googleEx!.HttpStatusCode;
+                if (statusCode == 429 || // Too Many Requests
+                    statusCode >= 500)   // Server errors (500, 502, 503, 504, etc.)
+                {
+                    return true;
+                }
+
+                // Check for retryable error reasons
+                if (googleEx.Error?.Errors != null && googleEx.Error.Errors.Count > 0)
+                {
+                    string? reason = googleEx.Error.Errors[0].Reason;
+                    if (reason == "backendError" || reason == "internalError" || reason == "rateLimitExceeded")
+                    {
+                        return true;
+                    }
+                }
+
+                // Non-retryable: 400 (Bad Request/Invalid SQL), 401, 403 (Permission), 404, etc.
+                return false;
+            }
+
+            // Check for gRPC exceptions
+            if (ContainsException<RpcException>(ex, out RpcException? rpcEx))
+            {
+                // Retryable gRPC status codes
+                switch (rpcEx!.StatusCode)
+                {
+                    case StatusCode.Unavailable:       // Service unavailable
+                    case StatusCode.DeadlineExceeded:  // Timeout
+                    case StatusCode.ResourceExhausted: // Rate limiting
+                    case StatusCode.Aborted:           // Conflict/retry
+                    case StatusCode.Internal:          // Internal server error
+                        return true;
+                    default:
+                        // Non-retryable: InvalidArgument, PermissionDenied, NotFound, etc.
+                        return false;
+                }
+            }
+
+            // Check for connection-related errors
+            string message = ex.Message?.ToLowerInvariant() ?? string.Empty;
+            if (message.Contains("connection reset") ||
+                message.Contains("connection refused") ||
+                message.Contains("http2: stream closed") ||
+                ex is System.IO.IOException)
+            {
+                return true;
+            }
+
+            // Check inner exceptions
+            if (ex.InnerException != null && ex.InnerException != ex)
+            {
+                return IsRetryableException(ex.InnerException);
+            }
+
+            // Default: not retryable (fail fast for unknown errors)
+            return false;
         }
 
         internal static string BigQueryAssemblyName = GetAssemblyName(typeof(BigQueryConnection));
