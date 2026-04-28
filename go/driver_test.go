@@ -1627,6 +1627,59 @@ func TestAuthTypeConsolidation(t *testing.T) {
 	}
 }
 
+func TestQueryBackendAPIOption(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	drv := driver.NewDriver(mem)
+
+	// Default value should be "storage_read".
+	db, err := drv.NewDatabase(nil)
+	require.NoError(t, err, "create database")
+	defer validation.CheckedClose(t, db)
+
+	getSetDB, ok := db.(adbc.GetSetOptions)
+	require.True(t, ok, "database should implement adbc.GetSetOptions")
+
+	val, err := getSetDB.GetOption(driver.OptionStringQueryBackendAPI)
+	require.NoError(t, err, "get default option")
+	assert.Equal(t, driver.OptionValueQueryBackendAPIStorageRead, val, "default backend")
+
+	// Setting "jobs" via SetOptions should work.
+	require.NoError(t,
+		db.SetOptions(map[string]string{driver.OptionStringQueryBackendAPI: driver.OptionValueQueryBackendAPIJobs}),
+		"set jobs backend")
+	val, err = getSetDB.GetOption(driver.OptionStringQueryBackendAPI)
+	require.NoError(t, err)
+	assert.Equal(t, driver.OptionValueQueryBackendAPIJobs, val)
+
+	// Setting "storage_read" explicitly should also work.
+	require.NoError(t,
+		db.SetOptions(map[string]string{driver.OptionStringQueryBackendAPI: driver.OptionValueQueryBackendAPIStorageRead}),
+		"set storage_read backend")
+	val, err = getSetDB.GetOption(driver.OptionStringQueryBackendAPI)
+	require.NoError(t, err)
+	assert.Equal(t, driver.OptionValueQueryBackendAPIStorageRead, val)
+
+	// Setting via NewDatabase should work.
+	db2, err := drv.NewDatabase(map[string]string{
+		driver.OptionStringQueryBackendAPI: driver.OptionValueQueryBackendAPIJobs,
+	})
+	require.NoError(t, err, "create database with option")
+	defer validation.CheckedClose(t, db2)
+
+	getSetDB2, ok := db2.(adbc.GetSetOptions)
+	require.True(t, ok)
+	val, err = getSetDB2.GetOption(driver.OptionStringQueryBackendAPI)
+	require.NoError(t, err)
+	assert.Equal(t, driver.OptionValueQueryBackendAPIJobs, val)
+
+	// Invalid value should return an error.
+	err = db.SetOptions(map[string]string{driver.OptionStringQueryBackendAPI: "rest"})
+	require.Error(t, err, "invalid value should error")
+	assert.Contains(t, err.Error(), "invalid value")
+}
+
 type BigQueryTestSuite struct {
 	suite.Suite
 	project string
