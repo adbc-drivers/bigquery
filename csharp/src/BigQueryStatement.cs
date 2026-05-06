@@ -279,19 +279,29 @@ namespace AdbcDrivers.BigQuery
 
                 long totalRows = results.TotalRows == null ? -1L : (long)results.TotalRows.Value;
 
+                // Create the reader-scoped cancellation context up front so that the same
+                // token can be embedded in every ReadRowsStream. The job-scoped
+                // cancellationContext is disposed when this method returns (via the `using`
+                // above), so any token captured from it would already be unusable by the
+                // time the consumer starts pulling batches. The reader-scoped context's
+                // lifetime is owned by the MultiArrowReader returned below.
+                CancellationContext readerCancellationContext = new CancellationContext(cancellationRegistry);
+
                 Task<IEnumerable<IArrowReader>> getArrowReadersFunc()
                 {
                     return ExecuteCancellableJobAsync(cancellationContext, activity, (context, jobActivity) =>
                     {
                         // Cancelling this step may leave the server with unread streams.
                         jobActivity?.AddBigQueryTag("job.id", context.Job?.Reference.JobId);
-                        return GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, jobActivity, context.CancellationToken);
+                        // Pass the reader-scoped token so each ReadRowsStream survives
+                        // beyond the disposal of the job-scoped cancellationContext.
+                        return GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, jobActivity, readerCancellationContext.CancellationToken);
                     }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(GetArrowReaders));
                 }
                 IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
 
                 // Note: MultiArrowReader must dispose the cancellationContext.
-                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, new CancellationContext(cancellationRegistry), maxStreamCount);
+                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, readerCancellationContext, maxStreamCount);
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
                 return new QueryResult(totalRows, stream);
             }, ClassName + "." + nameof(ExecuteQueryInternalAsync));

@@ -688,5 +688,154 @@ namespace AdbcDrivers.BigQuery.Tests
         }
 
         #endregion
+
+        #region CancellationLifetime tests
+
+        /// <summary>
+        /// Validates the post-fix invariant: a <c>ReadRowsStream</c> built with
+        /// a token from the reader-scoped <c>CancellationContext</c> remains
+        /// usable after the unrelated job-scoped <c>JobCancellationContext</c>
+        /// is disposed (which is what happens at the end of
+        /// <c>ExecuteQueryInternalAsync</c>'s <c>using</c> block).
+        /// </summary>
+        [Fact]
+        public async Task ReadRowsStream_StaysUsable_AfterJobCancellationContextDisposed()
+        {
+            using var registry = CreateRegistry();
+            using var jobContext = CreateJobContext(registry);
+            using var readerContext = CreateCancellationContext(registry);
+
+            CancellationToken jobToken = GetToken(jobContext);
+            CancellationToken readerToken = GetToken(readerContext);
+
+            Assert.False(jobToken.IsCancellationRequested);
+            Assert.False(readerToken.IsCancellationRequested);
+
+            // Mock read client that returns an empty stream so MoveNext returns false.
+            var mockReadClient = new Mock<BigQueryReadClient>(MockBehavior.Strict);
+            mockReadClient
+                .Setup(c => c.ReadRows(It.IsAny<ReadRowsRequest>(), null))
+                .Returns(() => CreateEmptyReadRowsStream());
+
+            // Build the stream using the *reader-scoped* token (the fix).
+            IArrowArrayStream stream = CreateReadRowsStreamForTest(
+                mockReadClient.Object, "test-stream", streamCancellationToken: readerToken);
+
+            // Simulate ExecuteQueryInternalAsync's `using` block exiting:
+            // the job context is disposed without ever being canceled.
+            DisposeContext(jobContext);
+
+            // The reader-scoped token should be unaffected, so the stream
+            // should still be readable. Empty stream returns null.
+            Assert.False(readerToken.IsCancellationRequested);
+            Apache.Arrow.RecordBatch? batch = await stream.ReadNextRecordBatchAsync(CancellationToken.None);
+            Assert.Null(batch);
+        }
+
+        /// <summary>
+        /// Disposing one <c>CancellationContext</c> must not cancel a sibling
+        /// context registered on the same <c>CancellationRegistry</c>.
+        /// </summary>
+        [Fact]
+        public void DisposingJobContext_DoesNotAffectSiblingContextToken()
+        {
+            using var registry = CreateRegistry();
+            using var jobContext = CreateJobContext(registry);
+            using var readerContext = CreateCancellationContext(registry);
+
+            CancellationToken readerToken = GetToken(readerContext);
+            Assert.False(readerToken.IsCancellationRequested);
+
+            DisposeContext(jobContext);
+
+            Assert.False(readerToken.IsCancellationRequested);
+            Assert.True(readerToken.CanBeCanceled);
+        }
+
+        /// <summary>
+        /// <c>BigQueryStatement.Cancel()</c> must still cancel the
+        /// reader-scoped context, because the fix keeps it registered with the
+        /// statement's <c>CancellationRegistry</c>.
+        /// </summary>
+        [Fact]
+        public void RegistryCancelAll_CancelsReaderScopedContext()
+        {
+            using var registry = CreateRegistry();
+            using var jobContext = CreateJobContext(registry);
+            using var readerContext = CreateCancellationContext(registry);
+
+            CancellationToken readerToken = GetToken(readerContext);
+            CancellationToken jobToken = GetToken(jobContext);
+
+            InvokeCancelAll(registry);
+
+            Assert.True(jobToken.IsCancellationRequested);
+            Assert.True(readerToken.IsCancellationRequested);
+        }
+
+        #region Reflection helpers for CancellationRegistry/Context
+
+        private static readonly Type s_registryType =
+            typeof(BigQueryStatement).GetNestedType("CancellationRegistry", BindingFlags.NonPublic)!;
+
+        private static readonly Type s_contextType =
+            typeof(BigQueryStatement).GetNestedType("CancellationContext", BindingFlags.NonPublic)!;
+
+        private static readonly Type s_jobContextType =
+            typeof(BigQueryStatement).GetNestedType("JobCancellationContext", BindingFlags.NonPublic)!;
+
+        private static IDisposable CreateRegistry()
+        {
+            object instance = Activator.CreateInstance(
+                s_registryType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                Array.Empty<object>(),
+                null)!;
+            return (IDisposable)instance;
+        }
+
+        private static IDisposable CreateCancellationContext(IDisposable registry)
+        {
+            object instance = Activator.CreateInstance(
+                s_contextType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                new object[] { registry },
+                null)!;
+            return (IDisposable)instance;
+        }
+
+        private static IDisposable CreateJobContext(IDisposable registry)
+        {
+            object instance = Activator.CreateInstance(
+                s_jobContextType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                new object?[] { registry, null },
+                null)!;
+            return (IDisposable)instance;
+        }
+
+        private static CancellationToken GetToken(IDisposable context)
+        {
+            PropertyInfo prop = s_contextType.GetProperty("CancellationToken", BindingFlags.Instance | BindingFlags.Public)!;
+            return (CancellationToken)prop.GetValue(context)!;
+        }
+
+        private static void DisposeContext(IDisposable context)
+        {
+            context.Dispose();
+        }
+
+        private static void InvokeCancelAll(IDisposable registry)
+        {
+            MethodInfo method = s_registryType.GetMethod("CancelAll", BindingFlags.Instance | BindingFlags.Public)!;
+            method.Invoke(registry, null);
+        }
+
+        #endregion
+
+        #endregion
     }
 }
