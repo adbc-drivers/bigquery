@@ -772,9 +772,11 @@ namespace AdbcDrivers.BigQuery
 
         public override void Cancel()
         {
-            this.TraceActivity(_ =>
+            this.TraceActivity(activity =>
             {
-                this.cancellationRegistry.CancelAll();
+                CancellationOrigin origin = new CancellationOrigin("BigQueryStatement.Cancel");
+                activity?.AddEvent("statement_cancel_requested", origin.ToTags("cancel.origin").ToList());
+                this.cancellationRegistry.CancelAll("BigQueryStatement.Cancel");
             }, ClassName + "." + nameof(Cancel));
         }
 
@@ -1126,6 +1128,11 @@ namespace AdbcDrivers.BigQuery
             {
                 // Note: OperationCanceledException could be thrown from the call,
                 // but we only want to handle when the cancellation was requested from the context.
+                CancellationOrigin? origin = context.CancelOrigin;
+                if (origin != null)
+                {
+                    activity?.AddEvent("job_cancellation_origin", origin.ToTags("context.cancel").ToList());
+                }
                 activity?.AddException(cancelledEx!);
                 try
                 {
@@ -1191,10 +1198,45 @@ namespace AdbcDrivers.BigQuery
             return tags;
         }
 
+        /// <summary>
+        /// Diagnostic snapshot describing where and why a cancellation was initiated.
+        /// Captured the first time a CancellationContext (or the MultiArrowReader's linked CTS)
+        /// is cancelled, so later observers can determine the root cause of a
+        /// "task was canceled" error.
+        /// </summary>
+        private sealed class CancellationOrigin
+        {
+            public CancellationOrigin(string reason, string? exceptionInfo = null)
+            {
+                Reason = reason;
+                TimestampUtc = DateTimeOffset.UtcNow;
+                ThreadId = Environment.CurrentManagedThreadId;
+                StackTrace = new StackTrace(skipFrames: 1, fNeedFileInfo: false).ToString();
+                ExceptionInfo = exceptionInfo;
+            }
+
+            public string Reason { get; }
+            public DateTimeOffset TimestampUtc { get; }
+            public int ThreadId { get; }
+            public string StackTrace { get; }
+            public string? ExceptionInfo { get; }
+
+            public IEnumerable<KeyValuePair<string, object?>> ToTags(string prefix)
+            {
+                yield return new(prefix + ".reason", Reason);
+                yield return new(prefix + ".timestamp_utc", TimestampUtc.ToString("O"));
+                yield return new(prefix + ".thread_id", ThreadId);
+                yield return new(prefix + ".stack_trace", StackTrace);
+                if (ExceptionInfo != null)
+                    yield return new(prefix + ".exception", ExceptionInfo);
+            }
+        }
+
         private class CancellationContext : IDisposable
         {
             private readonly CancellationRegistry cancellationRegistry;
             private readonly CancellationTokenSource cancellationTokenSource;
+            private CancellationOrigin? cancelOrigin;
             private bool disposed;
 
             public CancellationContext(CancellationRegistry cancellationRegistry)
@@ -1206,8 +1248,18 @@ namespace AdbcDrivers.BigQuery
 
             public CancellationToken CancellationToken => cancellationTokenSource.Token;
 
-            public void Cancel()
+            /// <summary>
+            /// The first-recorded reason this context was cancelled, or null if it has not
+            /// been cancelled. First-cancel-wins via Interlocked.CompareExchange so the
+            /// originating cause is preserved even if Cancel() is called repeatedly.
+            /// </summary>
+            public CancellationOrigin? CancelOrigin => Volatile.Read(ref cancelOrigin);
+
+            public void Cancel() => Cancel("unspecified");
+
+            public void Cancel(string reason)
             {
+                Interlocked.CompareExchange(ref cancelOrigin, new CancellationOrigin(reason), null);
                 cancellationTokenSource.Cancel();
             }
 
@@ -1253,13 +1305,15 @@ namespace AdbcDrivers.BigQuery
                 return contexts.TryRemove(context, out _);
             }
 
-            public void CancelAll()
+            public void CancelAll() => CancelAll("unspecified");
+
+            public void CancelAll(string reason)
             {
                 if (disposed) throw new ObjectDisposedException(nameof(CancellationRegistry));
 
                 foreach (CancellationContext context in contexts.Keys)
                 {
-                    context.Cancel();
+                    context.Cancel(reason);
                 }
             }
 
@@ -1290,6 +1344,7 @@ namespace AdbcDrivers.BigQuery
             long memoryAtStart;
             long peakMemory;
             long totalBatchesRead;
+            CancellationOrigin? linkedCancelOrigin;
             bool disposed;
 
             public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, CancellationContext cancellationContext, int maxConcurrency = 0) : base(statement)
@@ -1373,11 +1428,53 @@ namespace AdbcDrivers.BigQuery
                     // Graceful shutdown: either user cancellation or another producer failed.
                     // Swallow so Task.WhenAll only surfaces the root cause.
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
                     // A real failure in this producer — cancel siblings and propagate.
-                    this.linkedCts.Cancel();
+                    CancelLinked("producer_failure", ex);
                     throw;
+                }
+            }
+
+            /// <summary>
+            /// Cancels the reader's linked CancellationTokenSource and records the origin
+            /// (reason + stack trace + optional inner exception) on first call, so any
+            /// subsequent OperationCanceledException observed by readers can be traced
+            /// back to its true cause.
+            /// </summary>
+            private void CancelLinked(string reason, Exception? cause = null)
+            {
+                CancellationOrigin origin = new CancellationOrigin(reason, cause?.ToString());
+                Interlocked.CompareExchange(ref this.linkedCancelOrigin, origin, null);
+                try
+                {
+                    this.linkedCts.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The linked CTS may already be disposed if Dispose ran concurrently.
+                }
+            }
+
+            /// <summary>
+            /// Annotates the supplied activity with whatever cancellation-origin diagnostics
+            /// are available, including both the reader's linked CTS origin and the outer
+            /// statement-level CancellationContext origin (if any).
+            /// </summary>
+            private void AddCancellationDiagnostics(Activity? activity)
+            {
+                if (activity == null) return;
+
+                CancellationOrigin? linkedOrigin = Volatile.Read(ref this.linkedCancelOrigin);
+                if (linkedOrigin != null)
+                {
+                    activity.AddEvent("reader_linked_cts_canceled", linkedOrigin.ToTags("linked_cts").ToList());
+                }
+
+                CancellationOrigin? contextOrigin = this.cancellationContext.CancelOrigin;
+                if (contextOrigin != null)
+                {
+                    activity.AddEvent("reader_context_canceled", contextOrigin.ToTags("reader_context").ToList());
                 }
             }
 
@@ -1386,29 +1483,42 @@ namespace AdbcDrivers.BigQuery
                 return await this.TraceActivityAsync(async activity =>
                 {
                     // Register the caller's token for this call; the linked CTS
-                    // already includes the cancellationContext token.
+                    // already includes the cancellationContext token. Funnel the
+                    // cancellation through CancelLinked so the origin (reason +
+                    // stack trace) is captured for later diagnostics.
                     using var callerReg = cancellationToken.CanBeCanceled
-                        ? cancellationToken.Register(() => this.linkedCts.Cancel())
+                        ? cancellationToken.Register(() => CancelLinked("caller_token"))
                         : default;
 
                     EnsureProducersStarted();
 
                     CancellationToken ct = this.linkedCts.Token;
 
-                    if (await this.channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                    try
                     {
-                        if (this.channel.Reader.TryRead(out RecordBatch? batch))
+                        if (await this.channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
                         {
-                            Interlocked.Increment(ref this.totalBatchesRead);
-                            if (activity != null)
+                            if (this.channel.Reader.TryRead(out RecordBatch? batch))
                             {
-                                long currentMemory = GC.GetTotalMemory(false);
-                                InterlockedMax(ref this.peakMemory, currentMemory);
-                                activity.AddBigQueryTag("memory.current_bytes", currentMemory);
+                                Interlocked.Increment(ref this.totalBatchesRead);
+                                if (activity != null)
+                                {
+                                    long currentMemory = GC.GetTotalMemory(false);
+                                    InterlockedMax(ref this.peakMemory, currentMemory);
+                                    activity.AddBigQueryTag("memory.current_bytes", currentMemory);
+                                }
+                                activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, batch.Length);
+                                return batch;
                             }
-                            activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, batch.Length);
-                            return batch;
                         }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Surface why the reader was cancelled before the exception
+                        // bubbles up, so consumers tracing "a task was canceled" can
+                        // see the originating reason and stack.
+                        AddCancellationDiagnostics(activity);
+                        throw;
                     }
 
                     activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
@@ -1426,7 +1536,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     if (!this.disposed)
                     {
-                        this.linkedCts.Cancel();
+                        CancelLinked("reader_dispose");
                         try { this.producerTask?.GetAwaiter().GetResult(); } catch { /* producers reported errors via channel */ }
                         foreach (var reader in this.readerList)
                         {
