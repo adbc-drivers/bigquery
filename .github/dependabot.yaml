@@ -24,6 +24,8 @@ updates:
           - "*"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "gomod"
     commit-message:
@@ -46,6 +48,8 @@ updates:
     open-pull-requests-limit: 5
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "nuget"
     commit-message:
@@ -63,3 +67,5 @@ updates:
           - "version-update:semver-major"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
