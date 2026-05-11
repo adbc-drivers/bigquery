@@ -41,7 +41,6 @@ defaults:
 
 permissions:
   contents: read
-  id-token: write
   packages: read
   pull-requests: read
 
@@ -76,6 +75,8 @@ jobs:
     with:
       repository: ${{ needs.setup.outputs.repository }}
       ref: ${{ inputs.ref }}
+    permissions:
+      id-token: write
     secrets:
       # https://github.com/orgs/community/discussions/25238#discussioncomment-3247035
       GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
