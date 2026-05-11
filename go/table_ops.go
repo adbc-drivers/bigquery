@@ -98,6 +98,15 @@ func (st *statement) executeUpdateTableColumnsMetadata(ctx context.Context) (arr
 			}
 		}
 	}
+	var columnPolicyTags map[string][]string
+	if st.updateTableColumnsPolicyTags != "" {
+		if err := json.Unmarshal([]byte(st.updateTableColumnsPolicyTags), &columnPolicyTags); err != nil {
+			return nil, -1, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] parse column policy tags JSON: %v", err),
+			}
+		}
+	}
 
 	table := st.queryConfig.Dst
 	md, err := table.Metadata(ctx)
@@ -118,6 +127,9 @@ func (st *statement) executeUpdateTableColumnsMetadata(ctx context.Context) (arr
 		}
 		if d, ok := columnDescriptions[field.Name]; ok {
 			nf.Description = d
+		}
+		if tags, ok := columnPolicyTags[field.Name]; ok && field.Type != bigquery.RecordFieldType {
+			nf.PolicyTags = &bigquery.PolicyTagList{Names: tags}
 		}
 		newSchema[i] = nf
 	}

@@ -157,6 +157,11 @@ const (
 	// {column: description} to be applied to the destination table
 	// specified by OptionStringQueryDestinationTable.
 	OptionJsonUpdateTableColumnsDescription = "adbc.bigquery.table.update_columns_description"
+	// OptionJsonUpdateTableColumnsPolicyTags accepts a JSON object
+	// {column: [tag_id, ...]} setting BigQuery policy tags on individual
+	// columns of the destination table. RECORD columns are skipped
+	// (BigQuery does not support policy tags on nested types).
+	OptionJsonUpdateTableColumnsPolicyTags = "adbc.bigquery.table.update_columns_policy_tags"
 
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
