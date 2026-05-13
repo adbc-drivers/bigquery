@@ -773,66 +773,23 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.True(readerToken.IsCancellationRequested);
         }
 
-        #region Reflection helpers for CancellationRegistry/Context
+        #region CancellationRegistry/Context helpers
 
-        private static readonly Type s_registryType =
-            typeof(BigQueryStatement).GetNestedType("CancellationRegistry", BindingFlags.NonPublic)!;
 
-        private static readonly Type s_contextType =
-            typeof(BigQueryStatement).GetNestedType("CancellationContext", BindingFlags.NonPublic)!;
 
-        private static readonly Type s_jobContextType =
-            typeof(BigQueryStatement).GetNestedType("JobCancellationContext", BindingFlags.NonPublic)!;
+        private static BigQueryStatement.CancellationRegistry CreateRegistry() => new();
 
-        private static IDisposable CreateRegistry()
-        {
-            object instance = Activator.CreateInstance(
-                s_registryType,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null,
-                Array.Empty<object>(),
-                null)!;
-            return (IDisposable)instance;
-        }
+        private static BigQueryStatement.CancellationContext CreateCancellationContext(BigQueryStatement.CancellationRegistry registry) =>
+            new(registry);
 
-        private static IDisposable CreateCancellationContext(IDisposable registry)
-        {
-            object instance = Activator.CreateInstance(
-                s_contextType,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null,
-                new object[] { registry },
-                null)!;
-            return (IDisposable)instance;
-        }
+        private static BigQueryStatement.JobCancellationContext CreateJobContext(BigQueryStatement.CancellationRegistry registry) =>
+            new(registry);
 
-        private static IDisposable CreateJobContext(IDisposable registry)
-        {
-            object instance = Activator.CreateInstance(
-                s_jobContextType,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null,
-                new object?[] { registry, null },
-                null)!;
-            return (IDisposable)instance;
-        }
+        private static CancellationToken GetToken(BigQueryStatement.CancellationContext context) => context.CancellationToken;
 
-        private static CancellationToken GetToken(IDisposable context)
-        {
-            PropertyInfo prop = s_contextType.GetProperty("CancellationToken", BindingFlags.Instance | BindingFlags.Public)!;
-            return (CancellationToken)prop.GetValue(context)!;
-        }
+        private static void DisposeContext(BigQueryStatement.CancellationContext context) => context.Dispose();
 
-        private static void DisposeContext(IDisposable context)
-        {
-            context.Dispose();
-        }
-
-        private static void InvokeCancelAll(IDisposable registry)
-        {
-            MethodInfo method = s_registryType.GetMethod("CancelAll", BindingFlags.Instance | BindingFlags.Public)!;
-            method.Invoke(registry, null);
-        }
+        private static void InvokeCancelAll(BigQueryStatement.CancellationRegistry registry) => registry.CancelAll();
 
         #endregion
 

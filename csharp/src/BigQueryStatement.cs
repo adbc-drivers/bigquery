@@ -776,7 +776,7 @@ namespace AdbcDrivers.BigQuery
             {
                 CancellationOrigin origin = new CancellationOrigin("BigQueryStatement.Cancel");
                 activity?.AddEvent("statement_cancel_requested", origin.ToTags("cancel.origin").ToList());
-                this.cancellationRegistry.CancelAll("BigQueryStatement.Cancel");
+                this.cancellationRegistry.CancelAll(origin);
             }, ClassName + "." + nameof(Cancel));
         }
 
@@ -1204,7 +1204,7 @@ namespace AdbcDrivers.BigQuery
         /// is cancelled, so later observers can determine the root cause of a
         /// "task was canceled" error.
         /// </summary>
-        private sealed class CancellationOrigin
+        internal sealed class CancellationOrigin
         {
             public CancellationOrigin(string reason, string? exceptionInfo = null)
             {
@@ -1232,7 +1232,7 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
-        private class CancellationContext : IDisposable
+        internal class CancellationContext : IDisposable
         {
             private readonly CancellationRegistry cancellationRegistry;
             private readonly CancellationTokenSource cancellationTokenSource;
@@ -1255,11 +1255,14 @@ namespace AdbcDrivers.BigQuery
             /// </summary>
             public CancellationOrigin? CancelOrigin => Volatile.Read(ref cancelOrigin);
 
-            public void Cancel() => Cancel("unspecified");
+            public void Cancel() => Cancel(new CancellationOrigin("unspecified"));
 
-            public void Cancel(string reason)
+            public void Cancel(string reason) => Cancel(new CancellationOrigin(reason));
+
+            public void Cancel(CancellationOrigin origin)
             {
-                Interlocked.CompareExchange(ref cancelOrigin, new CancellationOrigin(reason), null);
+                if (origin == null) throw new ArgumentNullException(nameof(origin));
+                Interlocked.CompareExchange(ref cancelOrigin, origin, null);
                 cancellationTokenSource.Cancel();
             }
 
@@ -1274,7 +1277,7 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
-        private class JobCancellationContext : CancellationContext
+        internal class JobCancellationContext : CancellationContext
         {
             public JobCancellationContext(CancellationRegistry cancellationRegistry, BigQueryJob? job = default)
                 : base(cancellationRegistry)
@@ -1285,7 +1288,7 @@ namespace AdbcDrivers.BigQuery
             public BigQueryJob? Job { get; set; }
         }
 
-        private sealed class CancellationRegistry : IDisposable
+        internal sealed class CancellationRegistry : IDisposable
         {
             private readonly ConcurrentDictionary<CancellationContext, byte> contexts = new();
             private bool disposed;
@@ -1305,15 +1308,18 @@ namespace AdbcDrivers.BigQuery
                 return contexts.TryRemove(context, out _);
             }
 
-            public void CancelAll() => CancelAll("unspecified");
+            public void CancelAll() => CancelAll(new CancellationOrigin("unspecified"));
 
-            public void CancelAll(string reason)
+            public void CancelAll(string reason) => CancelAll(new CancellationOrigin(reason));
+
+            public void CancelAll(CancellationOrigin origin)
             {
+                if (origin == null) throw new ArgumentNullException(nameof(origin));
                 if (disposed) throw new ObjectDisposedException(nameof(CancellationRegistry));
 
                 foreach (CancellationContext context in contexts.Keys)
                 {
-                    context.Cancel(reason);
+                    context.Cancel(origin);
                 }
             }
 
