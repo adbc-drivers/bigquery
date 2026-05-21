@@ -374,11 +374,11 @@ namespace AdbcDrivers.BigQuery
 
                 // When a billing/quota project is supplied explicitly, clear any quota project that may
                 // already be embedded on the credential (e.g. from a service account JSON's
-                // "quota_project_id" field or ADC). Otherwise the BigQuery client raises:
+                // "quota_project_id" field). Otherwise the BigQuery client raises:
                 //     "x-goog-user-project header can only be added through the credential
                 //      or through the <Product>ClientBuilder"
                 // because both the credential and the builder would emit that header.
-                GoogleCredential? modifiedCredential = (!string.IsNullOrEmpty(billingProjectId)) ? Credential?.CreateWithQuotaProject(null) : Credential;
+                GoogleCredential? modifiedCredential = string.IsNullOrEmpty(billingProjectId) ? Credential : Credential?.CreateWithQuotaProject(null);
 
                 BigQueryClientBuilder bigQueryClientBuilder = new BigQueryClientBuilder()
                 {
