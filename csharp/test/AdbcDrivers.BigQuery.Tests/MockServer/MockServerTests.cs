@@ -79,12 +79,15 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.NotNull(result.Stream);
 
             // Read the first batch
-            RecordBatch? resultBatch = await result.Stream.ReadNextRecordBatchAsync();
-            Assert.NotNull(resultBatch);
-            Assert.Equal(1, resultBatch.Length);
+            using (result.Stream)
+            {
+                using RecordBatch? resultBatch = await result.Stream.ReadNextRecordBatchAsync();
+                Assert.NotNull(resultBatch);
+                Assert.Equal(1, resultBatch.Length);
 
-            var column = Assert.IsType<Int64Array>(resultBatch.Column(0));
-            Assert.Equal(42L, column.GetValue(0));
+                var column = Assert.IsType<Int64Array>(resultBatch.Column(0));
+                Assert.Equal(42L, column.GetValue(0));
+            }
         }
     }
 }

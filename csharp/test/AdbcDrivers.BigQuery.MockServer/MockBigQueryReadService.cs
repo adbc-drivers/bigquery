@@ -16,8 +16,6 @@
 
 using System;
 using System.Collections.Concurrent;
-using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Protobuf;
@@ -32,7 +30,7 @@ namespace AdbcDrivers.BigQuery.MockServer
     public class MockBigQueryReadService : BigQueryRead.BigQueryReadBase
     {
         private readonly ConcurrentDictionary<string, ReadSession> _sessions = new();
-        private readonly ConcurrentDictionary<string, byte[]> _streamData = new();
+        private readonly ConcurrentDictionary<string, (byte[] batch, long rowCount)> _streamData = new();
 
         /// <summary>
         /// Default Arrow schema bytes returned when no table-specific config is found.
@@ -72,7 +70,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             session.Streams.Add(new ReadStream { Name = streamName });
 
             _sessions[tableName] = session;
-            _streamData[streamName] = arrowBatch;
+            _streamData[streamName] = (arrowBatch, rowCount);
         }
 
         public override Task<ReadSession> CreateReadSession(CreateReadSessionRequest request, ServerCallContext context)
@@ -102,7 +100,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                 // Store stream data for ReadRows
                 if (DefaultArrowBatch != null)
                 {
-                    _streamData[streamName] = DefaultArrowBatch;
+                    _streamData[streamName] = (DefaultArrowBatch, DefaultRowCount);
                 }
 
                 return Task.FromResult(defaultSession);
@@ -123,7 +121,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         {
             string streamName = request.ReadStream;
 
-            if (_streamData.TryGetValue(streamName, out var batchData))
+            if (_streamData.TryGetValue(streamName, out var streamData))
             {
                 // Look up the session to get the schema
                 byte[]? schemaData = null;
@@ -147,9 +145,9 @@ namespace AdbcDrivers.BigQuery.MockServer
                 {
                     ArrowRecordBatch = new ArrowRecordBatch
                     {
-                        SerializedRecordBatch = ByteString.CopyFrom(batchData),
+                        SerializedRecordBatch = ByteString.CopyFrom(streamData.batch),
                     },
-                    RowCount = DefaultRowCount,
+                    RowCount = streamData.rowCount,
                 };
 
                 if (schemaData != null)

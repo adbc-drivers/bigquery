@@ -123,7 +123,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             // POST /bigquery/v2/projects/{projectId}/jobs - Create a query job
             app.MapPost("/bigquery/v2/projects/{projectId}/jobs", async (HttpContext ctx, string projectId) =>
             {
-                string body = await new System.IO.StreamReader(ctx.Request.Body).ReadToEndAsync();
+                await new System.IO.StreamReader(ctx.Request.Body).ReadToEndAsync();
 
                 string jobId = $"mock-job-{Guid.NewGuid():N}";
 
