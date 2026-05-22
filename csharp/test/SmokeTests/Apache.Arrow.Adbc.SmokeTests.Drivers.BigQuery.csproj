@@ -5,10 +5,10 @@
     <TargetFrameworks Condition="'$(TargetFrameworks)'==''">net8.0</TargetFrameworks>
   </PropertyGroup>
     <ItemGroup>
-      <Compile Include="..\BigQueryData.cs" Link="BigQueryData.cs" />
-      <Compile Include="..\BigQueryTestConfiguration.cs" Link="BigQueryTestConfiguration.cs" />
-      <Compile Include="..\BigQueryTestingUtils.cs" Link="BigQueryTestingUtils.cs" />
-      <Compile Include="..\ClientTests.cs" Link="ClientTests.cs" />
+      <Compile Include="..\AdbcDrivers.BigQuery.Tests\BigQueryData.cs" Link="BigQueryData.cs" />
+      <Compile Include="..\AdbcDrivers.BigQuery.Tests\BigQueryTestConfiguration.cs" Link="BigQueryTestConfiguration.cs" />
+      <Compile Include="..\AdbcDrivers.BigQuery.Tests\BigQueryTestingUtils.cs" Link="BigQueryTestingUtils.cs" />
+      <Compile Include="..\AdbcDrivers.BigQuery.Tests\ClientTests.cs" Link="ClientTests.cs" />
     </ItemGroup>
     <ItemGroup>
      <PackageReference Include="Apache.Arrow.Adbc.Drivers.BigQuery" Version="[$(ApacheArrowAdbcDriversBigQueryVersion)]" />
@@ -24,7 +24,7 @@
       <Folder Include="Resources\" />
     </ItemGroup>
     <ItemGroup>
-      <None Include="..\Resources\BigQueryData.sql" Link="Resources\BigQueryData.sql">
+      <None Include="..\AdbcDrivers.BigQuery.Tests\Resources\BigQueryData.sql" Link="Resources\BigQueryData.sql">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
     </ItemGroup>
