@@ -155,6 +155,12 @@ namespace AdbcDrivers.BigQuery
             {
                 throw new ArgumentException($"The value '{sClientTimeout}' for parameter '{BigQueryParameters.ClientTimeout}' is not a valid positive integer.");
             }
+
+            if (this.properties.TryGetValue(BigQueryParameters.TestStorageEndpoint, out string? storageEndpoint) &&
+                !string.IsNullOrEmpty(storageEndpoint))
+            {
+                TestStorageEndpoint = storageEndpoint;
+            }
         }
 
         /// <summary>
@@ -198,6 +204,8 @@ namespace AdbcDrivers.BigQuery
         internal TimeSpan? ClientTimeout { get; private set; }
 
         internal bool IncludePublicProjectIds { get; private set; } = false;
+
+        internal string? TestStorageEndpoint { get; private set; }
 
         public override string AssemblyVersion => BigQueryUtils.BigQueryAssemblyVersion;
 
@@ -388,6 +396,12 @@ namespace AdbcDrivers.BigQuery
 
                 bigQueryClientBuilder.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
 
+                if (this.properties.TryGetValue(BigQueryParameters.TestRestEndpoint, out string? testRestEndpoint) &&
+                    !string.IsNullOrEmpty(testRestEndpoint))
+                {
+                    bigQueryClientBuilder.BaseUri = $"http://{testRestEndpoint}/bigquery/v2/";
+                }
+
                 if (!string.IsNullOrEmpty(DefaultClientLocation))
                 {
                     // If the user selects a public dataset (from a multi-region) but sets this
@@ -443,9 +457,10 @@ namespace AdbcDrivers.BigQuery
 
                     if (!authenticationType.Equals(BigQueryConstants.UserAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
-                        !authenticationType.Equals(BigQueryConstants.EntraIdAuthenticationType, StringComparison.OrdinalIgnoreCase))
+                        !authenticationType.Equals(BigQueryConstants.EntraIdAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
+                        !authenticationType.Equals(BigQueryConstants.MockAuthenticationType, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new ArgumentException($"The {BigQueryParameters.AuthenticationType} parameter can only be `{BigQueryConstants.UserAuthenticationType}`, `{BigQueryConstants.ServiceAccountAuthenticationType}` or `{BigQueryConstants.EntraIdAuthenticationType}`");
+                        throw new ArgumentException($"The {BigQueryParameters.AuthenticationType} parameter can only be `{BigQueryConstants.UserAuthenticationType}`, `{BigQueryConstants.ServiceAccountAuthenticationType}`, `{BigQueryConstants.EntraIdAuthenticationType}` or `{BigQueryConstants.MockAuthenticationType}`");
                     }
                     else
                     {
@@ -484,6 +499,10 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The {BigQueryParameters.JsonCredential} parameter is not present");
 
                     Credential = ApplyScopes(GoogleCredential.FromJson(json));
+                }
+                else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.MockAuthenticationType, StringComparison.OrdinalIgnoreCase))
+                {
+                    Credential = ApplyScopes(GoogleCredential.FromAccessToken("mock-token"));
                 }
                 else
                 {

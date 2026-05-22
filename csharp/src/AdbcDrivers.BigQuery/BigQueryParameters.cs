@@ -63,6 +63,18 @@ namespace AdbcDrivers.BigQuery
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
 
         /// <summary>
+        /// Overrides the BigQuery REST API endpoint for testing (e.g. "localhost:1234").
+        /// Connects over plain HTTP without TLS. Not for production use.
+        /// </summary>
+        public const string TestRestEndpoint = "adbc.bigquery.test.rest_endpoint";
+
+        /// <summary>
+        /// Overrides the BigQuery Storage gRPC API endpoint for testing (e.g. "localhost:1235").
+        /// Connects over plain HTTP/2 without TLS. Not for production use.
+        /// </summary>
+        public const string TestStorageEndpoint = "adbc.bigquery.test.storage_endpoint";
+
+        /// <summary>
         /// Indicates whether the driver should create the dataset specified in the
         /// <see cref="LargeResultsDataset"/> parameter if it does not already exist.
         /// </summary>
@@ -95,6 +107,7 @@ namespace AdbcDrivers.BigQuery
         public const string UserAuthenticationType = "user";
         public const string EntraIdAuthenticationType = "aad";
         public const string ServiceAccountAuthenticationType = "service";
+        public const string MockAuthenticationType = "mock";
         public const string TokenEndpoint = "https://accounts.google.com/o/oauth2/token";
         public const string TreatLargeDecimalAsString = "true";
 
