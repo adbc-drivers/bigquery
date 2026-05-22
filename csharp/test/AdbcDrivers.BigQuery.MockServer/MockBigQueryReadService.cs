@@ -30,6 +30,7 @@ namespace AdbcDrivers.BigQuery.MockServer
     public class MockBigQueryReadService : BigQueryRead.BigQueryReadBase
     {
         private readonly ConcurrentDictionary<string, ReadSession> _sessions = new();
+        private readonly ConcurrentDictionary<string, ReadSession> _streamToSession = new();
         private readonly ConcurrentDictionary<string, (byte[] batch, long rowCount)> _streamData = new();
 
         /// <summary>
@@ -70,6 +71,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             session.Streams.Add(new ReadStream { Name = streamName });
 
             _sessions[tableName] = session;
+            _streamToSession[streamName] = session;
             _streamData[streamName] = (arrowBatch, rowCount);
         }
 
@@ -97,6 +99,8 @@ namespace AdbcDrivers.BigQuery.MockServer
                 };
                 defaultSession.Streams.Add(new ReadStream { Name = streamName });
 
+                _streamToSession[streamName] = defaultSession;
+
                 // Store stream data for ReadRows
                 if (DefaultArrowBatch != null)
                 {
@@ -123,20 +127,9 @@ namespace AdbcDrivers.BigQuery.MockServer
 
             if (_streamData.TryGetValue(streamName, out var streamData))
             {
-                // Look up the session to get the schema
-                byte[]? schemaData = null;
-                foreach (var kvp in _sessions)
-                {
-                    foreach (var stream in kvp.Value.Streams)
-                    {
-                        if (stream.Name == streamName)
-                        {
-                            schemaData = kvp.Value.ArrowSchema?.SerializedSchema?.ToByteArray();
-                            break;
-                        }
-                    }
-                    if (schemaData != null) break;
-                }
+                byte[]? schemaData = _streamToSession.TryGetValue(streamName, out var session)
+                    ? session.ArrowSchema?.SerializedSchema?.ToByteArray()
+                    : null;
 
                 // Fall back to default schema
                 schemaData ??= DefaultArrowSchema;

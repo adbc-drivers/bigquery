@@ -237,18 +237,16 @@ namespace AdbcDrivers.BigQuery.MockServer
 
         private static int GetFreePort()
         {
-            var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+            using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
             listener.Start();
-            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            listener.Stop();
-            return port;
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
         }
 
         public void Dispose()
         {
-            _cts.Cancel();
-            _restApp.StopAsync().GetAwaiter().GetResult();
-            _grpcApp.StopAsync().GetAwaiter().GetResult();
+            _cts.CancelAfter(TimeSpan.FromSeconds(5));
+            _restApp.StopAsync(_cts.Token).GetAwaiter().GetResult();
+            _grpcApp.StopAsync(_cts.Token).GetAwaiter().GetResult();
             (_restApp as IDisposable)?.Dispose();
             (_grpcApp as IDisposable)?.Dispose();
             _cts.Dispose();
