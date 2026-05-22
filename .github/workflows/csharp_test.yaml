@@ -84,4 +84,4 @@ jobs:
           dotnet test \
             --no-build \
             -c Release \
-            --filter "FullyQualifiedName~BigQueryUtilsTests|FullyQualifiedName~BigQueryConnectionTests|FullyQualifiedName~BigQueryStatementTests"
+            --filter "FullyQualifiedName~BigQueryUtilsTests|FullyQualifiedName~BigQueryConnectionTests|FullyQualifiedName~BigQueryStatementTests|Category=MockServer"

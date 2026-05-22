@@ -4,16 +4,16 @@
     <TargetFrameworks Condition="'$(TargetFrameworks)'==''">net8.0</TargetFrameworks>
   </PropertyGroup>
     <ItemGroup>
-     <PackageReference Include="Azure.Identity" Version="1.17.1" />
-       <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
-       <PackageReference Include="System.Net.Http.WinHttpHandler" Version="8.0.2" Condition="'$(TargetFrameworkIdentifier)' == '.NETStandard'" />
-       <PackageReference Include="xunit" Version="2.9.3" />
-       <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+     <PackageReference Include="Azure.Identity" />
+       <PackageReference Include="Microsoft.NET.Test.Sdk" />
+       <PackageReference Include="System.Net.Http.WinHttpHandler" Condition="'$(TargetFrameworkIdentifier)' == '.NETStandard'" />
+       <PackageReference Include="xunit" />
+       <PackageReference Include="xunit.runner.visualstudio">
        <PrivateAssets>all</PrivateAssets>
        <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
      </PackageReference>
-     <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
-     <PackageReference Include="Moq" Version="4.20.72" />
+     <PackageReference Include="Xunit.SkippableFact" />
+     <PackageReference Include="Moq" />
    </ItemGroup>
     <ItemGroup>
      <None Update="Resources\BigQueryData.sql">
@@ -27,5 +27,6 @@
      <ProjectReference Include="..\..\arrow-adbc\csharp\src\Client\Apache.Arrow.Adbc.Client.csproj" />
      <ProjectReference Include="..\..\arrow-adbc\csharp\test\Apache.Arrow.Adbc.Tests\Apache.Arrow.Adbc.Testing.csproj" />
      <ProjectReference Include="..\..\src\AdbcDrivers.BigQuery\AdbcDrivers.BigQuery.csproj" />
+     <ProjectReference Include="..\AdbcDrivers.BigQuery.MockServer\AdbcDrivers.BigQuery.MockServer.csproj" Condition="'$(TargetFramework)' == 'net8.0'" />
    </ItemGroup>
  </Project>

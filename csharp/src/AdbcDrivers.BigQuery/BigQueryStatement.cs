@@ -192,7 +192,7 @@ namespace AdbcDrivers.BigQuery
 
                 BigQueryResults results = await ExecuteWithRetriesAsync(getJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
 
-                TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(Credential);
+                TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(Credential, this.bigQueryConnection.TestStorageEndpoint);
                 clientMgr.UpdateToken = () => Task.Run(() =>
                 {
                     this.bigQueryConnection.SetCredential();

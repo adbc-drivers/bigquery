@@ -25,6 +25,7 @@ using System;
 using System.Threading.Tasks;
 using Google.Apis.Auth.OAuth2;
 using Google.Cloud.BigQuery.Storage.V1;
+using Grpc.Core;
 
 namespace AdbcDrivers.BigQuery
 {
@@ -34,9 +35,11 @@ namespace AdbcDrivers.BigQuery
     internal class TokenProtectedReadClientManger : ITokenProtectedResource
     {
         BigQueryReadClient bigQueryReadClient;
+        readonly string? endpoint;
 
-        public TokenProtectedReadClientManger(GoogleCredential credential)
+        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null)
         {
+            this.endpoint = testEndpoint;
             UpdateCredential(credential);
 
             if (bigQueryReadClient == null)
@@ -55,7 +58,17 @@ namespace AdbcDrivers.BigQuery
             }
 
             BigQueryReadClientBuilder readClientBuilder = new BigQueryReadClientBuilder();
-            readClientBuilder.Credential = credential;
+
+            if (!string.IsNullOrEmpty(endpoint))
+            {
+                readClientBuilder.Endpoint = endpoint;
+                readClientBuilder.ChannelCredentials = ChannelCredentials.Insecure;
+            }
+            else
+            {
+                readClientBuilder.Credential = credential;
+            }
+
             this.bigQueryReadClient = readClientBuilder.Build();
         }
 
