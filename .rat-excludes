@@ -19,7 +19,6 @@
 */*.csproj
 */*.sln
 csharp/src/AdbcDrivers.BigQuery/Extensions
-csharp/test/AdbcDrivers.BigQuery.Tests/Apache.Arrow.Adbc.Tests
 csharp/test/AdbcDrivers.BigQuery.Tests/Resources/bigqueryconfig.json
 go/license.tpl
 # adbc.h is vendored
