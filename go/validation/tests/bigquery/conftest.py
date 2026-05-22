@@ -15,12 +15,14 @@
 import os
 
 import pytest
+from tests import bigquery
 
 
 def pytest_generate_tests(metafunc) -> None:
+    quirks = bigquery.get_quirks(metafunc.config.getoption("vendor_version"))
     metafunc.parametrize(
         "driver",
-        [pytest.param("bigquery:", id="bigquery")],
+        [f"{quirks.name}:{quirks.short_version}"],
         scope="module",
         indirect=["driver"],
     )

@@ -23,11 +23,11 @@ package main
 // #include "adbc.h"
 import "C"
 
-//export AdbcDriverBigQueryInit
-func AdbcDriverBigQueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
+//export AdbcDriverBigqueryInit
+func AdbcDriverBigqueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
 	// The driver manager expects the spelling Bigquery and not BigQuery
 	// as it derives the init symbol name from the filename
 	// (adbc_driver_bigquery -> AdbcDriverBigquery) but user code may
 	// expect BigQuery
-	return AdbcDriverBigqueryInit(version, rawDriver, err)
+	return AdbcDriverBigQueryInit(version, rawDriver, err)
 }

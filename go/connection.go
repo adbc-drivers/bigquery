@@ -31,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -77,6 +78,9 @@ type connectionImpl struct {
 
 	resultRecordBufferSize int
 	prefetchConcurrency    int
+
+	bulkIngestMethod      string
+	bulkIngestCompression string
 
 	client *bigquery.Client
 }
@@ -180,14 +184,14 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 				for i, ref := range fk.ColumnReferences {
 					columnNames[i] = ref.ReferencingColumn
 					columnUsage[i] = driverbase.ConstraintColumnUsage{
-						ForeignKeyCatalog:  driverbase.Nullable(fk.ReferencedTable.ProjectID),
-						ForeignKeyDbSchema: driverbase.Nullable(fk.ReferencedTable.DatasetID),
+						ForeignKeyCatalog:  new(fk.ReferencedTable.ProjectID),
+						ForeignKeyDbSchema: new(fk.ReferencedTable.DatasetID),
 						ForeignKeyTable:    fk.ReferencedTable.TableID,
 						ForeignKeyColumn:   ref.ReferencedColumn,
 					}
 				}
 				constraints = append(constraints, driverbase.ConstraintInfo{
-					ConstraintName:        driverbase.Nullable(fk.Name),
+					ConstraintName:        new(fk.Name),
 					ConstraintType:        driverbase.ForeignKey,
 					ConstraintColumnNames: columnNames,
 					ConstraintColumnUsage: columnUsage,
@@ -233,19 +237,19 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 					columns = append(columns, driverbase.ColumnInfo{
 						ColumnName:          fieldschema.Name,
-						OrdinalPosition:     driverbase.Nullable(int32(pos + 1)),
-						Remarks:             driverbase.Nullable(fieldschema.Description),
-						XdbcDataType:        driverbase.Nullable(int16(field.Type.ID())),
-						XdbcTypeName:        driverbase.Nullable(string(fieldschema.Type)),
-						XdbcNullable:        driverbase.Nullable(xdbcNullable),
-						XdbcSqlDataType:     driverbase.Nullable(int16(xdbcDataType)),
-						XdbcIsNullable:      driverbase.Nullable(xdbcIsNullable),
-						XdbcDecimalDigits:   driverbase.Nullable(int16(fieldschema.Scale)),
-						XdbcColumnSize:      driverbase.Nullable(int32(xdbcColumnSize)),
-						XdbcCharOctetLength: driverbase.Nullable(xdbcCharOctetLength),
-						XdbcScopeCatalog:    driverbase.Nullable(catalog),
-						XdbcScopeSchema:     driverbase.Nullable(schema),
-						XdbcScopeTable:      driverbase.Nullable(table.TableID),
+						OrdinalPosition:     new(int32(pos + 1)),
+						Remarks:             new(fieldschema.Description),
+						XdbcDataType:        new(int16(field.Type.ID())),
+						XdbcTypeName:        new(string(fieldschema.Type)),
+						XdbcNullable:        new(xdbcNullable),
+						XdbcSqlDataType:     new(int16(xdbcDataType)),
+						XdbcIsNullable:      new(xdbcIsNullable),
+						XdbcDecimalDigits:   new(int16(fieldschema.Scale)),
+						XdbcColumnSize:      new(int32(xdbcColumnSize)),
+						XdbcCharOctetLength: new(xdbcCharOctetLength),
+						XdbcScopeCatalog:    new(catalog),
+						XdbcScopeSchema:     new(schema),
+						XdbcScopeTable:      new(table.TableID),
 					})
 				}
 			}
@@ -263,30 +267,33 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 }
 
 type bigQueryTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int    `json:"expires_in"`
-	Scope       string `json:"scope"`
-	TokenType   string `json:"token_type"`
+	AccessToken      string `json:"access_token"`
+	ExpiresIn        int    `json:"expires_in"`
+	Scope            string `json:"scope"`
+	TokenType        string `json:"token_type"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+	ErrorURI         string `json:"error_uri"`
 }
 
 // GetCurrentCatalog implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) GetCurrentCatalog() (string, error) {
+func (c *connectionImpl) GetCurrentCatalog(ctx context.Context) (string, error) {
 	return c.catalog, nil
 }
 
 // GetCurrentDbSchema implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) GetCurrentDbSchema() (string, error) {
+func (c *connectionImpl) GetCurrentDbSchema(ctx context.Context) (string, error) {
 	return c.dbSchema, nil
 }
 
 // SetCurrentCatalog implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) SetCurrentCatalog(value string) error {
+func (c *connectionImpl) SetCurrentCatalog(ctx context.Context, value string) error {
 	c.catalog = value
 	return nil
 }
 
 // SetCurrentDbSchema implements driverbase.CurrentNamespacer.
-func (c *connectionImpl) SetCurrentDbSchema(value string) error {
+func (c *connectionImpl) SetCurrentDbSchema(ctx context.Context, value string) error {
 	sanitized, err := sanitizeDataset(value)
 	if err != nil {
 		return err
@@ -337,9 +344,7 @@ func (c *connectionImpl) exec(ctx context.Context, stmt string, config func(*big
 }
 
 // SetAutocommit implements driverbase.AutocommitSetter.
-func (c *connectionImpl) SetAutocommit(enabled bool) error {
-	// TODO(https://github.com/apache/arrow-adbc/issues/2772)
-	ctx := context.Background()
+func (c *connectionImpl) SetAutocommit(ctx context.Context, enabled bool) error {
 	if enabled {
 		if c.sessionID == nil {
 			// This should never happen
@@ -422,7 +427,7 @@ func (c *connectionImpl) Rollback(ctx context.Context) error {
 }
 
 // Close closes this connection and releases any associated resources.
-func (c *connectionImpl) Close() error {
+func (c *connectionImpl) Close(ctx context.Context) error {
 	err := c.client.Close()
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "close client")
@@ -540,7 +545,7 @@ func (c *connectionImpl) GetTableSchema(ctx context.Context, catalog *string, db
 }
 
 // NewStatement initializes a new statement object tied to this connection
-func (c *connectionImpl) NewStatement() (adbc.Statement, error) {
+func (c *connectionImpl) NewStatement(ctx context.Context) (adbc.StatementWithContext, error) {
 	return &statement{
 		alloc:                  c.Alloc,
 		cnxn:                   c,
@@ -555,7 +560,7 @@ func (c *connectionImpl) NewStatement() (adbc.Statement, error) {
 	}, nil
 }
 
-func (c *connectionImpl) GetOption(key string) (string, error) {
+func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, error) {
 	switch key {
 	case OptionStringAuthType:
 		return c.authType, nil
@@ -586,12 +591,22 @@ func (c *connectionImpl) GetOption(key string) (string, error) {
 			return "", nil
 		}
 		return c.impersonateLifetime.String(), nil
+	case OptionStringBulkIngestMethod:
+		if c.bulkIngestMethod == "" {
+			return OptionValueBulkIngestMethodLoad, nil
+		}
+		return c.bulkIngestMethod, nil
+	case OptionStringBulkIngestCompression:
+		if c.bulkIngestCompression == "" {
+			return OptionValueCompressionNone, nil
+		}
+		return c.bulkIngestCompression, nil
 	default:
-		return c.ConnectionImplBase.GetOption(key)
+		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
 }
 
-func (c *connectionImpl) SetOption(key string, value string) error {
+func (c *connectionImpl) SetOption(ctx context.Context, key string, value string) error {
 	switch key {
 	case OptionStringAuthType:
 		c.authType = value
@@ -637,24 +652,43 @@ func (c *connectionImpl) SetOption(key string, value string) error {
 			}
 		}
 		c.impersonateLifetime = dur
+	case OptionStringBulkIngestMethod:
+		if value != OptionValueBulkIngestMethodLoad &&
+			value != OptionValueBulkIngestMethodStorageWrite {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest method: %s (expected %s or %s)", value, OptionValueBulkIngestMethodLoad, OptionValueBulkIngestMethodStorageWrite),
+			}
+		}
+		c.bulkIngestMethod = value
+	case OptionStringBulkIngestCompression:
+		if value != OptionValueCompressionNone &&
+			value != OptionValueCompressionLZ4 &&
+			value != OptionValueCompressionZSTD {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest compression: %s (expected %s, %s, or %s)", value, OptionValueCompressionNone, OptionValueCompressionLZ4, OptionValueCompressionZSTD),
+			}
+		}
+		c.bulkIngestCompression = value
 	default:
-		return c.ConnectionImplBase.SetOption(key, value)
+		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
 	return nil
 }
 
-func (c *connectionImpl) GetOptionInt(key string) (int64, error) {
+func (c *connectionImpl) GetOptionInt(ctx context.Context, key string) (int64, error) {
 	switch key {
 	case OptionIntQueryResultBufferSize:
 		return int64(c.resultRecordBufferSize), nil
 	case OptionIntQueryPrefetchConcurrency:
 		return int64(c.prefetchConcurrency), nil
 	default:
-		return c.ConnectionImplBase.GetOptionInt(key)
+		return c.ConnectionImplBase.GetOptionInt(ctx, key)
 	}
 }
 
-func (c *connectionImpl) SetOptionInt(key string, value int64) error {
+func (c *connectionImpl) SetOptionInt(ctx context.Context, key string, value int64) error {
 	switch key {
 	case OptionIntQueryResultBufferSize:
 		c.resultRecordBufferSize = int(value)
@@ -663,7 +697,7 @@ func (c *connectionImpl) SetOptionInt(key string, value int64) error {
 		c.prefetchConcurrency = int(value)
 		return nil
 	default:
-		return c.ConnectionImplBase.SetOptionInt(key, value)
+		return c.ConnectionImplBase.SetOptionInt(ctx, key, value)
 	}
 }
 
@@ -680,9 +714,36 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	// First, establish base authentication
 	switch c.authType {
 	case OptionValueAuthTypeJSONCredentialFile:
-		authOptions = append(authOptions, option.WithAuthCredentialsFile(c.credentialsType, c.credentials))
+		credType := c.credentialsType
+		if credType == "" {
+			// Auto-detect credential type from the JSON file
+			detected, err := detectCredentialTypeFromFile(c.credentials)
+			if err != nil {
+				return adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  fmt.Sprintf("[bq] failed to detect credential type from file %q: %s", c.credentials, err.Error()),
+				}
+			}
+			credType = detected
+		}
+		c.credentialsType = credType
+		c.Logger.Debug("Using JSON credential file", "file", c.credentials, "credentialType", string(credType))
+		authOptions = append(authOptions, option.WithAuthCredentialsFile(credType, c.credentials))
 	case OptionValueAuthTypeJSONCredentialString:
-		authOptions = append(authOptions, option.WithAuthCredentialsJSON(c.credentialsType, []byte(c.credentials)))
+		credType := c.credentialsType
+		if credType == "" {
+			detected, err := detectCredentialTypeFromJSON([]byte(c.credentials))
+			if err != nil {
+				return adbc.Error{
+					Code: adbc.StatusInvalidArgument,
+					Msg:  fmt.Sprintf("[bq] failed to detect credential type from JSON: %s", err.Error()),
+				}
+			}
+			credType = detected
+		}
+		c.credentialsType = credType
+		c.Logger.Debug("Using JSON credential string", "credentialType", string(credType))
+		authOptions = append(authOptions, option.WithAuthCredentialsJSON(credType, []byte(c.credentials)))
 	case OptionValueAuthTypeUserAuthentication:
 		if c.clientID == "" {
 			return adbc.Error{
@@ -702,8 +763,10 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthRefreshToken),
 			}
 		}
+		c.Logger.Debug("Using user OAuth authentication")
 		authOptions = append(authOptions, option.WithTokenSource(c))
 	case OptionValueAuthTypeAppDefaultCredentials, OptionValueAuthTypeDefault, "":
+		c.Logger.Debug("Using Application Default Credentials (ADC)", "authType", c.authType)
 		// Use Application Default Credentials (default behavior)
 		// No additional options needed - ADC is used by default
 	default:
@@ -1010,6 +1073,7 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	case bigquery.GeographyFieldType:
 		field.Type = arrow.BinaryTypes.String
 		metadata["ARROW:extension:name"] = "geoarrow.wkt"
+		metadata["ARROW:extension:metadata"] = `{"crs": "EPSG:4326", "crs_type": "authority_code", "edges": "spherical"}`
 	case bigquery.BigNumericFieldType:
 		// https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#decimal_types
 		field.Type = &arrow.Decimal256Type{
@@ -1113,5 +1177,44 @@ func (c *connectionImpl) getAccessToken() (*bigQueryTokenResponse, error) {
 	if err != nil {
 		return nil, errToAdbcErr(adbc.StatusIO, err, "get access token")
 	}
+
+	if tokenResponse.Error != "" {
+		msg := fmt.Sprintf("[bq] OAuth token error: %s", tokenResponse.Error)
+		if tokenResponse.ErrorDescription != "" {
+			msg += ": " + tokenResponse.ErrorDescription
+		}
+		if isReauthError(tokenResponse.ErrorDescription) {
+			msg += ". " + reauthGuidance
+		}
+		if tokenResponse.ErrorURI != "" {
+			msg += " (see: " + tokenResponse.ErrorURI + ")"
+		}
+		return nil, adbc.Error{
+			Code: adbc.StatusUnauthorized,
+			Msg:  msg,
+		}
+	}
+
 	return &tokenResponse, nil
+}
+
+func detectCredentialTypeFromFile(filename string) (option.CredentialsType, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return "", fmt.Errorf("read credential file: %w", err)
+	}
+	return detectCredentialTypeFromJSON(data)
+}
+
+func detectCredentialTypeFromJSON(data []byte) (option.CredentialsType, error) {
+	var f struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		return "", fmt.Errorf("parse credential JSON: %w", err)
+	}
+	if f.Type == "" {
+		return "", fmt.Errorf("missing 'type' field in credential JSON")
+	}
+	return option.CredentialsType(f.Type), nil
 }

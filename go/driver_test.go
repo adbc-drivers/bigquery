@@ -35,8 +35,10 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	driver "github.com/adbc-drivers/bigquery/go"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
+	"github.com/adbc-drivers/driverbase-go/testutil"
+	"github.com/adbc-drivers/driverbase-go/validation"
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/apache/arrow-adbc/go/adbc/validation"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/decimal128"
@@ -97,12 +99,12 @@ func (q *BigQueryQuirks) CreateSampleTable(tableName string, r arrow.RecordBatch
 	return errors.Join(err, status.Err())
 }
 
-func (q *BigQueryQuirks) SetupDriver(t *testing.T) adbc.Driver {
+func (q *BigQueryQuirks) SetupDriver(t *testing.T) driverbase.DriverWithContext {
 	q.mem = memory.NewCheckedAllocator(memory.DefaultAllocator)
 	return driver.NewDriver(q.mem)
 }
 
-func (q *BigQueryQuirks) TearDownDriver(t *testing.T, _ adbc.Driver) {
+func (q *BigQueryQuirks) TearDownDriver(t *testing.T, _ driverbase.DriverWithContext) {
 	q.mem.AssertSize(t, 0)
 }
 
@@ -159,17 +161,17 @@ func (q *BigQueryQuirks) quoteTblName(name string) string {
 	return fmt.Sprintf("`%s.%s`", q.schemaName, strings.ReplaceAll(name, "\"", "\"\""))
 }
 
-func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.RecordBatch) error {
+func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.RecordBatch) (err error) {
 	var b strings.Builder
 	b.WriteString("CREATE OR REPLACE TABLE ")
 	b.WriteString(q.quoteTblName(tableName))
 	b.WriteString(" (")
 
-	for i := 0; i < int(r.NumCols()); i++ {
+	for i := range r.NumCols() {
 		if i != 0 {
 			b.WriteString(", ")
 		}
-		f := r.Schema().Field(i)
+		f := r.Schema().Field(int(i))
 		b.WriteString(f.Name)
 		b.WriteByte(' ')
 		b.WriteString(getSqlTypeFromArrowField(f))
@@ -179,63 +181,43 @@ func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.
 	ctx := context.Background()
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	tmpDriver := driver.NewDriver(mem)
-	db, err := tmpDriver.NewDatabase(q.DatabaseOptions())
-	if err != nil {
-		panic(err)
+	db, dbErr := tmpDriver.NewDatabaseWithContext(ctx, q.DatabaseOptions())
+	if dbErr != nil {
+		return dbErr
 	}
-	defer func() {
-		err := db.Close()
-		if err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, db.Close(ctx)) }()
 
-	cnxn, err := db.Open(ctx)
-	if err != nil {
-		panic(err)
+	cnxn, cnxnErr := db.Open(ctx)
+	if cnxnErr != nil {
+		return cnxnErr
 	}
-	defer func() {
-		err := cnxn.Close()
-		if err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, cnxn.Close(ctx)) }()
 
-	stmt, err := cnxn.NewStatement()
-	if err != nil {
-		panic(err)
+	stmt, stmtErr := cnxn.NewStatement(ctx)
+	if stmtErr != nil {
+		return stmtErr
 	}
-	defer func() {
-		err := stmt.Close()
-		if err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, stmt.Close(ctx)) }()
 
-	err = stmt.SetOption(driver.OptionBoolQueryUseLegacySQL, "false")
-	if err != nil {
-		panic(err)
+	if err = stmt.SetOption(ctx, driver.OptionBoolQueryUseLegacySQL, "false"); err != nil {
+		return err
 	}
 
 	creationQuery := b.String()
-	err = stmt.SetSqlQuery(creationQuery)
-	if err != nil {
-		panic(err)
+	if err = stmt.SetSqlQuery(ctx, creationQuery); err != nil {
+		return err
 	}
-	_, err = stmt.ExecuteUpdate(ctx)
-	if err != nil {
-		panic(err)
+	if _, err = stmt.ExecuteUpdate(ctx); err != nil {
+		return err
 	}
 
 	insertQuery := "INSERT INTO " + q.quoteTblName(tableName) + " VALUES ("
 	bindings := strings.Repeat("?,", int(r.NumCols()))
 	insertQuery += bindings[:len(bindings)-1] + ")"
-	err = stmt.Bind(ctx, r)
-	if err != nil {
+	if err = stmt.Bind(ctx, r); err != nil {
 		return err
 	}
-	err = stmt.SetSqlQuery(insertQuery)
-	if err != nil {
+	if err = stmt.SetSqlQuery(ctx, insertQuery); err != nil {
 		return err
 	}
 	rdr, _, err := stmt.ExecuteQuery(ctx)
@@ -247,13 +229,13 @@ func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.
 	return nil
 }
 
-func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr array.RecordReader) error {
+func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr array.RecordReader) (err error) {
 	var b strings.Builder
 	b.WriteString("CREATE OR REPLACE TABLE ")
 	b.WriteString(q.quoteTblName(tableName))
 	b.WriteString(" (")
 
-	for i := 0; i < rdr.Schema().NumFields(); i++ {
+	for i := range rdr.Schema().NumFields() {
 		if i != 0 {
 			b.WriteString(", ")
 		}
@@ -267,63 +249,43 @@ func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr arra
 	ctx := context.Background()
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	tmpDriver := driver.NewDriver(mem)
-	db, err := tmpDriver.NewDatabase(q.DatabaseOptions())
-	if err != nil {
-		panic(err)
+	db, dbErr := tmpDriver.NewDatabaseWithContext(ctx, q.DatabaseOptions())
+	if dbErr != nil {
+		return dbErr
 	}
-	defer func() {
-		err := db.Close()
-		if err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, db.Close(ctx)) }()
 
-	cnxn, err := db.Open(ctx)
-	if err != nil {
-		panic(err)
+	cnxn, cnxnErr := db.Open(ctx)
+	if cnxnErr != nil {
+		return cnxnErr
 	}
-	defer func() {
-		err := cnxn.Close()
-		if err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, cnxn.Close(ctx)) }()
 
-	stmt, err := cnxn.NewStatement()
-	if err != nil {
-		panic(err)
+	stmt, stmtErr := cnxn.NewStatement(ctx)
+	if stmtErr != nil {
+		return stmtErr
 	}
-	defer func() {
-		err := stmt.Close()
-		if err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, stmt.Close(ctx)) }()
 
-	err = stmt.SetOption(driver.OptionBoolQueryUseLegacySQL, "false")
-	if err != nil {
-		panic(err)
+	if err = stmt.SetOption(ctx, driver.OptionBoolQueryUseLegacySQL, "false"); err != nil {
+		return err
 	}
 
 	creationQuery := b.String()
-	err = stmt.SetSqlQuery(creationQuery)
-	if err != nil {
-		panic(err)
+	if err = stmt.SetSqlQuery(ctx, creationQuery); err != nil {
+		return err
 	}
-	_, err = stmt.ExecuteUpdate(ctx)
-	if err != nil {
-		panic(err)
+	if _, err = stmt.ExecuteUpdate(ctx); err != nil {
+		return err
 	}
 
 	insertQuery := "INSERT INTO " + q.quoteTblName(tableName) + " VALUES ("
 	bindings := strings.Repeat("?,", rdr.Schema().NumFields())
 	insertQuery += bindings[:len(bindings)-1] + ")"
-	err = stmt.BindStream(ctx, rdr)
-	if err != nil {
+	if err = stmt.BindStream(ctx, rdr); err != nil {
 		return err
 	}
-	err = stmt.SetSqlQuery(insertQuery)
-	if err != nil {
+	if err = stmt.SetSqlQuery(ctx, insertQuery); err != nil {
 		return err
 	}
 	res, _, err := stmt.ExecuteQuery(ctx)
@@ -335,22 +297,19 @@ func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr arra
 	return nil
 }
 
-func (q *BigQueryQuirks) DropTable(cnxn adbc.Connection, tblname string) error {
-	stmt, err := cnxn.NewStatement()
-	if err != nil {
-		return err
+func (q *BigQueryQuirks) DropTable(cnxn adbc.ConnectionWithContext, tblname string) (err error) {
+	ctx := context.Background()
+	stmt, stmtErr := cnxn.NewStatement(ctx)
+	if stmtErr != nil {
+		return stmtErr
 	}
-	defer func() {
-		if err = stmt.Close(); err != nil {
-			panic(err)
-		}
-	}()
+	defer func() { err = errors.Join(err, stmt.Close(ctx)) }()
 
-	if err = stmt.SetSqlQuery(`DROP TABLE IF EXISTS ` + q.quoteTblName(tblname)); err != nil {
+	if err = stmt.SetSqlQuery(ctx, `DROP TABLE IF EXISTS `+q.quoteTblName(tblname)); err != nil {
 		return err
 	}
 
-	_, err = stmt.ExecuteUpdate(context.Background())
+	_, err = stmt.ExecuteUpdate(ctx)
 	return err
 }
 
@@ -362,7 +321,7 @@ func (q *BigQueryQuirks) SupportsCurrentCatalogSchema() bool          { return t
 func (q *BigQueryQuirks) SupportsExecuteSchema() bool                 { return false }
 func (q *BigQueryQuirks) SupportsGetSetOptions() bool                 { return true }
 func (q *BigQueryQuirks) SupportsPartitionedData() bool               { return false }
-func (q *BigQueryQuirks) SupportsStatistics() bool                    { return false }
+func (q *BigQueryQuirks) SupportsStatistics() bool                    { return true }
 func (q *BigQueryQuirks) SupportsTransactions() bool                  { return false }
 func (q *BigQueryQuirks) SupportsGetParameterSchema() bool            { return false }
 func (q *BigQueryQuirks) SupportsDynamicParameterBinding() bool       { return false }
@@ -414,21 +373,22 @@ func (q *BigQueryQuirks) SampleTableSchemaMetadata(tblName string, dt arrow.Data
 	return arrow.MetadataFrom(metadata)
 }
 
-func createTempSchema(ctx context.Context, client *bigquery.Client) string {
+func createTempSchema(t *testing.T, ctx context.Context, client *bigquery.Client) string {
+	t.Helper()
 	schemaName := strings.ToUpper("ADBC_TESTING_" + strings.ReplaceAll(uuid.New().String(), "-", "_"))
 	dataset := client.Dataset(schemaName)
-	err := dataset.Create(ctx, nil)
-	if err != nil {
-		panic(err)
+	if err := dataset.Create(ctx, nil); err != nil {
+		t.Fatalf("failed to create temp schema %s: %v", schemaName, err)
 	}
 
 	fmt.Printf("Created temp schema %s\n", schemaName)
 	return schemaName
 }
 
-func dropTempSchema(ctx context.Context, client *bigquery.Client, schemaName string) {
+func dropTempSchema(t *testing.T, ctx context.Context, client *bigquery.Client, schemaName string) {
+	t.Helper()
 	if err := client.Dataset(schemaName).DeleteWithContents(ctx); err != nil {
-		panic(err)
+		t.Fatalf("failed to drop temp schema %s: %v", schemaName, err)
 	}
 	fmt.Printf("Dropped temp schema %s\n", schemaName)
 }
@@ -575,11 +535,11 @@ func withQuirks(t *testing.T, fn func(quirks *BigQueryQuirks)) {
 		ctx:         ctx,
 		client:      client,
 		catalogName: client.Project(),
-		schemaName:  createTempSchema(ctx, client),
+		schemaName:  createTempSchema(t, ctx, client),
 	}
 
 	t.Cleanup(func() {
-		dropTempSchema(ctx, client, q.schemaName)
+		dropTempSchema(t, ctx, client, q.schemaName)
 	})
 
 	fn(q)
@@ -622,30 +582,36 @@ type BigQueryTests struct {
 	Quirks *BigQueryQuirks
 
 	ctx    context.Context
-	driver adbc.Driver
-	db     adbc.Database
-	cnxn   adbc.Connection
-	stmt   adbc.Statement
+	driver driverbase.DriverWithContext
+	db     adbc.DatabaseWithContext
+	cnxn   adbc.ConnectionWithContext
+	stmt   adbc.StatementWithContext
 }
 
 func (suite *BigQueryTests) SetupTest() {
 	var err error
 	suite.ctx = context.Background()
 	suite.driver = suite.Quirks.SetupDriver(suite.T())
-	suite.db, err = suite.driver.NewDatabase(suite.Quirks.DatabaseOptions())
+	suite.db, err = suite.driver.NewDatabaseWithContext(suite.ctx, suite.Quirks.DatabaseOptions())
 	suite.NoError(err)
 	suite.cnxn, err = suite.db.Open(suite.ctx)
 	suite.NoError(err)
-	suite.stmt, err = suite.cnxn.NewStatement()
+	suite.stmt, err = suite.cnxn.NewStatement(suite.ctx)
 	suite.NoError(err)
 }
 
 func (suite *BigQueryTests) TearDownTest() {
-	suite.NoError(suite.stmt.Close())
-	suite.NoError(suite.cnxn.Close())
+	if suite.stmt != nil {
+		suite.NoError(suite.stmt.Close(suite.ctx))
+	}
+	if suite.cnxn != nil {
+		suite.NoError(suite.cnxn.Close(suite.ctx))
+	}
 	suite.Quirks.TearDownDriver(suite.T(), suite.driver)
 	suite.cnxn = nil
-	suite.NoError(suite.db.Close())
+	if suite.db != nil {
+		suite.NoError(suite.db.Close(suite.ctx))
+	}
 	suite.db = nil
 	suite.driver = nil
 }
@@ -655,12 +621,12 @@ func (suite *BigQueryTests) TestDropSchema() {
 	schema := fmt.Sprintf("%s_x", suite.Quirks.DBSchema())
 
 	// Create unique schema to drop via a query
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("CREATE SCHEMA %s", schema)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("CREATE SCHEMA %s", schema)))
 	rdr, _, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	rdr.Release()
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("DROP SCHEMA %s CASCADE", schema)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("DROP SCHEMA %s CASCADE", schema)))
 	rdr, _, err = suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	rdr.Release()
@@ -671,12 +637,12 @@ func (suite *BigQueryTests) TestDropSchema() {
 
 func (suite *BigQueryTests) TestCreateView() {
 	// Create unique schema to drop via a query
-	suite.Require().NoError(suite.stmt.SetSqlQuery("CREATE TABLE IF NOT EXISTS a (id int)"))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "CREATE TABLE IF NOT EXISTS a (id int)"))
 	rdr, _, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	rdr.Release()
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery("CREATE VIEW IF NOT EXISTS a_view AS SELECT * FROM a"))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "CREATE VIEW IF NOT EXISTS a_view AS SELECT * FROM a"))
 	rdr, _, err = suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	rdr.Release()
@@ -686,27 +652,27 @@ func (suite *BigQueryTests) TestNewDatabaseGetSetOptions() {
 	key1, val1 := driver.OptionStringProjectID, "val1"
 	key2, val2 := driver.OptionStringDatasetID, "val2"
 
-	db, err := suite.driver.NewDatabase(map[string]string{
+	db, err := suite.driver.NewDatabaseWithContext(suite.ctx, map[string]string{
 		key1: val1,
 		key2: val2,
 	})
 	suite.NoError(err)
 	suite.NotNil(db)
-	defer validation.CheckedClose(suite.T(), db)
+	defer testutil.CheckedCloseWithContext(suite.T(), db, suite.ctx)
 
-	getSetDB, ok := db.(adbc.GetSetOptions)
+	getSetDB, ok := db.(adbc.GetSetOptionsWithContext)
 	suite.True(ok)
 
-	optVal1, err := getSetDB.GetOption(key1)
+	optVal1, err := getSetDB.GetOption(suite.ctx, key1)
 	suite.NoError(err)
 	suite.Equal(optVal1, val1)
-	optVal2, err := getSetDB.GetOption(key2)
+	optVal2, err := getSetDB.GetOption(suite.ctx, key2)
 	suite.NoError(err)
 	suite.Equal(optVal2, val2)
 }
 
 func (suite *BigQueryTests) TestEmptyResultSet() {
-	suite.Require().NoError(suite.stmt.SetSqlQuery("SELECT * FROM UNNEST([])"))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM UNNEST([])"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -732,7 +698,7 @@ func (suite *BigQueryTests) TestSqlBulkInsertRecords() {
 	err := suite.Quirks.CreateSampleTableWithRecords(bulkInsertTableName, rec)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, bulkInsertTableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, bulkInsertTableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -756,11 +722,12 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 
 	stream, err := array.NewRecordReader(input, []arrow.RecordBatch{rec})
 	suite.Require().NoError(err)
+	defer stream.Release()
 
 	err = suite.Quirks.CreateSampleTableWithStreams(bulkInsertTableName, stream)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, bulkInsertTableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, bulkInsertTableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -773,6 +740,56 @@ func (suite *BigQueryTests) TestSqlBulkInsertStreams() {
 	suite.False(rdr.Next())
 
 	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestBulkInsertWrite() {
+	table := "bulk_insert_write"
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "ints", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "strs", Type: arrow.BinaryTypes.String, Nullable: true},
+	}, nil)
+	rec := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), schema, `[
+{"ints": 1, "strs": "one"},
+{"ints": 2, "strs": "two"},
+{"ints": 3, "strs": "three"}
+]`)
+	defer rec.Release()
+
+	rec2 := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), schema, `[
+{"ints": 4, "strs": "four"},
+{"ints": 5, "strs": "five"},
+{"ints": 6, "strs": "six"}
+]`)
+	defer rec2.Release()
+
+	stream, err := array.NewRecordReader(schema, []arrow.RecordBatch{rec, rec2})
+	suite.Require().NoError(err)
+	defer stream.Release()
+
+	suite.Require().NoError(suite.stmt.BindStream(suite.ctx, stream))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionKeyIngestTargetTable, table))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionValueIngestTargetDBSchema, suite.Quirks.DBSchema()))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionKeyIngestMode, adbc.OptionValueIngestModeReplace))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, driver.OptionStringBulkIngestMethod, driver.OptionValueBulkIngestMethodStorageWrite))
+	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	ctx := context.Background()
+	suite.Require().NoError(suite.stmt.SetSqlQuery(ctx, fmt.Sprintf("SELECT strs FROM `%s.%s` ORDER BY `ints` ASC", suite.Quirks.schemaName, table)))
+	rdr, _, err := suite.stmt.ExecuteQuery(ctx)
+	suite.Require().NoError(err)
+	suite.Require().NotNil(rdr)
+	defer rdr.Release()
+	var results []string
+	for rdr.Next() {
+		batch := rdr.RecordBatch()
+		strs := batch.Column(0).(*array.String)
+		for i := range batch.NumRows() {
+			results = append(results, strs.Value(int(i)))
+		}
+	}
+	suite.Require().NoError(rdr.Err())
+	suite.Equal([]string{"one", "two", "three", "four", "five", "six"}, results)
 }
 
 func (suite *BigQueryTests) TestSqlIngestTimestampTypes() {
@@ -827,7 +844,7 @@ func (suite *BigQueryTests) TestSqlIngestTimestampTypes() {
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -937,7 +954,7 @@ func (suite *BigQueryTests) TestSqlIngestDate64Type() {
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1042,7 +1059,7 @@ func (suite *BigQueryTests) TestSqlIngestDecimal() {
 	err = suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1177,7 +1194,7 @@ func (suite *BigQueryTests) TestSqlIngestListType() {
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1285,7 +1302,7 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 	err := suite.Quirks.CreateSampleTableWithRecords(tableName, rec)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, fmt.Sprintf("SELECT * FROM `%s.%s` ORDER BY `col_int64` ASC", suite.Quirks.schemaName, tableName)))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1578,11 +1595,12 @@ func TestAuthTypeConsolidation(t *testing.T) {
 	defer mem.AssertSize(t, 0)
 
 	drv := driver.NewDriver(mem)
-	db, err := drv.NewDatabase(nil)
+	ctx := context.Background()
+	db, err := drv.NewDatabaseWithContext(ctx, nil)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer validation.CheckedClose(t, db)
+	defer testutil.CheckedCloseWithContext(t, db, ctx)
 
 	// Test all valid auth types
 	validAuthTypes := []string{
@@ -1594,14 +1612,14 @@ func TestAuthTypeConsolidation(t *testing.T) {
 	}
 
 	for _, authType := range validAuthTypes {
-		err := db.SetOptions(map[string]string{driver.OptionStringAuthType: authType})
+		err := db.SetOptions(ctx, map[string]string{driver.OptionStringAuthType: authType})
 		if err != nil {
 			t.Errorf("Failed to set auth type %s: %v", authType, err)
 		}
 	}
 
 	// Test invalid auth type
-	err = db.SetOptions(map[string]string{driver.OptionStringAuthType: "invalid_auth_type"})
+	err = db.SetOptions(ctx, map[string]string{driver.OptionStringAuthType: "invalid_auth_type"})
 	if err == nil {
 		t.Error("Expected error for invalid auth type")
 	} else if !strings.Contains(err.Error(), "unknown database auth type value") {
@@ -1615,10 +1633,10 @@ type BigQueryTestSuite struct {
 	dataset string
 	mem     *memory.CheckedAllocator
 	ctx     context.Context
-	driver  adbc.Driver
-	db      adbc.Database
-	cnxn    adbc.Connection
-	stmt    adbc.Statement
+	driver  driverbase.DriverWithContext
+	db      adbc.DatabaseWithContext
+	cnxn    adbc.ConnectionWithContext
+	stmt    adbc.StatementWithContext
 }
 
 func (s *BigQueryTestSuite) SetupSuite() {
@@ -1628,7 +1646,7 @@ func (s *BigQueryTestSuite) SetupSuite() {
 	s.mem = memory.NewCheckedAllocator(memory.DefaultAllocator)
 
 	s.driver = driver.NewDriver(s.mem)
-	s.db, err = s.driver.NewDatabase(map[string]string{
+	s.db, err = s.driver.NewDatabaseWithContext(s.ctx, map[string]string{
 		driver.OptionStringProjectID: s.project,
 		driver.OptionStringDatasetID: s.dataset,
 	})
@@ -1644,19 +1662,19 @@ func (s *BigQueryTestSuite) SetupSuite() {
 	s.cnxn, err = s.db.Open(s.ctx)
 	s.NoError(err)
 
-	s.stmt, err = s.cnxn.NewStatement()
+	s.stmt, err = s.cnxn.NewStatement(s.ctx)
 	s.NoError(err)
 }
 
 func (s *BigQueryTestSuite) TearDownSuite() {
 	if s.stmt != nil {
-		s.NoError(s.stmt.Close())
+		s.NoError(s.stmt.Close(s.ctx))
 	}
 	if s.cnxn != nil {
-		s.NoError(s.cnxn.Close())
+		s.NoError(s.cnxn.Close(s.ctx))
 	}
 	if s.db != nil {
-		s.NoError(s.db.Close())
+		s.NoError(s.db.Close(s.ctx))
 	}
 	s.mem.AssertSize(s.T(), 0)
 }
@@ -1971,4 +1989,152 @@ func TestBigQueryURIParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (suite *BigQueryTests) TestGetStatistics() {
+	// Create a persistent test table (if not exists) to ensure consistent results
+	// across test runs despite INFORMATION_SCHEMA staleness
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, `
+		CREATE TABLE IF NOT EXISTS statistics_test (
+			id INT64,
+			category STRING,
+			name STRING,
+			value FLOAT64
+		)
+	`))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	// Check if table is empty, if so populate it with 300 rows
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, `SELECT COUNT(*) FROM statistics_test`))
+	countRdr, _, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	suite.Require().True(countRdr.Next())
+	count := countRdr.RecordBatch().Column(0).(*array.Int64).Value(0)
+	countRdr.Release()
+
+	if count == 0 {
+		suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, `
+			INSERT INTO statistics_test
+			SELECT
+				row_num as id,
+				CASE MOD(row_num, 3) WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END as category,
+				CONCAT('test_', CAST(row_num AS STRING)) as name,
+				RAND() * 300 as value
+			FROM UNNEST(GENERATE_ARRAY(1, 300)) as row_num
+		`))
+		_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+		suite.Require().NoError(err)
+	}
+
+	project := suite.Quirks.Catalog()
+	dataset := suite.Quirks.DBSchema()
+
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	// Test Get statistics with specific table filter
+	tableName := "statistics_test"
+	statsRdr, err := statsCnxn.GetStatistics(suite.ctx, &project, &dataset, &tableName, false)
+	suite.Require().NoError(err)
+	defer statsRdr.Release()
+
+	// Verify schema matches ADBC spec
+	suite.True(adbc.GetStatisticsSchema.Equal(statsRdr.Schema()),
+		"Schema should match ADBC spec\nexpected: %s\ngot: %s",
+		adbc.GetStatisticsSchema, statsRdr.Schema())
+
+	// Read and extract statistics for our table
+	var allStats []testutil.Statistic
+	for statsRdr.Next() {
+		rec := statsRdr.RecordBatch()
+		suite.Greater(rec.NumRows(), int64(0), "Should have at least one catalog")
+		stats := testutil.ExtractStatisticsForTable(rec, project, dataset, tableName)
+		allStats = append(allStats, stats...)
+	}
+	suite.NoError(statsRdr.Err())
+
+	suite.Greater(len(allStats), 0, "Should find statistics for statistics_test table")
+
+	// Convert to lookup map for easier assertions
+	statsMap := testutil.StatisticsToLookupMap(allStats)
+
+	// Row count: We inserted 300 rows
+	rowCount, ok := statsMap[int16(6)].StatisticValue.(float64)
+	suite.True(ok, "row_count statistic should be present as float64")
+	suite.GreaterOrEqual(rowCount, float64(300), "Row count should be at least 300")
+	suite.True(statsMap[int16(6)].IsApproximate, "row_count should be approximate (cached)")
+	suite.T().Logf("Row count: %.0f (note: may be stale due to INFORMATION_SCHEMA caching)", rowCount)
+
+	// Bytes: Should be > 0, reasonable size for 300 rows with data
+	totalLogicalBytes, ok := statsMap[int16(1024)].StatisticValue.(int64)
+	suite.True(ok, "total_logical_bytes statistic should be present")
+	suite.Greater(totalLogicalBytes, int64(0), "Total logical bytes should be > 0")
+	suite.True(statsMap[int16(1024)].IsApproximate, "total_logical_bytes should be approximate (cached)")
+	suite.T().Logf("Total logical bytes: %d", totalLogicalBytes)
+
+	// Partition count: Unpartitioned table should have 1 partition
+	partitionCount, ok := statsMap[int16(1030)].StatisticValue.(int64)
+	suite.True(ok, "partition_count statistic should be present")
+	suite.Equal(int64(1), partitionCount, "Unpartitioned table should have partition count of 1")
+	suite.False(statsMap[int16(1030)].IsApproximate, "partition_count should be exact (not approximate)")
+	suite.T().Logf("Partition count: %d", partitionCount)
+
+	// Check for other BigQuery-specific statistics (may not all be present)
+	if totalBillableBytes, ok := statsMap[int16(1025)].StatisticValue.(int64); ok {
+		suite.T().Logf("Total billable bytes found: %d", totalBillableBytes)
+		suite.GreaterOrEqual(totalBillableBytes, int64(0), "Total billable bytes should be non-negative")
+		suite.True(statsMap[int16(1025)].IsApproximate, "total_billable_bytes should be approximate")
+	}
+
+	if totalPhysicalBytes, ok := statsMap[int16(1026)].StatisticValue.(int64); ok {
+		suite.T().Logf("Total physical bytes found: %d", totalPhysicalBytes)
+		suite.GreaterOrEqual(totalPhysicalBytes, int64(0), "Total physical bytes should be non-negative")
+		// TABLE_STORAGE stats are always approximate
+		suite.True(statsMap[int16(1026)].IsApproximate, "total_physical_bytes should be approximate")
+	}
+
+	if activeLogicalBytes, ok := statsMap[int16(1027)].StatisticValue.(int64); ok {
+		suite.T().Logf("Active logical bytes found: %d", activeLogicalBytes)
+		suite.GreaterOrEqual(activeLogicalBytes, int64(0), "Active logical bytes should be non-negative")
+		suite.True(statsMap[int16(1027)].IsApproximate, "active_logical_bytes should be approximate")
+	}
+
+	if longTermLogicalBytes, ok := statsMap[int16(1028)].StatisticValue.(int64); ok {
+		suite.T().Logf("Long-term logical bytes found: %d", longTermLogicalBytes)
+		suite.GreaterOrEqual(longTermLogicalBytes, int64(0), "Long-term logical bytes should be non-negative")
+		suite.True(statsMap[int16(1028)].IsApproximate, "long_term_logical_bytes should be approximate")
+	}
+
+	if timeTravelPhysicalBytes, ok := statsMap[int16(1029)].StatisticValue.(int64); ok {
+		suite.T().Logf("Time travel physical bytes found: %d", timeTravelPhysicalBytes)
+		suite.GreaterOrEqual(timeTravelPhysicalBytes, int64(0), "Time travel physical bytes should be non-negative")
+		suite.True(statsMap[int16(1029)].IsApproximate, "time_travel_physical_bytes should be approximate")
+	}
+
+	if lastModifiedTime, ok := statsMap[int16(1031)].StatisticValue.([]byte); ok {
+		suite.T().Logf("Last modified time found: %s", string(lastModifiedTime))
+		suite.Greater(len(lastModifiedTime), 0, "Last modified time should not be empty")
+		suite.False(statsMap[int16(1031)].IsApproximate, "last_modified_time should be exact")
+	}
+
+	// Note: We intentionally don't drop the table to keep it for subsequent test runs,
+	// ensuring consistent results despite INFORMATION_SCHEMA caching
+}
+
+func (suite *BigQueryTests) TestGetStatisticNames() {
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	rdr, err := statsCnxn.GetStatisticNames(suite.ctx)
+	suite.NoError(err)
+	defer rdr.Release()
+
+	suite.True(adbc.GetStatisticNamesSchema.Equal(rdr.Schema()),
+		"expected: %s\ngot: %s", adbc.GetStatisticNamesSchema, rdr.Schema())
+
+	// Verify exactly 8 BigQuery-specific rows (keys >= 1024)
+	suite.True(rdr.Next())
+	rec := rdr.RecordBatch()
+	suite.Equal(int64(8), rec.NumRows())
 }

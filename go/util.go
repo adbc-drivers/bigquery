@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,17 +115,13 @@ func isRetryableError(err error) bool {
 		if len(e.Errors) > 0 {
 			reason = e.Errors[0].Reason
 
-			for _, r := range retryableReasons {
-				if r == reason {
-					return true
-				}
+			if slices.Contains(retryableReasons, reason) {
+				return true
 			}
 		}
 
-		for _, code := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
-			if e.Code == code {
-				return true
-			}
+		if slices.Contains([]int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout}, e.Code) {
+			return true
 		}
 
 	case *url.Error:
@@ -145,9 +142,19 @@ func isRetryableError(err error) bool {
 
 // errToAdbcErr converts an error to an ADBC error, using the metadata from
 // Google API errors if possible and including the supplied context
-func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextArgs ...any) error {
+func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, contextArgs ...any) error {
 	if errors.Is(err, adbc.Error{}) {
 		return err
+	} else if errors.Is(err, context.Canceled) {
+		return adbc.Error{
+			Code: adbc.StatusCancelled,
+			Msg:  fmt.Sprintf("[bq] cancelled %s: %s", fmt.Sprintf(errContext, contextArgs...), err.Error()),
+		}
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		return adbc.Error{
+			Code: adbc.StatusTimeout,
+			Msg:  fmt.Sprintf("[bq] deadline exceeded: %s", fmt.Sprintf(errContext, contextArgs...)),
+		}
 	}
 
 	adbcErr := adbc.Error{
@@ -155,35 +162,31 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	}
 	var msg strings.Builder
 	msg.WriteString("[bq] Could not")
-	msg.WriteString(fmt.Sprintf(" %s", fmt.Sprintf(context, contextArgs...)))
+	fmt.Fprintf(&msg, " %s", fmt.Sprintf(errContext, contextArgs...))
 	msg.WriteString(": ")
 
-	var apiErr *apierror.APIError
-	var bqErr *bigquery.Error
-	var httpErr *googleapi.Error
-	var urlErr *url.Error
 	statusCode := -1
-	if errors.As(err, &httpErr) {
+	if httpErr, ok := errors.AsType[*googleapi.Error](err); ok {
 		statusCode = httpErr.Code
-		msg.WriteString(fmt.Sprintf("%d %s: %s", httpErr.Code, http.StatusText(httpErr.Code), httpErr.Message))
-	} else if errors.As(err, &apiErr) {
+		fmt.Fprintf(&msg, "%d %s: %s", httpErr.Code, http.StatusText(httpErr.Code), httpErr.Message)
+	} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok {
 		// Despite all the structure inside the error, there isn't a great way to
 		// extract or map it onto anything (e.g. there are two types of errors
 		// depending on whether HTTP or gRPC is used, but you can't actually
 		// branch on that because the HTTP error is not exposed to you)
 		msg.WriteString(apiErr.Error())
-	} else if errors.As(err, &urlErr) {
+	} else if urlErr, ok := errors.AsType[*url.Error](err); ok {
 		cleanURL := urlErr.URL
 		if url, err := url.Parse(urlErr.URL); err == nil {
 			url.RawQuery = ""
 			cleanURL = url.String()
 		}
-		msg.WriteString(fmt.Sprintf("failed to %s %s", urlErr.Op, cleanURL))
+		fmt.Fprintf(&msg, "failed to %s %s", urlErr.Op, cleanURL)
 		if urlErr.Err != nil {
-			msg.WriteString(fmt.Sprintf(": %s", urlErr.Err.Error()))
+			fmt.Fprintf(&msg, ": %s", urlErr.Err.Error())
 		}
-	} else if errors.As(err, &bqErr) {
-		msg.WriteString(fmt.Sprintf("%s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location))
+	} else if bqErr, ok := errors.AsType[*bigquery.Error](err); ok {
+		fmt.Fprintf(&msg, "%s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location)
 
 		switch bqErr.Reason {
 		case "accessDenied", "billingNotEnabled", "blocked":
@@ -209,8 +212,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 		msg.WriteString(err.Error())
 	}
 
-	var authErr *auth.Error
-	if statusCode <= 0 && errors.As(err, &authErr) {
+	if authErr, ok := errors.AsType[*auth.Error](err); ok && statusCode <= 0 {
 		statusCode = authErr.Response.StatusCode
 	}
 
@@ -224,5 +226,52 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, context string, contextA
 	}
 
 	adbcErr.Msg = msg.String()
+
+	if isReauthError(err.Error()) {
+		adbcErr.Code = adbc.StatusUnauthorized
+		adbcErr.Msg += ". " + reauthGuidance
+	}
+
 	return adbcErr
+}
+
+const reauthGuidance = "Your Google Workspace admin requires re-authentication (RAPT). " +
+	"Consider using a service account instead of user credentials, or re-authenticate " +
+	"interactively with 'gcloud auth application-default login'. " +
+	"See https://support.google.com/a/answer/9368756"
+
+func isReauthError(s string) bool {
+	return strings.Contains(s, "invalid_rapt") || strings.Contains(s, "reauth related error")
+}
+
+func retryWithBackoff(ctx context.Context, context string, maxAttempts int, backoff gax.Backoff, f func() (bool, error)) error {
+	attempt := 0
+	for {
+		complete, err := f()
+		if complete {
+			return err
+		}
+
+		duration := backoff.Pause()
+		if sleepErr := gax.Sleep(ctx, duration); sleepErr != nil {
+			return err
+		}
+		attempt++
+
+		if attempt >= maxAttempts {
+			return adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  fmt.Sprintf("[bq] could not %s: maximum retry attempts exceeded: %v", context, err),
+			}
+		}
+	}
+}
+
+func retry(ctx context.Context, context string, f func() (bool, error)) error {
+	backoff := gax.Backoff{
+		Initial:    100 * time.Millisecond,
+		Multiplier: 2.0,
+		Max:        15 * time.Second,
+	}
+	return retryWithBackoff(ctx, context, 20, backoff, f)
 }

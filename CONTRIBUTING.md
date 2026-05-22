@@ -22,7 +22,7 @@ Conduct](https://github.com/adbc-drivers/bigquery?tab=coc-ov-file#readme).
 ## Reporting Issues and Making Feature Requests
 
 Please file issues and feature requests on the GitHub issue tracker:
-https://github.com/adbc-drivers/google/issues
+https://github.com/adbc-drivers/bigquery/issues
 
 Potential security vulnerabilities should be reported to
 [security@adbc-drivers.org](mailto:security@adbc-drivers.org) instead.  See

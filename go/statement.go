@@ -25,6 +25,7 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -57,30 +58,33 @@ type statement struct {
 	resultRecordBufferSize int
 	prefetchConcurrency    int
 	ingest                 driverbase.BulkIngestOptions
+
+	bulkIngestMethod      string
+	bulkIngestCompression string
 }
 
-func (st *statement) GetOptionBytes(key string) ([]byte, error) {
+func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
 	return nil, adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotFound,
 	}
 }
 
-func (st *statement) GetOptionDouble(key string) (float64, error) {
+func (st *statement) GetOptionDouble(ctx context.Context, key string) (float64, error) {
 	return 0, adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotFound,
 	}
 }
 
-func (st *statement) SetOptionBytes(key string, value []byte) error {
+func (st *statement) SetOptionBytes(ctx context.Context, key string, value []byte) error {
 	return adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotImplemented,
 	}
 }
 
-func (st *statement) SetOptionDouble(key string, value float64) error {
+func (st *statement) SetOptionDouble(ctx context.Context, key string, value float64) error {
 	return adbc.Error{
 		Msg:  fmt.Sprintf("[BigQuery] Unknown statement option '%s'", key),
 		Code: adbc.StatusNotImplemented,
@@ -91,7 +95,7 @@ func (st *statement) SetOptionDouble(key string, value float64) error {
 // and closes it (particularly if it is a prepared statement).
 //
 // A statement instance should not be used after Close is called.
-func (st *statement) Close() error {
+func (st *statement) Close(ctx context.Context) error {
 	if st.cnxn == nil {
 		return adbc.Error{
 			Msg:  "[bq] statement already closed",
@@ -104,10 +108,10 @@ func (st *statement) Close() error {
 	return nil
 }
 
-func (st *statement) GetOption(key string) (string, error) {
+func (st *statement) GetOption(ctx context.Context, key string) (string, error) {
 	switch key {
 	case OptionStringProjectID:
-		val, err := st.cnxn.GetOption(OptionStringProjectID)
+		val, err := st.cnxn.GetOption(ctx, OptionStringProjectID)
 		if err != nil {
 			return "", err
 		} else {
@@ -139,8 +143,20 @@ func (st *statement) GetOption(key string) (string, error) {
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionBoolQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
+	case OptionStringBulkIngestMethod:
+		// If set at statement level, return that; otherwise fall back to connection
+		if st.bulkIngestMethod != "" {
+			return st.bulkIngestMethod, nil
+		}
+		return st.cnxn.GetOption(ctx, key)
+	case OptionStringBulkIngestCompression:
+		// If set at statement level, return that; otherwise fall back to connection
+		if st.bulkIngestCompression != "" {
+			return st.bulkIngestCompression, nil
+		}
+		return st.cnxn.GetOption(ctx, key)
 	default:
-		val, err := st.cnxn.GetOption(key)
+		val, err := st.cnxn.GetOption(ctx, key)
 		if err == nil {
 			return val, nil
 		}
@@ -148,7 +164,7 @@ func (st *statement) GetOption(key string) (string, error) {
 	}
 }
 
-func (st *statement) GetOptionInt(key string) (int64, error) {
+func (st *statement) GetOptionInt(ctx context.Context, key string) (int64, error) {
 	switch key {
 	case OptionIntQueryMaxBillingTier:
 		return int64(st.queryConfig.MaxBillingTier), nil
@@ -161,7 +177,7 @@ func (st *statement) GetOptionInt(key string) (int64, error) {
 	case OptionIntQueryPrefetchConcurrency:
 		return int64(st.prefetchConcurrency), nil
 	default:
-		val, err := st.cnxn.GetOptionInt(key)
+		val, err := st.cnxn.GetOptionInt(ctx, key)
 		if err == nil {
 			return val, nil
 		}
@@ -169,10 +185,11 @@ func (st *statement) GetOptionInt(key string) (int64, error) {
 	}
 }
 
-func (st *statement) SetOption(key string, v string) error {
+func (st *statement) SetOption(ctx context.Context, key string, v string) error {
 	switch key {
 	case adbc.OptionKeyIngestTargetTable:
 		st.ingest.TableName = v
+		st.queryConfig.Q = ""
 	case adbc.OptionValueIngestTargetCatalog:
 		st.ingest.CatalogName = v
 	case adbc.OptionValueIngestTargetDBSchema:
@@ -286,6 +303,25 @@ func (st *statement) SetOption(key string, v string) error {
 		} else {
 			return err
 		}
+	case OptionStringBulkIngestMethod:
+		if v != OptionValueBulkIngestMethodLoad &&
+			v != OptionValueBulkIngestMethodStorageWrite {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest method: %s (expected %s or %s)", v, OptionValueBulkIngestMethodLoad, OptionValueBulkIngestMethodStorageWrite),
+			}
+		}
+		st.bulkIngestMethod = v
+	case OptionStringBulkIngestCompression:
+		if v != OptionValueCompressionNone &&
+			v != OptionValueCompressionLZ4 &&
+			v != OptionValueCompressionZSTD {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest compression: %s (expected %s, %s, or %s)", v, OptionValueCompressionNone, OptionValueCompressionLZ4, OptionValueCompressionZSTD),
+			}
+		}
+		st.bulkIngestCompression = v
 
 	default:
 		return adbc.Error{
@@ -296,7 +332,7 @@ func (st *statement) SetOption(key string, v string) error {
 	return nil
 }
 
-func (st *statement) SetOptionInt(key string, value int64) error {
+func (st *statement) SetOptionInt(ctx context.Context, key string, value int64) error {
 	switch key {
 	case OptionIntQueryMaxBillingTier:
 		st.queryConfig.MaxBillingTier = int(value)
@@ -324,8 +360,8 @@ func (st *statement) SetOptionInt(key string, value int64) error {
 // The query can then be executed with any of the Execute methods.
 // For queries expected to be executed repeatedly, Prepare should be
 // called before execution.
-func (st *statement) SetSqlQuery(query string) error {
-	// TODO(lidavidm): this should reset ingest parameters (and vice versa)
+func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
+	st.ingest.TableName = ""
 	st.queryConfig.Q = query
 	return nil
 }
@@ -452,7 +488,7 @@ func (st *statement) Prepare(_ context.Context) error {
 // Like SetSqlQuery, after this is called the query can be executed
 // using any of the Execute methods. If the query is expected to be
 // executed repeatedly, Prepare should be called first on the statement.
-func (st *statement) SetSubstraitPlan(plan []byte) error {
+func (st *statement) SetSubstraitPlan(ctx context.Context, plan []byte) error {
 	return adbc.Error{
 		Code: adbc.StatusNotImplemented,
 		Msg:  "[bq] Substrait not yet implemented for BigQuery driver",
@@ -788,30 +824,6 @@ func (st *statement) clearParameters() {
 	}
 }
 
-// SetParameters takes a record batch to send as the parameter bindings when
-// executing. It should match the schema from ParameterSchema.
-//
-// This will call Retain on the record to ensure it doesn't get released out
-// from under the statement. Release will be called on a previous binding
-// record or reader if it existed, and will be called upon calling Close on the
-// PreparedStatement.
-func (st *statement) SetParameters(binding arrow.RecordBatch) {
-	st.clearParameters()
-	st.params, _ = array.NewRecordReader(binding.Schema(), []arrow.RecordBatch{binding})
-}
-
-// SetRecordReader takes a RecordReader to send as the parameter bindings when
-// executing. It should match the schema from ParameterSchema.
-//
-// This will call Retain on the reader to ensure it doesn't get released out
-// from under the statement. Release will be called on a previous binding
-// record or reader if it existed, and will be called upon calling Close on the
-// PreparedStatement.
-func (st *statement) SetRecordReader(binding array.RecordReader) {
-	st.clearParameters()
-	st.params = binding
-}
-
 // Bind uses an arrow record batch to bind parameters to the query.
 //
 // This can be used for bulk inserts or for prepared statements.
@@ -819,7 +831,14 @@ func (st *statement) SetRecordReader(binding array.RecordReader) {
 // but it may not do this until the statement is closed or another
 // record is bound.
 func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
-	st.SetParameters(values)
+	st.clearParameters()
+	if values != nil {
+		stream, err := array.NewRecordReader(values.Schema(), []arrow.RecordBatch{values})
+		if err != nil {
+			return err
+		}
+		st.params = stream
+	}
 	return nil
 }
 
@@ -829,7 +848,11 @@ func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
 // The driver will call Release on the record reader, but may not do this
 // until Close is called.
 func (st *statement) BindStream(_ context.Context, stream array.RecordReader) error {
-	st.SetRecordReader(stream)
+	st.clearParameters()
+	if stream != nil {
+		st.params = stream
+		stream.Retain()
+	}
 	return nil
 }
 
@@ -850,7 +873,7 @@ func (st *statement) BindStream(_ context.Context, stream array.RecordReader) er
 //
 // This should return an error with StatusNotImplemented if the schema
 // cannot be determined.
-func (st *statement) GetParameterSchema() (*arrow.Schema, error) {
+func (st *statement) GetParameterSchema(ctx context.Context) (*arrow.Schema, error) {
 	// We could look at UndeclaredParameters but BQ seems to just error if it sees
 	// parameters in a dry run
 	return nil, adbc.Error{
@@ -876,8 +899,7 @@ func (st *statement) ExecutePartitions(ctx context.Context) (*arrow.Schema, adbc
 }
 
 func (st *statement) executeIngest(ctx context.Context) (int64, error) {
-	logger := st.cnxn.Logger.With("op", "bulkingest")
-
+	// Validate parameters
 	if st.params == nil {
 		return -1, adbc.Error{
 			Msg:  "[bq] no data bound for bulk ingest",
@@ -885,19 +907,34 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 		}
 	}
 
-	impl := &bigqueryBulkIngestImpl{
-		logger:      logger,
-		options:     st.ingest,
-		queryConfig: st.queryConfig,
-		client:      st.cnxn.client,
+	// Check which implementation to use (statement-level option takes precedence)
+	method, err := st.GetOption(ctx, OptionStringBulkIngestMethod)
+	if err != nil {
+		method = OptionValueBulkIngestMethodLoad
 	}
-	if err := impl.Init(); err != nil {
-		return -1, adbc.Error{
-			Msg:  fmt.Sprintf("[bq] failed to initialize bulk ingest: %s", err),
-			Code: adbc.StatusInternal,
+
+	var logger *slog.Logger
+	var impl driverbase.BulkIngestImpl
+
+	if method == OptionValueBulkIngestMethodStorageWrite {
+		logger = st.cnxn.Logger.With("op", "bulkingest-storagewrite")
+		impl = &storageWriteBulkIngestImpl{
+			alloc:       st.alloc,
+			schema:      st.params.Schema(),
+			logger:      logger,
+			options:     st.ingest,
+			queryConfig: st.queryConfig,
+			client:      st.cnxn.client,
+		}
+	} else {
+		logger = st.cnxn.Logger.With("op", "bulkingest-parquet")
+		impl = &bigqueryBulkIngestImpl{
+			logger:      logger,
+			options:     st.ingest,
+			queryConfig: st.queryConfig,
+			client:      st.cnxn.client,
 		}
 	}
-	defer impl.Close()
 	manager := &driverbase.BulkIngestManager{
 		Impl:        impl,
 		ErrorHelper: &st.cnxn.ErrorHelper,
@@ -916,4 +953,4 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	return manager.ExecuteIngest()
 }
 
-var _ adbc.GetSetOptions = (*statement)(nil)
+var _ adbc.GetSetOptionsWithContext = (*statement)(nil)

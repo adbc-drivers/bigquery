@@ -18,18 +18,19 @@ from . import bigquery, utils
 
 
 def pytest_generate_tests(metafunc) -> None:
-    return query_tests.generate_tests(bigquery.QUIRKS, metafunc)
+    quirks = [bigquery.get_quirks(metafunc.config.getoption("vendor_version"))]
+    return query_tests.generate_tests(quirks, metafunc)
 
 
 class TestQuery(query_tests.TestQuery):
     @utils.retry_rate_limit
-    def test_query(self, driver, conn, query) -> None:
-        super().test_query(driver, conn, query)
+    def test_query(self, driver, conn, query, query_setup) -> None:
+        super().test_query(driver, conn, query, query_setup)
 
     @utils.retry_rate_limit
-    def test_execute_schema(self, driver, conn, query) -> None:
-        super().test_execute_schema(driver, conn, query)
+    def test_execute_schema(self, driver, conn, query, query_setup) -> None:
+        super().test_execute_schema(driver, conn, query, query_setup)
 
     @utils.retry_rate_limit
-    def test_get_table_schema(self, driver, conn_factory, query) -> None:
-        super().test_get_table_schema(driver, conn_factory, query)
+    def test_get_table_schema(self, driver, conn, query, query_setup) -> None:
+        super().test_get_table_schema(driver, conn, query, query_setup)

@@ -120,6 +120,19 @@ const (
 	// OptionStringImpersonateLifetime instructs the driver to impersonate for the
 	// given duration (e.g. "3600s").
 	OptionStringImpersonateLifetime = "adbc.bigquery.sql.impersonate.lifetime"
+
+	// OptionStringBulkIngestMethod specifies the bulk ingest implementation to use.
+	// Default is "load" (Parquet + LoaderFrom). "storage_write" uses Storage Write API.
+	OptionStringBulkIngestMethod            = "bigquery.bulk_ingest.method"
+	OptionValueBulkIngestMethodLoad         = "load"
+	OptionValueBulkIngestMethodStorageWrite = "storage_write"
+
+	// OptionStringBulkIngestCompression specifies compression for Storage Write API.
+	// Only applies when using storage_write method.
+	OptionStringBulkIngestCompression = "bigquery.bulk_ingest.compression"
+	OptionValueCompressionNone        = "none"
+	OptionValueCompressionLZ4         = "lz4"
+	OptionValueCompressionZSTD        = "zstd"
 )
 
 var (
@@ -142,7 +155,7 @@ type driverImpl struct {
 }
 
 // NewDriver creates a new BigQuery driver using the given Arrow allocator.
-func NewDriver(alloc memory.Allocator) adbc.Driver {
+func NewDriver(alloc memory.Allocator) driverbase.Driver {
 	info := driverbase.DefaultDriverInfo("BigQuery")
 	info.MustRegister(map[adbc.InfoCode]any{
 		adbc.InfoDriverName:      "ADBC Driver Foundry Driver for BigQuery",
@@ -155,11 +168,7 @@ func NewDriver(alloc memory.Allocator) adbc.Driver {
 	})
 }
 
-func (d *driverImpl) NewDatabase(opts map[string]string) (adbc.Database, error) {
-	return d.NewDatabaseWithContext(context.Background(), opts)
-}
-
-func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string]string) (adbc.Database, error) {
+func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string]string) (adbc.DatabaseWithContext, error) {
 	dbBase, err := driverbase.NewDatabaseImplBase(ctx, &d.DriverImplBase)
 	if err != nil {
 		return nil, err
@@ -168,7 +177,7 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 		DatabaseImplBase: dbBase,
 		authType:         OptionValueAuthTypeDefault,
 	}
-	if err := db.SetOptions(opts); err != nil {
+	if err := db.SetOptions(ctx, opts); err != nil {
 		return nil, err
 	}
 

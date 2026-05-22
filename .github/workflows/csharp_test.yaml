@@ -1,0 +1,87 @@
+# Copyright (c) 2025-2026 ADBC Drivers Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Runs the C# unit tests that do not require BigQuery credentials:
+# pure-function utility tests, constructor/config-parsing tests, and
+# Moq-mocked read-client tests. Integration tests that call BigQuery
+# (AuthenticationTests, ClientTests, DriverTests, StatementTests,
+# TelemetryTests) are excluded because they need a real account.
+
+name: C# Test
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "csharp/**"
+      - "!csharp/arrow-adbc/**"
+      - .github/workflows/csharp_test.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - "csharp/**"
+      - "!csharp/arrow-adbc/**"
+      - .github/workflows/csharp_test.yaml
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.ref }}-CSharp-Test
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "C# Unit Tests (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu builds and tests net8.0 (and netstandard2.0 for the driver lib).
+        # windows additionally builds and tests net472 (gated by IsWindows in
+        # the csproj TargetFrameworks).
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: 'recursive'
+
+      - uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # v5.2.0
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        working-directory: csharp
+        run: dotnet restore AdbcDrivers.BigQuery.sln
+
+      - name: Build
+        working-directory: csharp
+        run: dotnet build AdbcDrivers.BigQuery.sln --no-restore -c Release
+
+      - name: Test (no-credential subset)
+        working-directory: csharp/test/AdbcDrivers.BigQuery.Tests
+        run: |
+          dotnet test \
+            --no-build \
+            -c Release \
+            --filter "FullyQualifiedName~BigQueryUtilsTests|FullyQualifiedName~BigQueryConnectionTests|FullyQualifiedName~BigQueryStatementTests"

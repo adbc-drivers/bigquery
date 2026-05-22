@@ -58,9 +58,12 @@ type databaseImpl struct {
 	location     string
 	quotaProject string
 	endpoint     string
+
+	bulkIngestMethod      string
+	bulkIngestCompression string
 }
 
-func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
+func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
 	conn := &connectionImpl{
 		ConnectionImplBase:         driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
 		authType:                   d.authType,
@@ -81,6 +84,8 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
+		bulkIngestMethod:           d.bulkIngestMethod,
+		bulkIngestCompression:      d.bulkIngestCompression,
 	}
 
 	err := conn.newClient(ctx)
@@ -96,9 +101,9 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.Connection, error) {
 		Connection(), nil
 }
 
-func (d *databaseImpl) Close() error { return nil }
+func (d *databaseImpl) Close(ctx context.Context) error { return nil }
 
-func (d *databaseImpl) GetOption(key string) (string, error) {
+func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {
 	switch key {
 	case OptionStringAuthType:
 		return d.authType, nil
@@ -133,14 +138,35 @@ func (d *databaseImpl) GetOption(key string) (string, error) {
 			return "", nil
 		}
 		return d.impersonateLifetime.String(), nil
+	case OptionStringBulkIngestMethod:
+		if d.bulkIngestMethod == "" {
+			return OptionValueBulkIngestMethodLoad, nil
+		}
+		return d.bulkIngestMethod, nil
+	case OptionStringBulkIngestCompression:
+		if d.bulkIngestCompression == "" {
+			return OptionValueCompressionNone, nil
+		}
+		return d.bulkIngestCompression, nil
 	default:
-		return d.DatabaseImplBase.GetOption(key)
+		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
 }
 
-func (d *databaseImpl) SetOptions(options map[string]string) error {
+func (d *databaseImpl) SetOptions(ctx context.Context, options map[string]string) error {
+	// Process "uri" first so that URI-parsed defaults (e.g. auth_type=ADC) are
+	// set before any explicit options. Subsequent options will then override
+	// those defaults, regardless of Go's non-deterministic map iteration order.
+	if uri, ok := options["uri"]; ok {
+		if err := d.SetOption(ctx, "uri", uri); err != nil {
+			return err
+		}
+	}
 	for k, v := range options {
-		err := d.SetOption(k, v)
+		if k == "uri" {
+			continue // already processed above
+		}
+		err := d.SetOption(ctx, k, v)
 		if err != nil {
 			return err
 		}
@@ -154,7 +180,7 @@ func (d *databaseImpl) hasImpersonationOptions() bool {
 		len(d.impersonateScopes) > 0
 }
 
-func (d *databaseImpl) SetOption(key string, value string) error {
+func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) error {
 	switch key {
 	case "uri":
 		params, err := ParseBigQueryURIToParams(value)
@@ -163,7 +189,7 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		}
 
 		for paramKey, paramValue := range params {
-			if err := d.SetOption(paramKey, paramValue); err != nil {
+			if err := d.SetOption(ctx, paramKey, paramValue); err != nil {
 				return err
 			}
 		}
@@ -234,8 +260,27 @@ func (d *databaseImpl) SetOption(key string, value string) error {
 		d.endpoint = value
 	case OptionStringLocation:
 		d.location = value
+	case OptionStringBulkIngestMethod:
+		if value != OptionValueBulkIngestMethodLoad &&
+			value != OptionValueBulkIngestMethodStorageWrite {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest method: %s (expected %s or %s)", value, OptionValueBulkIngestMethodLoad, OptionValueBulkIngestMethodStorageWrite),
+			}
+		}
+		d.bulkIngestMethod = value
+	case OptionStringBulkIngestCompression:
+		if value != OptionValueCompressionNone &&
+			value != OptionValueCompressionLZ4 &&
+			value != OptionValueCompressionZSTD {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid bulk ingest compression: %s (expected %s, %s, or %s)", value, OptionValueCompressionNone, OptionValueCompressionLZ4, OptionValueCompressionZSTD),
+			}
+		}
+		d.bulkIngestCompression = value
 	default:
-		return d.DatabaseImplBase.SetOption(key, value)
+		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}
 	return nil
 }

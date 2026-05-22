@@ -1,0 +1,1794 @@
+/*
+* Copyright (c) 2025 ADBC Drivers Contributors
+*
+* This file has been modified from its original version, which is
+* under the Apache License:
+*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*    http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
+using Apache.Arrow;
+using Apache.Arrow.Adbc;
+using Apache.Arrow.Adbc.Extensions;
+using Apache.Arrow.Adbc.Tracing;
+using Apache.Arrow.Ipc;
+using Apache.Arrow.Types;
+using Google;
+using Google.Api.Gax;
+using Google.Apis.Auth.OAuth2;
+using Google.Apis.Bigquery.v2.Data;
+using Google.Cloud.BigQuery.Storage.V1;
+using Google.Cloud.BigQuery.V2;
+using TableFieldSchema = Google.Apis.Bigquery.v2.Data.TableFieldSchema;
+using TableSchema = Google.Apis.Bigquery.v2.Data.TableSchema;
+
+namespace AdbcDrivers.BigQuery
+{
+    /// <summary>
+    /// BigQuery-specific implementation of <see cref="AdbcStatement"/>
+    /// </summary>
+    class BigQueryStatement : TracingStatement, ITokenProtectedResource, IDisposable
+    {
+        private const string ClassName = nameof(BigQueryStatement);
+        readonly BigQueryConnection bigQueryConnection;
+        readonly CancellationRegistry cancellationRegistry;
+
+        bool isMetadataCommand = false;
+        string? catalogName = null;
+        string? schemaName = null;
+        string? tableName = null;
+
+        public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
+        {
+            if (bigQueryConnection == null) { throw new AdbcException($"{nameof(bigQueryConnection)} cannot be null", AdbcStatusCode.InvalidArgument); }
+
+            // pass on the handler since this isn't accessible publicly
+            UpdateToken = bigQueryConnection.UpdateToken;
+
+            this.bigQueryConnection = bigQueryConnection;
+            this.cancellationRegistry = new CancellationRegistry();
+        }
+
+        public Func<Task>? UpdateToken { get; set; }
+
+        internal Dictionary<string, string>? Options { get; set; }
+
+        private BigQueryClient Client => this.bigQueryConnection.Client ?? throw new AdbcException("Client cannot be null");
+
+        private GoogleCredential Credential => this.bigQueryConnection.Credential ?? throw new AdbcException("Credential cannot be null");
+
+        private int MaxRetryAttempts => this.bigQueryConnection.MaxRetryAttempts;
+
+        private int RetryDelayMs => this.bigQueryConnection.RetryDelayMs;
+
+        public override string AssemblyVersion => BigQueryUtils.BigQueryAssemblyVersion;
+
+        public override string AssemblyName => BigQueryUtils.BigQueryAssemblyName;
+
+        /// <summary>
+        /// Returns the effective query results timeout.
+        /// Uses a statement-level override (via <see cref="SetOption"/>) if present,
+        /// otherwise falls back to the connection's <see cref="BigQueryConnection.QueryResultsTimeout"/>.
+        /// Returns null if neither is set (BigQuery will use its server-side default of 5 minutes).
+        /// </summary>
+        private TimeSpan? GetEffectiveQueryResultsTimeout()
+        {
+            if (Options?.TryGetValue(BigQueryParameters.GetQueryResultsOptionsTimeout, out string? timeoutSeconds) == true)
+            {
+                // Already validated in SetOption
+                if (int.TryParse(timeoutSeconds, out int seconds) && seconds > 0)
+                {
+                    return TimeSpan.FromSeconds(seconds);
+                }
+            }
+
+            return this.bigQueryConnection.QueryResultsTimeout;
+        }
+
+        public override void SetOption(string key, string value)
+        {
+            Options ??= [];
+
+            switch (key)
+            {
+                case AdbcOptions.Telemetry.TraceParent:
+                    SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
+                    break;
+                case BigQueryParameters.GetQueryResultsOptionsTimeout:
+                    if (!int.TryParse(value, out int seconds) || seconds <= 0)
+                    {
+                        throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.GetQueryResultsOptionsTimeout}' is not a valid positive integer.");
+                    }
+                    break;
+                default:
+                    // TODO: Throw an exception if setting value is unsupported at particular execution states.
+                    break;
+            }
+
+            Options[key] = value;
+        }
+
+        public override QueryResult ExecuteQuery()
+        {
+            try
+            {
+                return ExecuteQueryInternalAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex) when (BigQueryConnection.IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+            {
+                throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+            }
+        }
+
+        private async Task<QueryResult> ExecuteQueryInternalAsync()
+        {
+            return await this.TraceActivityAsync(async activity =>
+            {
+                QueryOptions queryOptions = ValidateOptions(activity);
+
+                activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
+
+                if (isMetadataCommand)
+                {
+                    return await ExecuteMetadataCommandQuery(activity);
+                }
+
+                BigQueryJob job = await ExecuteWithRetriesAsync(
+                    () => Client.CreateQueryJobAsync(SqlQuery, null, queryOptions), activity).ConfigureAwait(false);
+                JobReference jobReference = job.Reference;
+                GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
+
+                TimeSpan? queryResultsTimeout = GetEffectiveQueryResultsTimeout();
+                if (queryResultsTimeout.HasValue)
+                {
+                    getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
+                }
+
+                // Ensure the HTTP client timeout is sufficient for the effective query results timeout,
+                // which may have been overridden at the statement level.
+                this.bigQueryConnection.EnsureClientTimeoutSufficient(queryResultsTimeout, activity);
+                activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.TotalSeconds);
+
+                using JobCancellationContext cancellationContext = new JobCancellationContext(cancellationRegistry, job);
+
+                // We can't checkJobStatus, Otherwise, the timeout in QueryResultsOptions is meaningless.
+                // When encountering a long-running job, it should be controlled by the timeout in the Google SDK instead of blocking in a while loop.
+                Task<BigQueryResults> getJobResults()
+                {
+                    return ExecuteCancellableJobAsync(cancellationContext, activity, async (context, jobActivity) =>
+                    {
+                        // if the authentication token was reset, then we need a new job with the latest token
+                        context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresults_started", [new("job.id", context.Job.Reference.JobId)]);
+                        BigQueryResults results = await context.Job.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresults_completed", GetJobStatistics(jobActivity, context.Job));
+
+                        return results;
+                    }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
+                }
+
+                BigQueryResults results = await ExecuteWithRetriesAsync(getJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
+
+                TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(Credential);
+                clientMgr.UpdateToken = () => Task.Run(() =>
+                {
+                    this.bigQueryConnection.SetCredential();
+                    clientMgr.UpdateCredential(Credential);
+                });
+
+                // For multi-statement queries, StatementType == "SCRIPT"
+                if (results.TableReference == null || job.Statistics.Query.StatementType.Equals("SCRIPT", StringComparison.OrdinalIgnoreCase))
+                {
+                    string statementType = string.Empty;
+                    if (Options?.TryGetValue(BigQueryParameters.StatementType, out string? statementTypeString) == true)
+                    {
+                        statementType = statementTypeString;
+                    }
+                    int statementIndex = 1;
+                    if (Options?.TryGetValue(BigQueryParameters.StatementIndex, out string? statementIndexString) == true &&
+                        int.TryParse(statementIndexString, out int statementIndexInt) &&
+                        statementIndexInt > 0)
+                    {
+                        statementIndex = statementIndexInt;
+                    }
+                    string evaluationKind = string.Empty;
+                    if (Options?.TryGetValue(BigQueryParameters.EvaluationKind, out string? evaluationKindString) == true)
+                    {
+                        evaluationKind = evaluationKindString;
+                    }
+
+                    Task<BigQueryResults> getMultiJobResults()
+                    {
+                        // To get the results of all statements in a multi-statement query, enumerate the child jobs. Related public docs: https://cloud.google.com/bigquery/docs/multi-statement-queries#get_all_executed_statements.
+                        // Can filter by StatementType and EvaluationKind. Related public docs: https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#jobstatistics2, https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#evaluationkind
+                        ListJobsOptions listJobsOptions = new ListJobsOptions();
+                        listJobsOptions.ParentJobId = results.JobReference.JobId;
+                        var joblist = Client.ListJobs(listJobsOptions)
+                            .Select(job => Client.GetJob(job.Reference))
+                            .Where(job => string.IsNullOrEmpty(evaluationKind) || job.Statistics.ScriptStatistics.EvaluationKind.Equals(evaluationKind, StringComparison.OrdinalIgnoreCase))
+                            .Where(job => string.IsNullOrEmpty(statementType) || job.Statistics.Query.StatementType.Equals(statementType, StringComparison.OrdinalIgnoreCase))
+                            .OrderBy(job => job.Resource.Statistics.CreationTime)
+                            .ToList();
+
+                        if (joblist.Count > 0)
+                        {
+                            if (statementIndex < 1 || statementIndex > joblist.Count)
+                            {
+                                throw new ArgumentOutOfRangeException($"The specified index {statementIndex} is out of range. There are {joblist.Count} jobs available.");
+                            }
+                            BigQueryJob indexedJob = joblist[statementIndex - 1];
+                            cancellationContext.Job = indexedJob;
+                            return ExecuteCancellableJobAsync(cancellationContext, activity, (context, jobActivity) =>
+                            {
+                                jobActivity?.AddEvent("getqueryresults_started", [new("job.id", indexedJob.Reference.JobId)]);
+                                var results = indexedJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken);
+                                jobActivity?.AddEvent("getqueryresults_completed", GetJobStatistics(jobActivity, indexedJob));
+
+                                return results;
+                            }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync) + ".MultiJobResults");
+                        }
+
+                        throw new AdbcException($"Unable to obtain result from statement [{statementIndex}]", AdbcStatusCode.InvalidData);
+                    }
+
+                    results = await ExecuteWithRetriesAsync(getMultiJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
+                }
+
+                if (results?.TableReference == null)
+                {
+                    throw new AdbcException("There is no query statement");
+                }
+
+                string table = $"projects/{results.TableReference.ProjectId}/datasets/{results.TableReference.DatasetId}/tables/{results.TableReference.TableId}";
+
+                int maxStreamCount = 0; // server decides the number of streams when maxStreamCount is 0 or not set
+
+                if (Options?.TryGetValue(BigQueryParameters.MaxFetchConcurrency, out string? maxStreamCountString) == true)
+                {
+                    if (int.TryParse(maxStreamCountString, out int count))
+                    {
+                        if (count >= 0)
+                        {
+                            maxStreamCount = count;
+                        }
+                    }
+                }
+
+                long totalRows = results.TotalRows == null ? -1L : (long)results.TotalRows.Value;
+
+                // Create the reader-scoped cancellation context up front so that the same
+                // token can be embedded in every ReadRowsStream. The job-scoped
+                // cancellationContext is disposed when this method returns (via the `using`
+                // above), so any token captured from it would already be unusable by the
+                // time the consumer starts pulling batches. The reader-scoped context's
+                // lifetime is owned by the MultiArrowReader returned below.
+                JobCancellationContext readerCancellationContext = new JobCancellationContext(cancellationRegistry);
+
+                Task<IEnumerable<IArrowReader>> getArrowReadersFunc()
+                {
+                    // Pass the reader-scoped token so each ReadRowsStream survives
+                    // beyond the disposal of the job-scoped cancellationContext.
+                    return ExecuteCancellableJobAsync(readerCancellationContext, activity, (context, jobActivity) =>
+                    {
+                        // Cancelling this step may leave the server with unread streams.
+                        jobActivity?.AddBigQueryTag("job.id", context.Job?.Reference.JobId);
+                        return GetArrowReaders(clientMgr, table, results.TableReference.ProjectId, maxStreamCount, jobActivity, context.CancellationToken);
+                    }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(GetArrowReaders));
+                }
+                IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, readerCancellationContext.CancellationToken).ConfigureAwait(false);
+
+                // Note: MultiArrowReader must dispose the readerCancellationContext.
+                IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, readerCancellationContext, maxStreamCount);
+                activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
+                return new QueryResult(totalRows, stream);
+            }, ClassName + "." + nameof(ExecuteQueryInternalAsync));
+        }
+
+        private Task<QueryResult> ExecuteMetadataCommandQuery(Activity? activity)
+        {
+            const string SupportedMetadataCommands = "GetCatalogs,GetSchemas,GetTables,GetColumns,GetPrimaryKeys";
+            return SqlQuery?.ToLowerInvariant() switch
+            {
+                "getcatalogs" => GetCatalogs(activity),
+                "getschemas" => GetSchemas(activity),
+                "gettables" => GetTables(activity),
+                "getcolumns" => GetTableSchema(activity),
+                "getprimarykeys" => GetPrimaryKeys(activity),
+                null or "" => throw new ArgumentNullException(nameof(SqlQuery), $"Metadata command for property 'SqlQuery' must not be empty or null. Supported metadata commands: {SupportedMetadataCommands}"),
+                _ => throw new NotSupportedException($"Metadata command '{SqlQuery}' is not supported. Supported metadata commands: {SupportedMetadataCommands}"),
+            };
+        }
+
+        protected Task<QueryResult> GetTables(Activity? activity)
+        {
+            StringArray.Builder tableNameBuilder = new StringArray.Builder();
+            StringArray.Builder tableTypeBuilder = new StringArray.Builder();
+            Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
+            {
+                return Client?.ListTables(this.catalogName, this.schemaName);
+            });
+            PagedEnumerable<TableList, BigQueryTable>? tables;
+            tables = ExecuteWithRetriesAsync<PagedEnumerable<TableList, BigQueryTable>?>(func, activity).GetAwaiter().GetResult();
+            if (tables != null)
+            {
+                // Sort tables by name for consistency
+                var sortedTables = tables.OrderBy(x => x.Reference.TableId).ToList();
+
+                foreach (var table in sortedTables)
+                {
+                    tableNameBuilder.Append(table.Reference.TableId);
+
+                    // Map BigQuery types to ADBC standard types
+                    string tableType = table.Resource.Type switch
+                    {
+                        "TABLE" => "BASE TABLE",  // ADBC standard name
+                        "VIEW" => "VIEW",
+                        "EXTERNAL" => "EXTERNAL TABLE",
+                        "SNAPSHOT" => "SNAPSHOT",
+                        "CLONE" => "CLONE",
+                        _ => table.Resource.Type  // fallback to original
+                    };
+                    tableTypeBuilder.Append(tableType);
+                }
+            }
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                tableNameBuilder.Build(),
+                tableTypeBuilder.Build()
+            };
+
+            // Create schema with both columns
+            Schema schema = new Schema(
+                new Field[]
+                {
+                    new Field("table_name", StringType.Default, false),
+                    new Field("table_type", StringType.Default, false)
+                },
+                metadata: null
+            );
+
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        protected Task<QueryResult> GetPrimaryKeys(Activity? activity)
+        {
+            StringArray.Builder columnNameBuilder = new StringArray.Builder();
+
+            Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
+            {
+                return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
+            });
+
+            BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
+
+            if (table?.Resource?.TableConstraints?.PrimaryKey?.Columns != null)
+            {
+                List<string> primaryKeyColumns = new List<string>();
+                primaryKeyColumns = table.Resource.TableConstraints.PrimaryKey.Columns.ToList();
+                foreach (string columnName in primaryKeyColumns)
+                {
+                    columnNameBuilder.Append(columnName);
+                }
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                columnNameBuilder.Build()
+            };
+
+            Schema schema = new Schema(
+                new Field[] { new Field("column_name", StringType.Default, false) },
+                metadata: null
+            );
+
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        /*
+         * Retrieves the schema information for a BigQuery table, including all nested fields.
+         *
+         * This method flattens nested STRUCT/RECORD types into individual rows, preserving all field properties
+         * at every nesting level. Each field is represented by a separate row with its full qualified name
+         * using dot notation (e.g., "address.city.name").
+         *
+         * Output columns include:
+         * - column_name: Full qualified field name with dot notation for nested fields
+         * - column_type: BigQuery data type (STRING, INT64, STRUCT, etc.)
+         * - column_mode: Field mode (NULLABLE, REQUIRED, REPEATED)
+         * - column_description: Field description
+         * - column_max_length: Maximum length for STRING/BYTES types
+         * - column_precision: Precision for NUMERIC types
+         * - column_scale: Scale for NUMERIC types
+         * - column_default_value_expression: Default value expression
+         * - column_collation: Collation specification
+         * - column_policy_tags: List of policy tags
+         * - column_rounding_mode: Rounding mode for NUMERIC types
+         * - column_range_element_type: Element type for RANGE types
+         * - column_depth: Nesting level (0 for top-level, 1+ for nested)
+         * - column_parent_name: Full qualified parent field name (null for top-level)
+         *
+         * Example:
+         * For a BigQuery table with the following schema:
+         *
+         *   CREATE TABLE example (
+         *     id INT64,
+         *     name STRING,
+         *     address STRUCT<
+         *       street STRING,
+         *       city STRUCT<
+         *         name STRING,
+         *         zipcode INT64
+         *       >
+         *     >
+         *   )
+         *
+         * The output will contain these rows:
+         *
+         *   | column_name          | column_type | column_depth | column_parent_name |
+         *   |----------------------|-------------|--------------|-------------------|
+         *   | id                   | INT64       | 0            | null              |
+         *   | name                 | STRING      | 0            | null              |
+         *   | address              | STRUCT      | 0            | null              |
+         *   | address.street       | STRING      | 1            | address           |
+         *   | address.city         | STRUCT      | 1            | address           |
+         *   | address.city.name    | STRING      | 2            | address.city      |
+         *   | address.city.zipcode | INT64       | 2            | address.city      |
+         */
+        protected Task<QueryResult> GetTableSchema(Activity? activity)
+        {
+            StringArray.Builder columnNameBuilder = new StringArray.Builder();
+            StringArray.Builder columnTypeBuilder = new StringArray.Builder();
+            StringArray.Builder columnModeBuilder = new StringArray.Builder();
+            StringArray.Builder columnDescriptionBuilder = new StringArray.Builder();
+            Int64Array.Builder columnMaxLengthBuilder = new Int64Array.Builder();
+            Int64Array.Builder columnPrecisionBuilder = new Int64Array.Builder();
+            Int64Array.Builder columnScaleBuilder = new Int64Array.Builder();
+            StringArray.Builder columnDefaultValueExpressionBuilder = new StringArray.Builder();
+            StringArray.Builder columnCollationBuilder = new StringArray.Builder();
+            ListArray.Builder columnPolicyTagsBuilder = new ListArray.Builder(StringType.Default);
+            StringArray.Builder columnRoundingModeBuilder = new StringArray.Builder();
+            StringArray.Builder columnRangeElementTypeBuilder = new StringArray.Builder();
+            Int64Array.Builder columnDepthBuilder = new Int64Array.Builder();
+            StringArray.Builder columnParentNameBuilder = new StringArray.Builder();
+
+            Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
+            {
+                return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
+            });
+            BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
+
+            if (table != null)
+            {
+                FlattenFields(table.Schema.Fields, string.Empty, string.Empty, 0,
+                    columnNameBuilder, columnTypeBuilder, columnModeBuilder, columnDescriptionBuilder,
+                    columnMaxLengthBuilder, columnPrecisionBuilder, columnScaleBuilder,
+                    columnDefaultValueExpressionBuilder, columnCollationBuilder,
+                    columnPolicyTagsBuilder, columnRoundingModeBuilder, columnRangeElementTypeBuilder,
+                    columnDepthBuilder, columnParentNameBuilder);
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                columnNameBuilder.Build(),
+                columnTypeBuilder.Build(),
+                columnModeBuilder.Build(),
+                columnDescriptionBuilder.Build(),
+                columnMaxLengthBuilder.Build(),
+                columnPrecisionBuilder.Build(),
+                columnScaleBuilder.Build(),
+                columnDefaultValueExpressionBuilder.Build(),
+                columnCollationBuilder.Build(),
+                columnPolicyTagsBuilder.Build(),
+                columnRoundingModeBuilder.Build(),
+                columnRangeElementTypeBuilder.Build(),
+                columnDepthBuilder.Build(),
+                columnParentNameBuilder.Build()
+            };
+
+            Schema schema = new Schema(
+                new Field[]
+                {
+                    new Field("column_name", StringType.Default, false),
+                    new Field("column_type", StringType.Default, false),
+                    new Field("column_mode", StringType.Default, true),
+                    new Field("column_description", StringType.Default, true),
+                    new Field("column_max_length", Int64Type.Default, true),
+                    new Field("column_precision", Int64Type.Default, true),
+                    new Field("column_scale", Int64Type.Default, true),
+                    new Field("column_default_value_expression", StringType.Default, true),
+                    new Field("column_collation", StringType.Default, true),
+                    new Field("column_policy_tags", new ListType(StringType.Default), true),
+                    new Field("column_rounding_mode", StringType.Default, true),
+                    new Field("column_range_element_type", StringType.Default, true),
+                    new Field("column_depth", Int64Type.Default, false),
+                    new Field("column_parent_name", StringType.Default, true)
+                },
+                metadata: null
+            );
+
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        /*
+        * Recursively flattens nested BigQuery table fields into a flat structure with dot notation.
+        *
+        * This method processes each field in the collection and recursively handles nested STRUCT/RECORD types.
+        * For each field, it:
+        * 1. Constructs the full qualified name using dot notation
+        * 2. Appends all field properties to their respective builders
+        * 3. Records the depth level and parent field name
+        * 4. Recursively processes nested fields if present
+        *
+        * Example:
+        * Given a field structure:
+        *
+        *   address STRUCT<
+        *     street STRING,
+        *     location STRUCT<
+        *       lat FLOAT64,
+        *       lon FLOAT64
+        *     >
+        *   >
+        *
+        * The method will generate these entries:
+        *
+        *   Depth 0: "address" (parent: null)
+        *   Depth 1: "address.street" (parent: "address")
+        *   Depth 1: "address.location" (parent: "address")
+        *   Depth 2: "address.location.lat" (parent: "address.location")
+        *   Depth 2: "address.location.lon" (parent: "address.location")
+        */
+        private void FlattenFields(
+            IList<TableFieldSchema> fields,
+            string prefix,
+            string parentName,
+            int depth,
+            StringArray.Builder columnNameBuilder,
+            StringArray.Builder columnTypeBuilder,
+            StringArray.Builder columnModeBuilder,
+            StringArray.Builder columnDescriptionBuilder,
+            Int64Array.Builder columnMaxLengthBuilder,
+            Int64Array.Builder columnPrecisionBuilder,
+            Int64Array.Builder columnScaleBuilder,
+            StringArray.Builder columnDefaultValueExpressionBuilder,
+            StringArray.Builder columnCollationBuilder,
+            ListArray.Builder columnPolicyTagsBuilder,
+            StringArray.Builder columnRoundingModeBuilder,
+            StringArray.Builder columnRangeElementTypeBuilder,
+            Int64Array.Builder columnDepthBuilder,
+            StringArray.Builder columnParentNameBuilder)
+        {
+            foreach (TableFieldSchema field in fields)
+            {
+                string fieldName = string.IsNullOrEmpty(prefix) ? field.Name : $"{prefix}.{field.Name}";
+
+                columnNameBuilder.Append(fieldName);
+                columnTypeBuilder.Append(field.Type);
+                columnModeBuilder.Append(field.Mode);
+                columnDescriptionBuilder.Append(field.Description);
+
+                if (field.MaxLength.HasValue)
+                    columnMaxLengthBuilder.Append(field.MaxLength.Value);
+                else
+                    columnMaxLengthBuilder.AppendNull();
+
+                if (field.Precision.HasValue)
+                    columnPrecisionBuilder.Append(field.Precision.Value);
+                else
+                    columnPrecisionBuilder.AppendNull();
+
+                if (field.Scale.HasValue)
+                    columnScaleBuilder.Append(field.Scale.Value);
+                else
+                    columnScaleBuilder.AppendNull();
+
+                columnDefaultValueExpressionBuilder.Append(field.DefaultValueExpression);
+                columnCollationBuilder.Append(field.Collation);
+                if (field.PolicyTags?.Names != null && field.PolicyTags.Names.Count > 0)
+                {
+                    StringArray.Builder valueBuilder = (StringArray.Builder)columnPolicyTagsBuilder.ValueBuilder;
+                    foreach (string tag in field.PolicyTags.Names)
+                    {
+                        valueBuilder.Append(tag);
+                    }
+                    columnPolicyTagsBuilder.Append();
+                }
+                else
+                {
+                    columnPolicyTagsBuilder.AppendNull();
+                }
+                columnRoundingModeBuilder.Append(field.RoundingMode);
+                columnRangeElementTypeBuilder.Append(field.RangeElementType?.Type);
+
+                // Add depth information
+                columnDepthBuilder.Append(depth);
+
+                // Add parent name (null for top-level fields)
+                columnParentNameBuilder.Append(string.IsNullOrEmpty(parentName) ? null : parentName);
+
+                // Recursively flatten nested fields (for STRUCT/RECORD types)
+                if (field.Fields != null && field.Fields.Count > 0)
+                {
+                    FlattenFields(field.Fields, fieldName, fieldName, depth + 1,
+                        columnNameBuilder, columnTypeBuilder, columnModeBuilder, columnDescriptionBuilder,
+                        columnMaxLengthBuilder, columnPrecisionBuilder, columnScaleBuilder,
+                        columnDefaultValueExpressionBuilder, columnCollationBuilder,
+                        columnPolicyTagsBuilder, columnRoundingModeBuilder, columnRangeElementTypeBuilder,
+                        columnDepthBuilder, columnParentNameBuilder);
+                }
+            }
+        }
+
+        protected Task<QueryResult> GetSchemas(Activity? activity)
+        {
+            StringArray.Builder schemaNameBuilder = new StringArray.Builder();
+            List<string> datasetIds = new List<string>();
+            Func<Task<PagedEnumerable<DatasetList, BigQueryDataset>?>> func = () => Task.Run(() =>
+            {
+                // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
+                return Client?.ListDatasets(this.catalogName);
+            });
+            PagedEnumerable<DatasetList, BigQueryDataset>? datasets;
+            datasets = ExecuteWithRetriesAsync<PagedEnumerable<DatasetList, BigQueryDataset>?>(func, activity).GetAwaiter().GetResult();
+            if (datasets != null)
+            {
+                datasetIds = datasets.Select(x => x.Reference.DatasetId).ToList();
+                datasetIds.Sort();
+                foreach (string datasetId in datasetIds)
+                {
+                    schemaNameBuilder.Append(datasetId);
+                }
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                schemaNameBuilder.Build()
+            };
+
+            Schema schema = GetObjectSchema("Name");
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        protected Task<QueryResult> GetCatalogs(Activity? activity)
+        {
+            StringArray.Builder catalogNameBuilder = new StringArray.Builder();
+            List<string> projectIds = new List<string>();
+            Func<Task<PagedEnumerable<ProjectList, CloudProject>?>> func = () => Task.Run(() =>
+            {
+                // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
+                return Client?.ListProjects();
+            });
+            PagedEnumerable<ProjectList, CloudProject>? catalogs;
+            catalogs = ExecuteWithRetriesAsync<PagedEnumerable<ProjectList, CloudProject>?>(func, activity).GetAwaiter().GetResult();
+            if (catalogs != null)
+            {
+                projectIds = catalogs.Select(x => x.ProjectId).ToList();
+            }
+
+            if (this.bigQueryConnection.IncludePublicProjectIds && !projectIds.Contains(BigQueryConstants.PublicProjectId))
+            {
+                projectIds.Add(BigQueryConstants.PublicProjectId);
+            }
+
+            projectIds.Sort();
+            foreach (string projectId in projectIds)
+            {
+                catalogNameBuilder.Append(projectId);
+            }
+
+            IArrowArray[] dataArrays = new IArrowArray[]
+            {
+                catalogNameBuilder.Build()
+            };
+
+            Schema schema = GetObjectSchema("Name");
+            schema.Validate(dataArrays);
+
+            IArrowArrayStream stream = new BigQueryInfoArrowStream(schema, dataArrays);
+
+            return Task.FromResult(new QueryResult(dataArrays[0].Length, stream));
+        }
+
+        private async Task<IEnumerable<IArrowReader>> GetArrowReaders(
+            TokenProtectedReadClientManger clientMgr,
+            string table,
+            string projectId,
+            int maxStreamCount,
+            Activity? activity,
+            CancellationToken cancellationToken = default)
+        {
+            ReadSession rs = new ReadSession { Table = table, DataFormat = DataFormat.Arrow };
+            BigQueryReadClient bigQueryReadClient = clientMgr.ReadClient;
+            activity?.AddEvent("create_read_session_started");
+            ReadSession rrs = await bigQueryReadClient.CreateReadSessionAsync("projects/" + projectId, rs, maxStreamCount);
+            activity?.AddEvent("create_read_session_completed", [
+                new("read_session.name", rrs.Name),
+                new("read_session.stream_count", rrs.Streams.Count),
+            ]);
+
+            // Build readers lazily - each ReadRowsStream is initialized on-demand
+            // when MultiArrowReader iterates to it, avoiding the cost of opening
+            // all gRPC streams up-front.
+            var readers = new List<IArrowReader>(rrs.Streams.Count);
+            foreach (var stream in rrs.Streams)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                readers.Add(new ReadRowsStream(this, clientMgr, stream.Name, MaxRetryAttempts, RetryDelayMs, cancellationToken));
+            }
+
+            return readers;
+        }
+
+        public override UpdateResult ExecuteUpdate()
+        {
+            try
+            {
+                return ExecuteUpdateInternalAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex) when (BigQueryConnection.IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+            {
+                throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+            }
+        }
+
+        public override void Cancel()
+        {
+            this.TraceActivity(activity =>
+            {
+                CancellationOrigin origin = new CancellationOrigin("BigQueryStatement.Cancel");
+                activity?.AddEvent("statement_cancel_requested", origin.ToTags("cancel.origin").ToList());
+                this.cancellationRegistry.CancelAll(origin);
+            }, ClassName + "." + nameof(Cancel));
+        }
+
+        public override void Dispose()
+        {
+            this.cancellationRegistry.Dispose();
+            base.Dispose();
+        }
+
+        private Schema GetObjectSchema(string objectName)
+        {
+            return new Schema(
+                new Field[]
+                {
+                    new Field(objectName, StringType.Default, false)
+                },
+                metadata: null);
+        }
+
+        private async Task<UpdateResult> ExecuteUpdateInternalAsync()
+        {
+            return await this.TraceActivityAsync(async activity =>
+            {
+                GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
+
+                TimeSpan? queryResultsTimeout = GetEffectiveQueryResultsTimeout();
+                if (queryResultsTimeout.HasValue)
+                {
+                    getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
+                }
+
+                // Ensure the HTTP client timeout is sufficient for the effective query results timeout,
+                // which may have been overridden at the statement level.
+                this.bigQueryConnection.EnsureClientTimeoutSufficient(queryResultsTimeout, activity);
+
+                activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
+
+                using JobCancellationContext context = new(cancellationRegistry);
+                // Cannot set destination table in jobs with DDL statements, otherwise an error will be prompted
+                Task<BigQueryResults> getQueryResultsAsyncFunc()
+                {
+                    return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
+                    {
+                        context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, null, context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresultsasync_started", [new("job.id", context.Job.Reference.JobId)]);
+                        BigQueryResults results = await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("getqueryresultsasync_completed", GetJobStatistics(jobActivity, context.Job));
+
+                        return results;
+                    }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
+                }
+                BigQueryResults? result = await ExecuteWithRetriesAsync(getQueryResultsAsyncFunc, activity, context.CancellationToken);
+                long updatedRows = result?.NumDmlAffectedRows.HasValue == true ? result.NumDmlAffectedRows.Value : -1L;
+
+                activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, updatedRows);
+                return new UpdateResult(updatedRows);
+            }, ClassName + "." + nameof(ExecuteUpdateInternalAsync));
+        }
+
+        private Schema TranslateSchema(TableSchema schema)
+        {
+            return new Schema(schema.Fields.Select(TranslateField), null);
+        }
+
+        private Field TranslateField(TableFieldSchema field)
+        {
+            List<KeyValuePair<string, string>> metadata = new List<KeyValuePair<string, string>>()
+            {
+                new KeyValuePair<string, string>("BIGQUERY_TYPE", field.Type),
+                new KeyValuePair<string, string>("BIGQUERY_MODE", field.Mode)
+            };
+
+            return new Field(field.Name, TranslateType(field), field.Mode == "NULLABLE", metadata);
+        }
+
+        private IArrowType TranslateType(TableFieldSchema field)
+        {
+            // per https://developers.google.com/resources/api-libraries/documentation/bigquery/v2/java/latest/com/google/api/services/bigquery/model/TableFieldSchema.html#getType--
+
+            switch (field.Type)
+            {
+                case "INTEGER" or "INT64":
+                    return GetType(field, Int64Type.Default);
+                case "FLOAT" or "FLOAT64":
+                    return GetType(field, DoubleType.Default);
+                case "BOOL" or "BOOLEAN":
+                    return GetType(field, BooleanType.Default);
+                case "STRING":
+                    return GetType(field, StringType.Default);
+                case "BYTES":
+                    return GetType(field, BinaryType.Default);
+                case "DATETIME":
+                    return GetType(field, TimestampType.Default);
+                case "TIMESTAMP":
+                    return GetType(field, TimestampType.Default);
+                case "TIME":
+                    return GetType(field, Time64Type.Microsecond);
+                case "DATE":
+                    return GetType(field, Date32Type.Default);
+                case "RECORD" or "STRUCT":
+                    return GetType(field, BuildStructType(field));
+
+                // treat these values as strings
+                case "GEOGRAPHY" or "JSON":
+                    return GetType(field, StringType.Default);
+
+                // get schema cannot get precision and scale for NUMERIC or BIGNUMERIC types
+                // instead, the max values are returned from BigQuery
+                // see 'precision' on https://cloud.google.com/bigquery/docs/reference/rest/v2/tables
+                // and discussion in https://github.com/apache/arrow-adbc/pull/1192#discussion_r1365987279
+
+                case "NUMERIC" or "DECIMAL":
+                    return GetType(field, new Decimal128Type(38, 9));
+
+                case "BIGNUMERIC" or "BIGDECIMAL":
+                    if (Options != null)
+                        return bool.Parse(Options[BigQueryParameters.LargeDecimalsAsString]) ? GetType(field, StringType.Default) : GetType(field, new Decimal256Type(76, 38));
+                    else
+                        return GetType(field, StringType.Default);
+
+                default: throw new InvalidOperationException($"{field.Type} cannot be translated");
+            }
+        }
+
+        private StructType BuildStructType(TableFieldSchema field)
+        {
+            List<Field> arrowFields = new List<Field>();
+
+            foreach (TableFieldSchema subfield in field.Fields)
+            {
+                Field arrowField = TranslateField(subfield);
+                arrowFields.Add(arrowField);
+            }
+
+            return new StructType(arrowFields.AsReadOnly());
+        }
+
+        private IArrowType GetType(TableFieldSchema field, IArrowType type)
+        {
+            if (field.Mode == "REPEATED")
+                return new ListType(type);
+
+            return type;
+        }
+
+        private QueryOptions ValidateOptions(Activity? activity)
+        {
+            QueryOptions options = new QueryOptions();
+
+            if (Client.ProjectId == BigQueryConstants.DetectProjectId)
+            {
+                activity?.AddBigQueryTag("client_project_id", BigQueryConstants.DetectProjectId);
+
+                // An error occurs when calling CreateQueryJob without the ID set,
+                // so use the first one that is found. This does not prevent from calling
+                // to other 'project IDs' (catalogs) with a query.
+                Func<Task<PagedEnumerable<ProjectList, CloudProject>?>> func = () => Task.Run(() =>
+                {
+                    return Client?.ListProjects();
+                });
+
+                PagedEnumerable<ProjectList, CloudProject>? projects = ExecuteWithRetriesAsync<PagedEnumerable<ProjectList, CloudProject>?>(func, activity).GetAwaiter().GetResult();
+
+                if (projects != null)
+                {
+                    string? firstProjectId = projects.Select(x => x.ProjectId).FirstOrDefault();
+
+                    if (firstProjectId != null)
+                    {
+                        options.ProjectId = firstProjectId;
+                        activity?.AddBigQueryTag("detected_client_project_id", firstProjectId);
+                        // need to reopen the Client with the projectId specified
+                        this.bigQueryConnection.Open(firstProjectId);
+                    }
+                }
+            }
+
+            if (Options == null || Options.Count == 0)
+                return options;
+
+            string largeResultDatasetId = BigQueryConstants.DefaultLargeDatasetId;
+
+            foreach (KeyValuePair<string, string> keyValuePair in Options)
+            {
+                switch (keyValuePair.Key)
+                {
+                    case BigQueryParameters.AllowLargeResults:
+                        options.AllowLargeResults = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.AllowLargeResults, options.AllowLargeResults);
+                        break;
+                    case BigQueryParameters.LargeResultsDataset:
+                        largeResultDatasetId = keyValuePair.Value;
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.LargeResultsDataset, largeResultDatasetId);
+                        break;
+                    case BigQueryParameters.LargeResultsDestinationTable:
+                        string destinationTable = keyValuePair.Value;
+
+                        if (!destinationTable.Contains("."))
+                        {
+                            throw new InvalidOperationException($"{BigQueryParameters.LargeResultsDestinationTable} is invalid");
+                        }
+
+                        string projectId = string.Empty;
+                        string datasetId = string.Empty;
+                        string tableId = string.Empty;
+
+                        string[] segments = destinationTable.Split('.');
+
+                        if (segments.Length != 3)
+                            throw new InvalidOperationException($"{BigQueryParameters.LargeResultsDestinationTable} cannot be parsed");
+
+                        projectId = segments[0];
+                        datasetId = segments[1];
+                        tableId = segments[2];
+
+                        if (string.IsNullOrEmpty(projectId.Trim()) || string.IsNullOrEmpty(datasetId.Trim()) || string.IsNullOrEmpty(tableId.Trim()))
+                            throw new InvalidOperationException($"{BigQueryParameters.LargeResultsDestinationTable} contains invalid values");
+
+                        options.DestinationTable = new TableReference()
+                        {
+                            ProjectId = projectId,
+                            DatasetId = datasetId,
+                            TableId = tableId
+                        };
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.LargeResultsDestinationTable, destinationTable);
+                        break;
+                    case BigQueryParameters.UseLegacySQL:
+                        options.UseLegacySql = true ? keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase) : false;
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.UseLegacySQL, options.UseLegacySql);
+                        break;
+                    case BigQueryParameters.IsMetadataCommand:
+                        isMetadataCommand = keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, isMetadataCommand);
+                        break;
+                    case BigQueryParameters.CatalogName:
+                        catalogName = keyValuePair.Value;
+                        break;
+                    case BigQueryParameters.SchemaName:
+                        schemaName = keyValuePair.Value;
+                        break;
+                    case BigQueryParameters.TableName:
+                        tableName = keyValuePair.Value;
+                        break;
+                }
+            }
+
+            if (options.AllowLargeResults == true && options.DestinationTable == null)
+            {
+                options.DestinationTable = TryGetLargeDestinationTableReference(largeResultDatasetId, activity);
+            }
+
+            return options;
+        }
+
+        /// <summary>
+        /// Attempts to retrieve or create the specified dataset.
+        /// </summary>
+        /// <param name="datasetId">The name of the dataset.</param>
+        /// <param name="activity">The current activity for tracing.</param>
+        /// <returns>A <see cref="TableReference"/> to a randomly generated table name in the specified dataset.</returns>
+        private TableReference TryGetLargeDestinationTableReference(string datasetId, Activity? activity)
+        {
+            BigQueryDataset? dataset = null;
+
+            try
+            {
+                activity?.AddBigQueryTag("large_results.dataset.try_find", datasetId);
+                dataset = this.Client.GetDataset(datasetId);
+                activity?.AddBigQueryTag("large_results.dataset.found", datasetId);
+            }
+            catch (GoogleApiException gaEx)
+            {
+                if (gaEx.HttpStatusCode != System.Net.HttpStatusCode.NotFound)
+                {
+                    activity?.AddException(gaEx);
+                    throw new AdbcException($"Failure trying to retrieve dataset {datasetId}", gaEx);
+                }
+            }
+
+            if (dataset == null && bigQueryConnection.CreateLargeResultsDataset)
+            {
+                try
+                {
+                    activity?.AddBigQueryTag("large_results.dataset.try_create", datasetId);
+                    activity?.AddBigQueryTag("large_results.dataset.try_create_region", this.Client.DefaultLocation);
+                    DatasetReference reference = this.Client.GetDatasetReference(datasetId);
+
+                    // The location is not set here because it will use the DefaultLocation from the client.
+                    // Similar to the DefaultLocation for the client, if the caller attempts to use a public
+                    // dataset from a multi-region but set the destination to a specific location,
+                    // a similar permission error is thrown.
+                    BigQueryDataset bigQueryDataset = new BigQueryDataset(this.Client, new Dataset()
+                    {
+                        DatasetReference = reference,
+                        DefaultTableExpirationMs = (long)TimeSpan.FromDays(1).TotalMilliseconds
+                    });
+
+                    dataset = this.Client.CreateDataset(datasetId, bigQueryDataset.Resource);
+                    activity?.AddBigQueryTag("large_results.dataset.created", datasetId);
+                }
+                catch (Exception ex)
+                {
+                    activity?.AddException(ex);
+                    throw new AdbcException($"Could not create dataset {datasetId} in {this.Client.DefaultLocation}", ex);
+                }
+            }
+
+            if (dataset == null)
+            {
+                throw new AdbcException($"Could not find dataset {datasetId}", AdbcStatusCode.NotFound);
+            }
+            else
+            {
+                TableReference reference = new TableReference()
+                {
+                    ProjectId = this.Client.ProjectId,
+                    DatasetId = datasetId,
+                    TableId = "lg_" + Guid.NewGuid().ToString().Replace("-", "")
+                };
+
+                activity?.AddBigQueryTag("large_results.table_reference", reference.ToString());
+
+                return reference;
+            }
+        }
+
+        public bool TokenRequiresUpdate(Exception ex) => BigQueryUtils.TokenRequiresUpdate(ex);
+
+        private async Task<T> ExecuteWithRetriesAsync<T>(Func<Task<T>> action, Activity? activity, CancellationToken cancellationToken = default) =>
+            await RetryManager.ExecuteWithRetriesAsync<T>(this, action, activity, MaxRetryAttempts, RetryDelayMs, cancellationToken);
+
+        private async Task<T> ExecuteCancellableJobAsync<T>(
+            JobCancellationContext context,
+            Activity? activity,
+            Func<JobCancellationContext, Activity?, Task<T>> func,
+            string activityName)
+        {
+            try
+            {
+                return await this.TraceActivityAsync(jobActivity =>
+                {
+                    return func(context, jobActivity);
+                }, activityName).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+                when (context.CancellationToken.IsCancellationRequested &&
+                    BigQueryUtils.ContainsException(ex, out OperationCanceledException? cancelledEx))
+            {
+                // Note: OperationCanceledException could be thrown from the call,
+                // but we only want to handle when the cancellation was requested from the context.
+                CancellationOrigin? origin = context.CancelOrigin;
+                if (origin != null)
+                {
+                    activity?.AddEvent("job_cancellation_origin", origin.ToTags("context.cancel").ToList());
+                }
+                activity?.AddException(cancelledEx!);
+                try
+                {
+                    if (context.Job != null)
+                    {
+                        activity?.AddBigQueryTag("job.cancel", context.Job.Reference.JobId);
+                        await context.Job.CancelAsync().ConfigureAwait(false);
+                    }
+                }
+                catch (Exception e)
+                {
+                    activity?.AddException(e);
+                }
+                throw;
+            }
+            finally
+            {
+                // Job is no longer in context after completion or cancellation
+                context.Job = null;
+            }
+        }
+
+        private IReadOnlyList<KeyValuePair<string, object?>>? GetJobStatistics(Activity? activity, BigQueryJob job)
+        {
+            if (activity == null || job?.Resource?.Statistics == null) return null;
+
+            JobStatistics stats = job.Resource.Statistics;
+
+            List<KeyValuePair<string, object?>> tags =
+            [
+                new("job.id", job.Reference.JobId),
+                new("job.location", job.Reference.Location),
+                new("job.project_id", job.Reference.ProjectId),
+                new("job.creation_time", stats.CreationTime),
+                new("job.start_time", stats.StartTime),
+                new("job.end_time", stats.EndTime),
+            ];
+
+            if (stats.Query != null)
+            {
+                List<KeyValuePair<string, object?>> queryStats =
+                [
+                    new("job.query.cache_hit", stats.Query.CacheHit),
+                    new("job.query.total_bytes_processed", stats.Query.TotalBytesProcessed),
+                    new("job.query.total_bytes_billed", stats.Query.TotalBytesBilled),
+                    new("job.query.billing_tier", stats.Query.BillingTier),
+                    new("job.query.total_slot_ms", stats.Query.TotalSlotMs),
+                    new("job.query.statement_type", stats.Query.StatementType),
+                ];
+                tags.AddRange(queryStats);
+
+
+                if (stats.Query.Timeline != null)
+                {
+                    tags.Add(new("job.query.timeline_entries", stats.Query.Timeline.Count));
+                }
+
+                if (stats.Query.QueryPlan != null)
+                {
+                    tags.Add(new("job.query.plan_stages", stats.Query.QueryPlan.Count));
+                }
+            }
+            return tags;
+        }
+
+        /// <summary>
+        /// Diagnostic snapshot describing where and why a cancellation was initiated.
+        /// Captured the first time a CancellationContext (or the MultiArrowReader's linked CTS)
+        /// is cancelled, so later observers can determine the root cause of a
+        /// "task was canceled" error.
+        /// </summary>
+        internal sealed class CancellationOrigin
+        {
+            public CancellationOrigin(string reason, string? exceptionInfo = null)
+            {
+                Reason = reason;
+                TimestampUtc = DateTimeOffset.UtcNow;
+                ThreadId = Environment.CurrentManagedThreadId;
+                StackTrace = new StackTrace(skipFrames: 1, fNeedFileInfo: false).ToString();
+                ExceptionInfo = exceptionInfo;
+            }
+
+            public string Reason { get; }
+            public DateTimeOffset TimestampUtc { get; }
+            public int ThreadId { get; }
+            public string StackTrace { get; }
+            public string? ExceptionInfo { get; }
+
+            public IEnumerable<KeyValuePair<string, object?>> ToTags(string prefix)
+            {
+                yield return new(prefix + ".reason", Reason);
+                yield return new(prefix + ".timestamp_utc", TimestampUtc.ToString("O"));
+                yield return new(prefix + ".thread_id", ThreadId);
+                yield return new(prefix + ".stack_trace", StackTrace);
+                if (ExceptionInfo != null)
+                    yield return new(prefix + ".exception", ExceptionInfo);
+            }
+        }
+
+        internal class CancellationContext : IDisposable
+        {
+            private readonly CancellationRegistry cancellationRegistry;
+            private readonly CancellationTokenSource cancellationTokenSource;
+            private CancellationOrigin? cancelOrigin;
+            private bool disposed;
+
+            public CancellationContext(CancellationRegistry cancellationRegistry)
+            {
+                cancellationTokenSource = new CancellationTokenSource();
+                this.cancellationRegistry = cancellationRegistry;
+                this.cancellationRegistry.Register(this);
+            }
+
+            public CancellationToken CancellationToken => cancellationTokenSource.Token;
+
+            /// <summary>
+            /// The first-recorded reason this context was cancelled, or null if it has not
+            /// been cancelled. First-cancel-wins via Interlocked.CompareExchange so the
+            /// originating cause is preserved even if Cancel() is called repeatedly.
+            /// </summary>
+            public CancellationOrigin? CancelOrigin => Volatile.Read(ref cancelOrigin);
+
+            public void Cancel() => Cancel(new CancellationOrigin("unspecified"));
+
+            public void Cancel(string reason) => Cancel(new CancellationOrigin(reason));
+
+            public void Cancel(CancellationOrigin origin)
+            {
+                if (origin == null) throw new ArgumentNullException(nameof(origin));
+                Interlocked.CompareExchange(ref cancelOrigin, origin, null);
+                cancellationTokenSource.Cancel();
+            }
+
+            public virtual void Dispose()
+            {
+                if (!disposed)
+                {
+                    cancellationRegistry.Unregister(this);
+                    cancellationTokenSource.Dispose();
+                    disposed = true;
+                }
+            }
+        }
+
+        internal class JobCancellationContext : CancellationContext
+        {
+            public JobCancellationContext(CancellationRegistry cancellationRegistry, BigQueryJob? job = default)
+                : base(cancellationRegistry)
+            {
+                Job = job;
+            }
+
+            public BigQueryJob? Job { get; set; }
+        }
+
+        internal sealed class CancellationRegistry : IDisposable
+        {
+            private readonly ConcurrentDictionary<CancellationContext, byte> contexts = new();
+            private bool disposed;
+
+            public CancellationContext Register(CancellationContext context)
+            {
+                if (disposed) throw new ObjectDisposedException(nameof(CancellationRegistry));
+
+                contexts.TryAdd(context, 0);
+                return context;
+            }
+
+            public bool Unregister(CancellationContext context)
+            {
+                if (disposed) return false;
+
+                return contexts.TryRemove(context, out _);
+            }
+
+            public void CancelAll() => CancelAll(new CancellationOrigin("unspecified"));
+
+            public void CancelAll(string reason) => CancelAll(new CancellationOrigin(reason));
+
+            public void CancelAll(CancellationOrigin origin)
+            {
+                if (origin == null) throw new ArgumentNullException(nameof(origin));
+                if (disposed) throw new ObjectDisposedException(nameof(CancellationRegistry));
+
+                foreach (CancellationContext context in contexts.Keys)
+                {
+                    context.Cancel(origin);
+                }
+            }
+
+            public void Dispose()
+            {
+                if (!disposed)
+                {
+                    contexts.Clear();
+                    disposed = true;
+                }
+            }
+        }
+
+        private class MultiArrowReader : TracingReader
+        {
+            private const string ClassName = BigQueryStatement.ClassName + ".MultiArrowReader";
+            private const int DefaultMaxConcurrency = 10;
+            private static readonly string s_assemblyName = BigQueryUtils.GetAssemblyName(typeof(BigQueryStatement));
+            private static readonly string s_assemblyVersion = BigQueryUtils.GetAssemblyVersion(typeof(BigQueryStatement));
+
+            readonly Schema schema;
+            readonly CancellationContext cancellationContext;
+            readonly CancellationTokenSource linkedCts;
+            readonly List<IArrowReader> readerList;
+            readonly Channel<RecordBatch> channel;
+            readonly SemaphoreSlim concurrencyGate;
+            Task? producerTask;
+            long memoryAtStart;
+            long peakMemory;
+            long totalBatchesRead;
+            CancellationOrigin? linkedCancelOrigin;
+            bool disposed;
+
+            public MultiArrowReader(BigQueryStatement statement, Schema schema, IEnumerable<IArrowReader> readers, CancellationContext cancellationContext, int maxConcurrency = 0) : base(statement)
+            {
+                this.schema = schema;
+                this.readerList = readers.ToList();
+                this.cancellationContext = cancellationContext;
+                this.linkedCts = CancellationTokenSource.CreateLinkedTokenSource(this.cancellationContext.CancellationToken);
+                int effectiveConcurrency = maxConcurrency > 0
+                    ? Math.Min(maxConcurrency, this.readerList.Count)
+                    : Math.Min(DefaultMaxConcurrency, this.readerList.Count);
+                effectiveConcurrency = Math.Max(effectiveConcurrency, 1);
+                this.concurrencyGate = new SemaphoreSlim(effectiveConcurrency, effectiveConcurrency);
+                // Bounded channel provides backpressure: capacity is based on the
+                // concurrency limit so only active producers can buffer a batch.
+                this.channel = System.Threading.Channels.Channel.CreateBounded<RecordBatch>(new BoundedChannelOptions(effectiveConcurrency)
+                {
+                    SingleWriter = false,
+                    SingleReader = true,
+                    FullMode = BoundedChannelFullMode.Wait
+                });
+            }
+
+            public override Schema Schema { get { return this.schema; } }
+
+            public override string AssemblyVersion => s_assemblyVersion;
+
+            public override string AssemblyName => s_assemblyName;
+
+            private void EnsureProducersStarted()
+            {
+                if (this.producerTask != null) return;
+
+                this.memoryAtStart = GC.GetTotalMemory(false);
+                this.peakMemory = this.memoryAtStart;
+
+                var tasks = new Task[this.readerList.Count];
+                for (int i = 0; i < this.readerList.Count; i++)
+                {
+                    var reader = this.readerList[i];
+                    tasks[i] = ProduceAsync(reader);
+                }
+
+                this.producerTask = Task.Run(async () =>
+                {
+                    Exception? error = null;
+                    try
+                    {
+                        await Task.WhenAll(tasks).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        error = ex;
+                    }
+                    this.channel.Writer.Complete(error);
+                });
+            }
+
+            private async Task ProduceAsync(IArrowReader reader)
+            {
+                try
+                {
+                    await this.concurrencyGate.WaitAsync(this.linkedCts.Token).ConfigureAwait(false);
+                    try
+                    {
+                        while (true)
+                        {
+                            this.linkedCts.Token.ThrowIfCancellationRequested();
+                            RecordBatch? batch = await reader.ReadNextRecordBatchAsync(this.linkedCts.Token).ConfigureAwait(false);
+                            if (batch == null) break;
+                            await this.channel.Writer.WriteAsync(batch, this.linkedCts.Token).ConfigureAwait(false);
+                        }
+                    }
+                    finally
+                    {
+                        this.concurrencyGate.Release();
+                    }
+                }
+                catch (OperationCanceledException) when (this.linkedCts.IsCancellationRequested)
+                {
+                    // Graceful shutdown: either user cancellation or another producer failed.
+                    // Swallow so Task.WhenAll only surfaces the root cause.
+                }
+                catch (Exception ex)
+                {
+                    // A real failure in this producer — cancel siblings and propagate.
+                    CancelLinked("producer_failure", ex);
+                    throw;
+                }
+            }
+
+            /// <summary>
+            /// Cancels the reader's linked CancellationTokenSource and records the origin
+            /// (reason + stack trace + optional inner exception) on first call, so any
+            /// subsequent OperationCanceledException observed by readers can be traced
+            /// back to its true cause.
+            /// </summary>
+            private void CancelLinked(string reason, Exception? cause = null)
+            {
+                CancellationOrigin origin = new CancellationOrigin(reason, cause?.ToString());
+                Interlocked.CompareExchange(ref this.linkedCancelOrigin, origin, null);
+                try
+                {
+                    this.linkedCts.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The linked CTS may already be disposed if Dispose ran concurrently.
+                }
+            }
+
+            /// <summary>
+            /// Annotates the supplied activity with whatever cancellation-origin diagnostics
+            /// are available, including both the reader's linked CTS origin and the outer
+            /// statement-level CancellationContext origin (if any).
+            /// </summary>
+            private void AddCancellationDiagnostics(Activity? activity)
+            {
+                if (activity == null) return;
+
+                CancellationOrigin? linkedOrigin = Volatile.Read(ref this.linkedCancelOrigin);
+                if (linkedOrigin != null)
+                {
+                    activity.AddEvent("reader_linked_cts_canceled", linkedOrigin.ToTags("linked_cts").ToList());
+                }
+
+                CancellationOrigin? contextOrigin = this.cancellationContext.CancelOrigin;
+                if (contextOrigin != null)
+                {
+                    activity.AddEvent("reader_context_canceled", contextOrigin.ToTags("reader_context").ToList());
+                }
+            }
+
+            public override async ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken = default)
+            {
+                return await this.TraceActivityAsync(async activity =>
+                {
+                    // Register the caller's token for this call; the linked CTS
+                    // already includes the cancellationContext token. Funnel the
+                    // cancellation through CancelLinked so the origin (reason +
+                    // stack trace) is captured for later diagnostics.
+                    using var callerReg = cancellationToken.CanBeCanceled
+                        ? cancellationToken.Register(() => CancelLinked("caller_token"))
+                        : default;
+
+                    EnsureProducersStarted();
+
+                    CancellationToken ct = this.linkedCts.Token;
+
+                    try
+                    {
+                        if (await this.channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                        {
+                            if (this.channel.Reader.TryRead(out RecordBatch? batch))
+                            {
+                                Interlocked.Increment(ref this.totalBatchesRead);
+                                if (activity != null)
+                                {
+                                    long currentMemory = GC.GetTotalMemory(false);
+                                    InterlockedMax(ref this.peakMemory, currentMemory);
+                                    activity.AddBigQueryTag("memory.current_bytes", currentMemory);
+                                }
+                                activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, batch.Length);
+                                return batch;
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Surface why the reader was cancelled before the exception
+                        // bubbles up, so consumers tracing "a task was canceled" can
+                        // see the originating reason and stack.
+                        AddCancellationDiagnostics(activity);
+                        throw;
+                    }
+
+                    activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, 0);
+                    activity?.AddBigQueryTag("memory.peak_bytes", Interlocked.Read(ref this.peakMemory));
+                    activity?.AddBigQueryTag("memory.start_bytes", this.memoryAtStart);
+                    activity?.AddBigQueryTag("memory.peak_delta_bytes", Interlocked.Read(ref this.peakMemory) - this.memoryAtStart);
+                    activity?.AddBigQueryTag("batches.total_read", Interlocked.Read(ref this.totalBatchesRead));
+                    return null;
+                }, ClassName + "." + nameof(ReadNextRecordBatchAsync));
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    if (!this.disposed)
+                    {
+                        CancelLinked("reader_dispose");
+                        try { this.producerTask?.GetAwaiter().GetResult(); } catch { /* producers reported errors via channel */ }
+                        foreach (var reader in this.readerList)
+                        {
+                            if (reader is IDisposable d) d.Dispose();
+                        }
+                        this.linkedCts.Dispose();
+                        this.concurrencyGate.Dispose();
+                        this.cancellationContext.Dispose();
+                        this.disposed = true;
+                    }
+                }
+
+                base.Dispose(disposing);
+            }
+
+            private static void InterlockedMax(ref long location, long value)
+            {
+                long current = Interlocked.Read(ref location);
+                while (value > current)
+                {
+                    long original = Interlocked.CompareExchange(ref location, value, current);
+                    if (original == current) break;
+                    current = original;
+                }
+            }
+        }
+
+        sealed class ReadRowsStream : IArrowArrayStream
+        {
+            readonly IActivityTracer tracer;
+            readonly TokenProtectedReadClientManger clientMgr;
+            readonly string streamName;
+            readonly int maxRetries;
+            readonly int initialDelayMs;
+            readonly CancellationToken cancellationToken;
+            Schema? schema;
+            IAsyncEnumerator<ReadRowsResponse>? response;
+            long rowsRead;
+            bool initialized;
+            bool disposed;
+
+            public ReadRowsStream(IActivityTracer tracer, TokenProtectedReadClientManger clientMgr, string streamName, int maxRetries, int initialDelayMs, CancellationToken cancellationToken)
+            {
+                this.tracer = tracer;
+                this.clientMgr = clientMgr;
+                this.streamName = streamName;
+                this.maxRetries = maxRetries;
+                this.initialDelayMs = initialDelayMs;
+                this.cancellationToken = cancellationToken;
+                this.rowsRead = 0;
+            }
+
+            public Schema Schema => this.schema ?? throw new InvalidOperationException("Stream has no rows");
+
+            public async ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken)
+            {
+                // Link the per-call token with the stream-level token so that
+                // either one can cancel retries, MoveNextAsync, and gRPC streams.
+                using var linkedCts = cancellationToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(this.cancellationToken, cancellationToken)
+                    : null;
+                CancellationToken effectiveToken = linkedCts?.Token ?? this.cancellationToken;
+
+                // Lazy initialization: open the gRPC stream on the first call
+                if (!this.initialized)
+                {
+                    this.initialized = true;
+                    this.response = CreateEnumerator(offset: 0, effectiveToken);
+
+                    bool moved = await MoveNextWithRetryAsync(effectiveToken).ConfigureAwait(false);
+                    if (!moved || this.response!.Current == null)
+                    {
+                        return null;
+                    }
+
+                    this.schema = ArrowSerializationHelpers.DeserializeSchema(this.response.Current.ArrowSchema.SerializedSchema.Memory);
+                }
+                else
+                {
+                    bool moved = await MoveNextWithRetryAsync(effectiveToken).ConfigureAwait(false);
+                    if (!moved)
+                    {
+                        return null;
+                    }
+                }
+
+                long batchRowCount = this.response!.Current.RowCount;
+                this.rowsRead += batchRowCount;
+                return ArrowSerializationHelpers.DeserializeRecordBatch(this.schema, this.response.Current.ArrowRecordBatch.SerializedRecordBatch.Memory);
+            }
+
+            private async ValueTask<bool> MoveNextWithRetryAsync(CancellationToken effectiveToken)
+            {
+                return await this.tracer.TraceActivityAsync(async activity =>
+                {
+                    if (this.disposed || this.response == null)
+                    {
+                        return false;
+                    }
+
+                    int retryCount = 0;
+                    int tokenRefreshCount = 0;
+                    int delay = this.initialDelayMs;
+
+                    while (true)
+                    {
+                        try
+                        {
+                            return await this.response.MoveNextAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception) when (effectiveToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex) when (BigQueryUtils.IsGrpcUnauthenticated(ex))
+                        {
+                            // Try to refresh the Google access token and reconnect.
+                            // For OAuth: trades refresh_token for a new access token.
+                            // For Entra ID: re-trades the (hopefully still valid) Entra token at Google STS.
+                            // For service account: re-mints from the JSON private key.
+                            // Token refresh attempts are tracked separately from general retries
+                            // to avoid double-counting when both error types occur.
+                            if (this.clientMgr.UpdateToken != null && tokenRefreshCount < maxRetries)
+                            {
+                                tokenRefreshCount++;
+                                try
+                                {
+                                    activity?.AddEvent("token_refresh_started", [
+                                        new("stream.name", this.streamName),
+                                        new("stream.row_offset", this.rowsRead),
+                                        new("token_refresh.attempt", tokenRefreshCount),
+                                    ]);
+                                    await this.clientMgr.UpdateToken().ConfigureAwait(false);
+                                    activity?.AddEvent("token_refresh_completed");
+
+                                    await ReconnectStreamAsync("token_refresh", effectiveToken, activity, [
+                                        new("token_refresh.attempt", tokenRefreshCount),
+                                    ]);
+                                    continue;
+                                }
+                                catch (Exception refreshEx)
+                                {
+                                    // Token refresh failed (e.g., Entra ID token also expired).
+                                    activity?.AddException(refreshEx, [
+                                        new KeyValuePair<string, object?>("token_refresh.failed", true),
+                                        new KeyValuePair<string, object?>("token_refresh.attempt", tokenRefreshCount),
+                                    ]);
+                                }
+                            }
+
+                            throw new AdbcException(
+                                $"Authentication failed reading stream '{this.streamName}' at row offset {this.rowsRead}. {ex.GetType().Name}: {ex.Message}",
+                                AdbcStatusCode.Unauthenticated,
+                                ex);
+                        }
+                        catch (Exception ex) when (retryCount < this.maxRetries)
+                        {
+                            activity?.AddException(ex, BigQueryUtils.BuildExceptionTagList(retryCount, ex, [
+                                new($"retry.attempt_{retryCount}.stream_name", this.streamName),
+                                new($"retry.attempt_{retryCount}.row_offset", this.rowsRead),
+                            ]));
+                            retryCount++;
+                            await Task.Delay(delay, effectiveToken).ConfigureAwait(false);
+                            delay = Math.Min(2 * delay, 5000);
+
+                            await ReconnectStreamAsync("general_retry", effectiveToken, activity, [
+                                new("retry.attempt", retryCount),
+                            ]);
+                        }
+                        catch (Exception ex)
+                        {
+                            AdbcStatusCode statusCode = BigQueryUtils.IsGrpcUnauthenticated(ex)
+                                ? AdbcStatusCode.Unauthenticated
+                                : AdbcStatusCode.IOError;
+
+                            throw new AdbcException(
+                                $"Cannot read stream '{this.streamName}' after {this.maxRetries} retries at row offset {this.rowsRead}. Last exception: {ex.GetType().Name}: {ex.Message}",
+                                statusCode,
+                                ex);
+                        }
+                    }
+                }, ClassName + "." + nameof(MoveNextWithRetryAsync));
+            }
+
+            /// <summary>
+            /// Disposes the current stream (best-effort) and creates a new enumerator starting from the current row offset.
+            /// </summary>
+            /// <param name="context">A description of why reconnection is happening (e.g., "token_refresh", "general_retry").</param>
+            /// <param name="effectiveToken">The cancellation token to use for the new stream.</param>
+            /// <param name="activity">Optional activity for telemetry.</param>
+            /// <param name="additionalTags">Optional additional tags to include in the reconnection event.</param>
+            private async Task ReconnectStreamAsync(
+                string context,
+                CancellationToken effectiveToken,
+                Activity? activity,
+                IEnumerable<KeyValuePair<string, object?>>? additionalTags = null)
+            {
+                // Dispose the old stream (best-effort)
+                try
+                {
+                    await this.response!.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception disposeEx)
+                {
+                    // Log disposal failure but don't fail the reconnection
+                    activity?.AddEvent("stream_dispose_failed", [
+                        new("stream.name", this.streamName),
+                        new("stream.row_offset", this.rowsRead),
+                        new("dispose.context", context),
+                        new("dispose.exception_type", disposeEx.GetType().Name),
+                        new("dispose.exception_message", disposeEx.Message),
+                    ]);
+                }
+
+                // Create new enumerator starting from current offset
+                this.response = CreateEnumerator(this.rowsRead, effectiveToken);
+
+                // Log the reconnection
+                var tags = new List<KeyValuePair<string, object?>>
+                {
+                    new("stream.name", this.streamName),
+                    new("stream.row_offset", this.rowsRead),
+                    new("reconnect.context", context),
+                };
+                if (additionalTags != null)
+                {
+                    tags.AddRange(additionalTags);
+                }
+                activity?.AddEvent("stream_reconnected", tags);
+            }
+
+            private IAsyncEnumerator<ReadRowsResponse> CreateEnumerator(long offset, CancellationToken effectiveToken)
+            {
+                BigQueryReadClient.ReadRowsStream readRowsStream = this.clientMgr.ReadClient.ReadRows(
+                    new ReadRowsRequest { ReadStream = this.streamName, Offset = offset });
+                return readRowsStream.GetResponseStream().GetAsyncEnumerator(effectiveToken);
+            }
+
+            public void Dispose()
+            {
+                if (!this.disposed)
+                {
+                    this.response?.DisposeAsync().GetAwaiter().GetResult();
+                    this.disposed = true;
+                }
+            }
+        }
+    }
+}

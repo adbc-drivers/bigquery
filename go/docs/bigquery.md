@@ -60,7 +60,7 @@ conn = dbapi.connect(
 )
 ```
 
-Note: The example above is for Python using the [adbc-driver-manager](https://pypi.org/project/adbc-driver-manager) package but the process will be similar for other driver managers.
+Note: The example above is for Python using the [adbc-driver-manager](https://pypi.org/project/adbc-driver-manager) package but the process will be similar for other driver managers. See [adbc-quickstarts](https://github.com/columnar-tech/adbc-quickstarts).
 
 The driver supports connecting with individual options or connection strings.
 
@@ -111,7 +111,9 @@ Examples:
 
 To see documentation for previous versions of this driver, see the following:
 
-- [v0.1.1](./v0.1.1.md)
+- [v1.11.0](./v1.11.0.md)
+- [v1.10.0](./v1.10.0.md)
+- [v1.0.0](./v1.0.0.md)
 
 {{ footnotes|safe }}
 

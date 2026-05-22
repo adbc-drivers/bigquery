@@ -26,9 +26,10 @@ if __name__ == "__main__":
     template = Path(__file__).parent.parent.parent / "docs/bigquery.md"
     template = template.resolve()
 
+    reports = [report.resolve() for report in Path(".").glob("validation-report*.xml")]
     generate_documentation.generate(
-        bigquery.QUIRKS,
-        Path("validation-report.xml").resolve(),
+        bigquery.get_quirks,
+        reports,
         template,
         args.output.resolve(),
     )
