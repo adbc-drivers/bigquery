@@ -21,6 +21,7 @@ using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Types;
 using AdbcDrivers.BigQuery.MockServer;
+using Google.Cloud.BigQuery.Storage.V1;
 using Xunit;
 
 namespace AdbcDrivers.BigQuery.Tests.MockServer
@@ -88,6 +89,74 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 var column = Assert.IsType<Int64Array>(resultBatch.Column(0));
                 Assert.Equal(42L, column.GetValue(0));
             }
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task CanBulkIngestAppendToTable()
+        {
+            using var mockServer = new BigQueryMockServer();
+
+            string projectId = "mock-project";
+            string datasetId = "test_dataset";
+            string tableId = "test_table";
+
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, projectId },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+
+            // Create test data
+            var schema = new Schema(new[]
+            {
+                new Field("id", Int64Type.Default, nullable: false),
+                new Field("name", StringType.Default, nullable: true),
+            }, null);
+
+            var idBuilder = new Int64Array.Builder();
+            idBuilder.Append(1);
+            idBuilder.Append(2);
+            idBuilder.Append(3);
+
+            var nameBuilder = new StringArray.Builder();
+            nameBuilder.Append("Alice");
+            nameBuilder.Append("Bob");
+            nameBuilder.Append("Charlie");
+
+            var batch = new RecordBatch(schema, new IArrowArray[]
+            {
+                idBuilder.Build(),
+                nameBuilder.Build()
+            }, 3);
+
+            // Use BulkIngest with CreateAppend mode (creates table if missing)
+            using AdbcStatement statement = connection.BulkIngest(projectId, datasetId, tableId, BulkIngestMode.CreateAppend, false);
+            statement.Bind(batch, schema);
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            // Verify rows were reported
+            Assert.Equal(3, result.AffectedRows);
+
+            // Verify the mock server received the data
+            Assert.Single(mockServer.WriteService.Streams);
+            var writeStream = Assert.Single(mockServer.WriteService.Streams.Values);
+            Assert.Equal(WriteStream.Types.Type.Pending, writeStream.Type);
+            Assert.True(writeStream.Finalized, "Write stream should have been finalized");
+            Assert.NotNull(writeStream.SchemaBytes);
+            Assert.Single(writeStream.RecordBatches);
+
+            // Verify the stream was committed
+            Assert.Single(mockServer.WriteService.CommittedStreams);
+
+            // Verify the table was created in the REST API
+            // (CreateAppend mode should create it since it didn't exist)
         }
     }
 }

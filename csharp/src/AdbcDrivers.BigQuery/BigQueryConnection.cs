@@ -207,6 +207,31 @@ namespace AdbcDrivers.BigQuery
 
         internal string? TestStorageEndpoint { get; private set; }
 
+        internal string? ProjectId
+        {
+            get
+            {
+                if (Client != null) return Client.ProjectId;
+                properties.TryGetValue(BigQueryParameters.ProjectId, out string? pid);
+                return pid;
+            }
+        }
+
+        public override AdbcStatement BulkIngest(string targetTableName, BulkIngestMode mode)
+        {
+            return BulkIngest(null, null, targetTableName, mode, false);
+        }
+
+        public override AdbcStatement BulkIngest(string? targetCatalog, string? targetDbSchema, string targetTableName, BulkIngestMode mode, bool isTemporary)
+        {
+            if (isTemporary)
+                throw AdbcException.NotImplemented("Temporary table bulk ingest is not supported for BigQuery");
+
+            var statement = new BigQueryStatement(this);
+            statement.SetBulkIngest(targetCatalog, targetDbSchema, targetTableName, mode);
+            return statement;
+        }
+
         public override string AssemblyVersion => BigQueryUtils.BigQueryAssemblyVersion;
 
         public override string AssemblyName => BigQueryUtils.BigQueryAssemblyName;

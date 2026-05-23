@@ -60,6 +60,15 @@ namespace AdbcDrivers.BigQuery
         string? schemaName = null;
         string? tableName = null;
 
+        // Bulk ingest state
+        private bool _isBulkIngest;
+        private string? _ingestTargetCatalog;
+        private string? _ingestTargetDbSchema;
+        private string? _ingestTargetTable;
+        private BulkIngestMode _ingestMode;
+        private RecordBatch? _boundBatch;
+        private IArrowArrayStream? _boundStream;
+
         public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
         {
             if (bigQueryConnection == null) { throw new AdbcException($"{nameof(bigQueryConnection)} cannot be null", AdbcStatusCode.InvalidArgument); }
@@ -74,6 +83,27 @@ namespace AdbcDrivers.BigQuery
         public Func<Task>? UpdateToken { get; set; }
 
         internal Dictionary<string, string>? Options { get; set; }
+
+        internal void SetBulkIngest(string? targetCatalog, string? targetDbSchema, string targetTable, BulkIngestMode mode)
+        {
+            _isBulkIngest = true;
+            _ingestTargetCatalog = targetCatalog;
+            _ingestTargetDbSchema = targetDbSchema;
+            _ingestTargetTable = targetTable;
+            _ingestMode = mode;
+        }
+
+        public override void Bind(RecordBatch batch, Schema schema)
+        {
+            _boundBatch = batch ?? throw new ArgumentNullException(nameof(batch));
+            _boundStream = null;
+        }
+
+        public override void BindStream(IArrowArrayStream stream)
+        {
+            _boundStream = stream ?? throw new ArgumentNullException(nameof(stream));
+            _boundBatch = null;
+        }
 
         private BigQueryClient Client => this.bigQueryConnection.Client ?? throw new AdbcException("Client cannot be null");
 
@@ -798,6 +828,11 @@ namespace AdbcDrivers.BigQuery
 
         private async Task<UpdateResult> ExecuteUpdateInternalAsync()
         {
+            if (_isBulkIngest)
+            {
+                return await ExecuteBulkIngestAsync().ConfigureAwait(false);
+            }
+
             return await this.TraceActivityAsync(async activity =>
             {
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
@@ -835,6 +870,44 @@ namespace AdbcDrivers.BigQuery
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, updatedRows);
                 return new UpdateResult(updatedRows);
             }, ClassName + "." + nameof(ExecuteUpdateInternalAsync));
+        }
+
+        private async Task<UpdateResult> ExecuteBulkIngestAsync()
+        {
+            var writeClient = CreateBigQueryWriteClient();
+            var ingest = new BigQueryBulkIngest(Client, writeClient, this.bigQueryConnection.ProjectId!);
+            try
+            {
+                return await ingest.ExecuteAsync(
+                    _ingestTargetCatalog,
+                    _ingestTargetDbSchema,
+                    _ingestTargetTable!,
+                    _ingestMode,
+                    _boundBatch,
+                    _boundStream).ConfigureAwait(false);
+            }
+            finally
+            {
+                await BigQueryWriteClient.ShutdownDefaultChannelsAsync().ConfigureAwait(false);
+            }
+        }
+
+        private BigQueryWriteClient CreateBigQueryWriteClient()
+        {
+            var builder = new BigQueryWriteClientBuilder();
+            string? endpoint = this.bigQueryConnection.TestStorageEndpoint;
+
+            if (!string.IsNullOrEmpty(endpoint))
+            {
+                builder.Endpoint = endpoint;
+                builder.ChannelCredentials = Grpc.Core.ChannelCredentials.Insecure;
+            }
+            else
+            {
+                builder.GoogleCredential = Credential;
+            }
+
+            return builder.Build();
         }
 
         private Schema TranslateSchema(TableSchema schema)
