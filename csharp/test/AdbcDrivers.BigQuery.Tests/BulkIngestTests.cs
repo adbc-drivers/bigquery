@@ -37,7 +37,7 @@ namespace AdbcDrivers.BigQuery.Tests
         private readonly BigQueryTestConfiguration _testConfiguration;
         private readonly List<BigQueryTestEnvironment> _environments;
         private readonly ITestOutputHelper? _outputHelper;
-        private readonly List<(AdbcConnection connection, string catalog, string dataset, string table)> _tablesToCleanup = new();
+        private readonly List<(BigQueryTestEnvironment environment, string catalog, string dataset, string table)> _tablesToCleanup = new();
 
         public BulkIngestTests(ITestOutputHelper? outputHelper)
         {
@@ -50,10 +50,11 @@ namespace AdbcDrivers.BigQuery.Tests
 
         public void Dispose()
         {
-            foreach (var (connection, catalog, dataset, table) in _tablesToCleanup)
+            foreach (var (environment, catalog, dataset, table) in _tablesToCleanup)
             {
                 try
                 {
+                    using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                     using AdbcStatement stmt = connection.CreateStatement();
                     stmt.SqlQuery = $"DROP TABLE IF EXISTS `{catalog}.{dataset}.{table}`";
                     stmt.ExecuteUpdate();
@@ -78,9 +79,9 @@ namespace AdbcDrivers.BigQuery.Tests
             stmt.ExecuteUpdate();
         }
 
-        private void RegisterCleanup(AdbcConnection connection, string catalog, string dataset, string tableName)
+        private void RegisterCleanup(BigQueryTestEnvironment environment, string catalog, string dataset, string tableName)
         {
-            _tablesToCleanup.Add((connection, catalog, dataset, tableName));
+            _tablesToCleanup.Add((environment, catalog, dataset, tableName));
         }
 
         private static RecordBatch CreateSimpleBatch(int rowCount = 3)
@@ -139,7 +140,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                 EnsureTableDropped(connection, catalog, dataset, tableName);
-                RegisterCleanup(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
 
                 RecordBatch batch = CreateSimpleBatch(3);
 
@@ -167,7 +168,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                 EnsureTableDropped(connection, catalog, dataset, tableName);
-                RegisterCleanup(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
 
                 // First, create the table with initial data
                 RecordBatch batch1 = CreateSimpleBatch(2);
@@ -204,7 +205,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                 EnsureTableDropped(connection, catalog, dataset, tableName);
-                RegisterCleanup(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
 
                 // CreateAppend should create the table since it doesn't exist
                 RecordBatch batch1 = CreateSimpleBatch(2);
@@ -240,7 +241,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                 EnsureTableDropped(connection, catalog, dataset, tableName);
-                RegisterCleanup(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
 
                 // Create the table first
                 RecordBatch batch = CreateSimpleBatch(1);
@@ -293,7 +294,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                 EnsureTableDropped(connection, catalog, dataset, tableName);
-                RegisterCleanup(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
 
                 // Create with 5 rows
                 RecordBatch batch1 = CreateSimpleBatch(5);
@@ -330,7 +331,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
                 using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
                 EnsureTableDropped(connection, catalog, dataset, tableName);
-                RegisterCleanup(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
 
                 RecordBatch batch1 = CreateSimpleBatch(2);
                 RecordBatch batch2 = CreateSimpleBatch(3);
@@ -365,6 +366,64 @@ namespace AdbcDrivers.BigQuery.Tests
                         "temp_table",
                         BulkIngestMode.Create,
                         isTemporary: true));
+            }
+        }
+
+        [SkippableFact]
+        public void CanBulkIngestTemporalTypes()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                string catalog = environment.Metadata.Catalog;
+                string dataset = environment.Metadata.Schema;
+                string tableName = UniqueTableName("temporal");
+
+                using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
+                EnsureTableDropped(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
+
+                // Create a batch with temporal types that require normalization.
+                // Time32 (second) and Timestamp (nanosecond) both need conversion
+                // to microsecond precision for BigQuery.
+                var time32Builder = new Time32Array.Builder(TimeUnit.Second);
+                time32Builder.Append(3661); // 1h 1m 1s
+                time32Builder.Append(7200); // 2h
+                time32Builder.AppendNull();
+
+                var timestampBuilder = new TimestampArray.Builder(new TimestampType(TimeUnit.Nanosecond, "UTC"));
+                timestampBuilder.Append(new DateTimeOffset(2024, 6, 15, 12, 30, 45, TimeSpan.Zero));
+                timestampBuilder.Append(new DateTimeOffset(2024, 12, 31, 23, 59, 59, TimeSpan.Zero));
+                timestampBuilder.AppendNull();
+
+                var idBuilder = new Int64Array.Builder();
+                idBuilder.Append(1);
+                idBuilder.Append(2);
+                idBuilder.Append(3);
+
+                var schema = new Schema(new[]
+                {
+                    new Field("id", Int64Type.Default, nullable: false),
+                    new Field("time_val", new Time32Type(TimeUnit.Second), nullable: true),
+                    new Field("ts_val", new TimestampType(TimeUnit.Nanosecond, "UTC"), nullable: true),
+                }, null);
+
+                var batch = new RecordBatch(schema, new IArrowArray[]
+                {
+                    idBuilder.Build(),
+                    time32Builder.Build(),
+                    timestampBuilder.Build(),
+                }, 3);
+
+                using AdbcStatement statement = connection.BulkIngest(catalog, dataset, tableName, BulkIngestMode.Create, false);
+                statement.Bind(batch, batch.Schema);
+                UpdateResult result = statement.ExecuteUpdate();
+
+                Assert.Equal(3, result.AffectedRows);
+
+                long rowCount = CountRows(connection, catalog, dataset, tableName);
+                Assert.Equal(3, rowCount);
+
+                _outputHelper?.WriteLine($"CanBulkIngestTemporalTypes: inserted {result.AffectedRows} rows with temporal types into {catalog}.{dataset}.{tableName}");
             }
         }
 

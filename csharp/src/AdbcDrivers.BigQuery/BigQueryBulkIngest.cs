@@ -85,8 +85,13 @@ namespace AdbcDrivers.BigQuery
                 arrowSchema = boundStream!.Schema;
             }
 
+            // Normalize the schema to match what NormalizeBatch will produce,
+            // so the serialized schema sent with AppendRows is consistent with
+            // the serialized record batches.
+            Schema normalizedSchema = NormalizeSchema(arrowSchema);
+
             // Handle table lifecycle based on BulkIngestMode
-            await HandleTableLifecycleAsync(catalog, targetDbSchema!, targetTable, mode, arrowSchema, cancellationToken).ConfigureAwait(false);
+            await HandleTableLifecycleAsync(catalog, targetDbSchema!, targetTable, mode, normalizedSchema, cancellationToken).ConfigureAwait(false);
 
             // Create a PENDING write stream for atomic commit
             WriteStream writeStream = await _writeClient.CreateWriteStreamAsync(
@@ -105,7 +110,7 @@ namespace AdbcDrivers.BigQuery
                 using BigQueryWriteClient.AppendRowsStream appendStream = _writeClient.AppendRows();
 
                 // Serialize the Arrow schema (sent with first request)
-                byte[] schemaBytes = SerializeSchema(arrowSchema);
+                byte[] schemaBytes = SerializeSchema(normalizedSchema);
 
                 if (boundBatch != null)
                 {
@@ -267,6 +272,43 @@ namespace AdbcDrivers.BigQuery
         #region Arrow type normalization
 
         /// <summary>
+        /// Normalizes an Arrow schema to match what NormalizeBatch will produce.
+        /// This ensures the schema sent with AppendRows is consistent with the
+        /// serialized record batches.
+        /// </summary>
+        internal static Schema NormalizeSchema(Schema schema)
+        {
+            bool needsNormalization = false;
+            foreach (var field in schema.FieldsList)
+            {
+                if (NeedsNormalization(field.DataType))
+                {
+                    needsNormalization = true;
+                    break;
+                }
+            }
+
+            if (!needsNormalization)
+                return schema;
+
+            var newFields = new List<Field>(schema.FieldsList.Count);
+            foreach (var field in schema.FieldsList)
+            {
+                if (NeedsNormalization(field.DataType))
+                {
+                    IArrowType normalizedType = NormalizeType(field.DataType);
+                    newFields.Add(new Field(field.Name, normalizedType, field.IsNullable, field.Metadata));
+                }
+                else
+                {
+                    newFields.Add(field);
+                }
+            }
+
+            return new Schema(newFields, schema.Metadata);
+        }
+
+        /// <summary>
         /// Normalizes Arrow types to those BigQuery accepts.
         /// BigQuery assumes microsecond precision for all time/timestamp values.
         /// </summary>
@@ -318,6 +360,17 @@ namespace AdbcDrivers.BigQuery
                 Time64Type t => t.Unit != TimeUnit.Microsecond,
                 TimestampType t => t.Unit != TimeUnit.Microsecond,
                 _ => false
+            };
+        }
+
+        private static IArrowType NormalizeType(IArrowType type)
+        {
+            return type switch
+            {
+                Time32Type => new Time64Type(TimeUnit.Microsecond),
+                Time64Type => new Time64Type(TimeUnit.Microsecond),
+                TimestampType ts => new TimestampType(TimeUnit.Microsecond, ts.Timezone),
+                _ => type
             };
         }
 

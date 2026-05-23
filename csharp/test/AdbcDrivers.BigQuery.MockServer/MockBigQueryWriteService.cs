@@ -81,7 +81,25 @@ namespace AdbcDrivers.BigQuery.MockServer
 
                         if (request.ArrowRows.Rows?.SerializedRecordBatch != null)
                         {
-                            streamInfo.RecordBatches.Add(request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray());
+                            byte[] batchBytes = request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray();
+                            streamInfo.RecordBatches.Add(batchBytes);
+
+                            // Deserialize to count actual rows
+                            try
+                            {
+                                using var stream = new System.IO.MemoryStream(batchBytes);
+                                using var reader = new Apache.Arrow.Ipc.ArrowStreamReader(stream);
+                                var batch = reader.ReadNextRecordBatch();
+                                if (batch != null)
+                                {
+                                    streamInfo.RowCount += batch.Length;
+                                }
+                            }
+                            catch
+                            {
+                                // If deserialization fails, fall back to counting batches
+                                streamInfo.RowCount++;
+                            }
                         }
                     }
                 }
@@ -108,7 +126,7 @@ namespace AdbcDrivers.BigQuery.MockServer
 
             return Task.FromResult(new FinalizeWriteStreamResponse
             {
-                RowCount = _streams.TryGetValue(request.Name, out var info) ? info.RecordBatches.Count : 0
+                RowCount = _streams.TryGetValue(request.Name, out var info) ? info.RowCount : 0
             });
         }
 
@@ -134,6 +152,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             public WriteStream.Types.Type Type { get; }
             public byte[]? SchemaBytes { get; set; }
             public List<byte[]> RecordBatches { get; } = new();
+            public long RowCount { get; set; }
             public bool Finalized { get; set; }
 
             public WriteStreamInfo(string name, WriteStream.Types.Type type)

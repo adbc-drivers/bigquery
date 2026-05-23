@@ -876,20 +876,13 @@ namespace AdbcDrivers.BigQuery
         {
             var writeClient = CreateBigQueryWriteClient();
             var ingest = new BigQueryBulkIngest(Client, writeClient, this.bigQueryConnection.ProjectId!);
-            try
-            {
-                return await ingest.ExecuteAsync(
-                    _ingestTargetCatalog,
-                    _ingestTargetDbSchema,
-                    _ingestTargetTable!,
-                    _ingestMode,
-                    _boundBatch,
-                    _boundStream).ConfigureAwait(false);
-            }
-            finally
-            {
-                await BigQueryWriteClient.ShutdownDefaultChannelsAsync().ConfigureAwait(false);
-            }
+            return await ingest.ExecuteAsync(
+                _ingestTargetCatalog,
+                _ingestTargetDbSchema,
+                _ingestTargetTable!,
+                _ingestMode,
+                _boundBatch,
+                _boundStream).ConfigureAwait(false);
         }
 
         private BigQueryWriteClient CreateBigQueryWriteClient()

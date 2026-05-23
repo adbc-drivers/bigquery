@@ -216,12 +216,18 @@ namespace AdbcDrivers.BigQuery.MockServer
             // POST /bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables - Create table
             app.MapPost("/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables", async (HttpContext ctx, string projectId, string datasetId) =>
             {
-                System.IO.Stream bodyStream = ctx.Request.Body;
+                string body;
                 if (string.Equals(ctx.Request.Headers["Content-Encoding"].ToString(), "gzip", StringComparison.OrdinalIgnoreCase))
                 {
-                    bodyStream = new GZipStream(bodyStream, CompressionMode.Decompress);
+                    await using var gzipStream = new GZipStream(ctx.Request.Body, CompressionMode.Decompress, leaveOpen: true);
+                    using var reader = new System.IO.StreamReader(gzipStream);
+                    body = await reader.ReadToEndAsync();
                 }
-                string body = await new System.IO.StreamReader(bodyStream).ReadToEndAsync();
+                else
+                {
+                    using var reader = new System.IO.StreamReader(ctx.Request.Body);
+                    body = await reader.ReadToEndAsync();
+                }
                 var table = NewtonsoftJsonSerializer.Instance.Deserialize<Table>(body);
                 if (table == null)
                 {
@@ -230,6 +236,13 @@ namespace AdbcDrivers.BigQuery.MockServer
                 }
 
                 string tableId = table.TableReference?.TableId ?? "";
+                if (string.IsNullOrEmpty(tableId))
+                {
+                    ctx.Response.StatusCode = 400;
+                    var badRequest = new { error = new { code = 400, message = "tableReference.tableId is required", status = "INVALID_ARGUMENT" } };
+                    await ctx.Response.WriteAsJsonAsync(badRequest);
+                    return;
+                }
                 string key = $"{projectId}.{datasetId}.{tableId}";
 
                 if (_tables.ContainsKey(key))
