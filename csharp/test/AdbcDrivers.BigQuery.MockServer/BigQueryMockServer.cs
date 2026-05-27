@@ -16,8 +16,10 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net;
 using System.Threading;
+using System.Threading.Tasks;
 using Google.Apis.Bigquery.v2.Data;
 using Google.Apis.Json;
 using Microsoft.AspNetCore.Builder;
@@ -40,6 +42,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly WebApplication _grpcApp;
         private readonly CancellationTokenSource _cts = new();
         private readonly ConcurrentDictionary<string, MockJob> _jobs = new();
+        private readonly ConcurrentDictionary<string, Table> _tables = new();
 
         /// <summary>
         /// The REST API endpoint as host:port (e.g., "127.0.0.1:12345").
@@ -59,11 +62,17 @@ namespace AdbcDrivers.BigQuery.MockServer
         public MockBigQueryReadService ReadService { get; }
 
         /// <summary>
+        /// The mock gRPC service for tracking Storage Write API requests.
+        /// </summary>
+        public MockBigQueryWriteService WriteService { get; }
+
+        /// <summary>
         /// Creates and starts a new mock BigQuery server on random loopback ports.
         /// </summary>
         public BigQueryMockServer()
         {
             ReadService = new MockBigQueryReadService();
+            WriteService = new MockBigQueryWriteService();
 
             int restPort = GetFreePort();
             int grpcPort = GetFreePort();
@@ -101,6 +110,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             builder.Logging.ClearProviders();
             builder.Services.AddGrpc();
             builder.Services.AddSingleton(ReadService);
+            builder.Services.AddSingleton(WriteService);
             builder.WebHost.ConfigureKestrel(options =>
             {
                 options.Listen(IPAddress.Loopback, port, listenOptions =>
@@ -111,6 +121,7 @@ namespace AdbcDrivers.BigQuery.MockServer
 
             var app = builder.Build();
             app.MapGrpcService<MockBigQueryReadService>();
+            app.MapGrpcService<MockBigQueryWriteService>();
             return app;
         }
 
@@ -183,6 +194,84 @@ namespace AdbcDrivers.BigQuery.MockServer
                 string json = NewtonsoftJsonSerializer.Instance.Serialize(response);
                 ctx.Response.ContentType = "application/json";
                 await ctx.Response.WriteAsync(json);
+            });
+
+            // GET /bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables/{tableId} - Get table
+            app.MapGet("/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables/{tableId}", async (HttpContext ctx, string projectId, string datasetId, string tableId) =>
+            {
+                string key = $"{projectId}.{datasetId}.{tableId}";
+                if (!_tables.TryGetValue(key, out var table))
+                {
+                    ctx.Response.StatusCode = 404;
+                    var error = new { error = new { code = 404, message = $"Not found: Table {projectId}:{datasetId}.{tableId}", status = "NOT_FOUND" } };
+                    await ctx.Response.WriteAsJsonAsync(error);
+                    return;
+                }
+
+                string json = NewtonsoftJsonSerializer.Instance.Serialize(table);
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(json);
+            });
+
+            // POST /bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables - Create table
+            app.MapPost("/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables", async (HttpContext ctx, string projectId, string datasetId) =>
+            {
+                string body;
+                if (string.Equals(ctx.Request.Headers["Content-Encoding"].ToString(), "gzip", StringComparison.OrdinalIgnoreCase))
+                {
+                    await using var gzipStream = new GZipStream(ctx.Request.Body, CompressionMode.Decompress, leaveOpen: true);
+                    using var reader = new System.IO.StreamReader(gzipStream);
+                    body = await reader.ReadToEndAsync();
+                }
+                else
+                {
+                    using var reader = new System.IO.StreamReader(ctx.Request.Body);
+                    body = await reader.ReadToEndAsync();
+                }
+                var table = NewtonsoftJsonSerializer.Instance.Deserialize<Table>(body);
+                if (table == null)
+                {
+                    ctx.Response.StatusCode = 400;
+                    return;
+                }
+
+                string tableId = table.TableReference?.TableId ?? "";
+                if (string.IsNullOrEmpty(tableId))
+                {
+                    ctx.Response.StatusCode = 400;
+                    var badRequest = new { error = new { code = 400, message = "tableReference.tableId is required", status = "INVALID_ARGUMENT" } };
+                    await ctx.Response.WriteAsJsonAsync(badRequest);
+                    return;
+                }
+                string key = $"{projectId}.{datasetId}.{tableId}";
+
+                if (_tables.ContainsKey(key))
+                {
+                    ctx.Response.StatusCode = 409;
+                    var error = new { error = new { code = 409, message = $"Already Exists: Table {projectId}:{datasetId}.{tableId}", status = "ALREADY_EXISTS" } };
+                    await ctx.Response.WriteAsJsonAsync(error);
+                    return;
+                }
+
+                table.TableReference ??= new TableReference();
+                table.TableReference.ProjectId = projectId;
+                table.TableReference.DatasetId = datasetId;
+                table.Kind = "bigquery#table";
+                _tables[key] = table;
+
+                string json = NewtonsoftJsonSerializer.Instance.Serialize(table);
+                ctx.Response.ContentType = "application/json";
+                ctx.Response.StatusCode = 200;
+                await ctx.Response.WriteAsync(json);
+            });
+
+            // DELETE /bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables/{tableId} - Delete table
+            app.MapDelete("/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables/{tableId}", (HttpContext ctx, string projectId, string datasetId, string tableId) =>
+            {
+                string key = $"{projectId}.{datasetId}.{tableId}";
+                _tables.TryRemove(key, out _);
+                ctx.Response.StatusCode = 204;
+                return Task.CompletedTask;
             });
 
             // Catch-all for unhandled endpoints
