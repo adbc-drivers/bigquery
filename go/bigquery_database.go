@@ -61,6 +61,16 @@ type databaseImpl struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	// queryBackendAPI selects which BigQuery API is used to read query results.
+	// Valid values: OptionValueQueryBackendAPIStorageRead (default), OptionValueQueryBackendAPIJobs.
+	// See issue #66. The REST fallback is not yet implemented; selecting "jobs"
+	// currently returns an error when results are read.
+	queryBackendAPI string
+
+	// storageReadAPIEndpoint overrides the Storage Read API gRPC endpoint.
+	// Empty string means use the default Google endpoint.
+	storageReadAPIEndpoint string
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
@@ -86,6 +96,8 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		quotaProject:               d.quotaProject,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
+		queryBackendAPI:            d.queryBackendAPI,
+		storageReadAPIEndpoint:     d.storageReadAPIEndpoint,
 	}
 
 	err := conn.newClient(ctx)
@@ -148,6 +160,13 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 			return OptionValueCompressionNone, nil
 		}
 		return d.bulkIngestCompression, nil
+	case OptionStringQueryBackendAPI:
+		if d.queryBackendAPI == "" {
+			return OptionValueQueryBackendAPIStorageRead, nil
+		}
+		return d.queryBackendAPI, nil
+	case OptionStringStorageReadAPIEndpoint:
+		return d.storageReadAPIEndpoint, nil
 	default:
 		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
@@ -279,6 +298,17 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			}
 		}
 		d.bulkIngestCompression = value
+	case OptionStringQueryBackendAPI:
+		if value != OptionValueQueryBackendAPIStorageRead &&
+			value != OptionValueQueryBackendAPIJobs {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid value for %s: %q (expected %q or %q)", key, value, OptionValueQueryBackendAPIStorageRead, OptionValueQueryBackendAPIJobs),
+			}
+		}
+		d.queryBackendAPI = value
+	case OptionStringStorageReadAPIEndpoint:
+		d.storageReadAPIEndpoint = value
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}

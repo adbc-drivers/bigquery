@@ -70,6 +70,27 @@ const (
 	OptionStringQueryCreateDisposition = "adbc.bigquery.sql.query.create_disposition"
 	OptionStringQueryWriteDisposition  = "adbc.bigquery.sql.query.write_disposition"
 	OptionBoolQueryDisableQueryCache   = "adbc.bigquery.sql.query.disable_query_cache"
+
+	// OptionStringQueryBackendAPI selects which BigQuery API is used to read
+	// query results. See issue #66 for design discussion.
+	//
+	// Valid values:
+	//   - OptionValueQueryBackendAPIStorageRead (default): use the Storage Read
+	//     API (gRPC/HTTP2). Required for Arrow-format streaming reads.
+	//   - OptionValueQueryBackendAPIJobs: select the REST Jobs API. NOTE: the
+	//     actual REST fallback is not yet implemented in this driver; setting
+	//     this value currently returns an error when reading results. The option
+	//     is added as infrastructure so callers can opt in once the fallback is
+	//     implemented in a follow-up PR.
+	OptionStringQueryBackendAPI             = "adbc.bigquery.query.backend_api"
+	OptionValueQueryBackendAPIStorageRead   = "storage_read"
+	OptionValueQueryBackendAPIJobs          = "jobs"
+
+	// OptionStringStorageReadAPIEndpoint overrides the endpoint used for the
+	// BigQuery Storage Read API (gRPC). Defaults to the public Google endpoint.
+	// Useful for testing with a local fake server or BigQuery emulator.
+	// Format: "host:port" (e.g. "localhost:9443").
+	OptionStringStorageReadAPIEndpoint = "adbc.bigquery.sql.storage_read_api_endpoint"
 	OptionBoolDisableFlattenedResults  = "adbc.bigquery.sql.query.disable_flattened_results"
 	OptionBoolQueryAllowLargeResults   = "adbc.bigquery.sql.query.allow_large_results"
 	OptionStringQueryPriority          = "adbc.bigquery.sql.query.priority"
