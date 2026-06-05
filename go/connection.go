@@ -82,6 +82,17 @@ type connectionImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
+	// queryBackendAPI selects which BigQuery API is used to read query results.
+	// Valid values: OptionValueQueryBackendAPIStorageRead (default), OptionValueQueryBackendAPIJobs.
+	// See issue #66. The REST fallback is not yet implemented; selecting "jobs"
+	// currently returns an error when results are read.
+	queryBackendAPI string
+
+	// storageReadAPIEndpoint overrides the Storage Read API gRPC endpoint.
+	// Empty string means use the default Google endpoint.
+	// Useful for testing with a local fake server or BigQuery emulator.
+	storageReadAPIEndpoint string
+
 	client *bigquery.Client
 }
 
@@ -671,6 +682,17 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 			}
 		}
 		c.bulkIngestCompression = value
+	case OptionStringQueryBackendAPI:
+		if value != OptionValueQueryBackendAPIStorageRead &&
+			value != OptionValueQueryBackendAPIJobs {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid value for %s: %q (expected %q or %q)", key, value, OptionValueQueryBackendAPIStorageRead, OptionValueQueryBackendAPIJobs),
+			}
+		}
+		c.queryBackendAPI = value
+	case OptionStringStorageReadAPIEndpoint:
+		c.storageReadAPIEndpoint = value
 	default:
 		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
@@ -830,10 +852,30 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		client.Location = c.location
 	}
 
-	// Use original authOptions without custom endpoint for Storage Read API
-	err = client.EnableStorageReadClient(ctx, authOptions...)
-	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")
+	// EnableStorageReadClient opens a gRPC connection to the BigQuery Storage
+	// Read API. Guard with a 30s timeout so the driver fails fast instead of
+	// hanging indefinitely if the call does not return.
+	//
+	// When OptionStringQueryBackendAPI is set to "jobs", we skip initialising
+	// the Storage Read client entirely. Note: the actual REST-based fallback
+	// for reading query results is not yet implemented (see issue #66); reads
+	// will return an explicit error in that case.
+	if c.queryBackendAPI != OptionValueQueryBackendAPIJobs {
+		storageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		storageAuthOptions := authOptions
+		if c.storageReadAPIEndpoint != "" {
+			storageAuthOptions = append(storageAuthOptions, option.WithEndpoint(c.storageReadAPIEndpoint))
+		}
+		if err := client.EnableStorageReadClient(storageCtx, storageAuthOptions...); err != nil {
+			if storageCtx.Err() != nil {
+				c.Logger.Warn("BigQuery Storage Read API timed out after 30s. See " + OptionStringQueryBackendAPI + " (issue #66) for the future REST fallback.")
+			} else {
+				c.Logger.Warn("BigQuery Storage Read API unavailable", "err", err)
+			}
+			// non-fatal: continue without Storage Read API; record_reader will
+			// surface an appropriate error when a caller tries to stream rows.
+		}
 	}
 
 	c.client = client
