@@ -48,6 +48,12 @@ type databaseImpl struct {
 	accessTokenEndpoint   string
 	accessTokenServerName string
 
+	// External-account (Workload Identity Federation) options.
+	externalAccountAudience         string
+	externalAccountImpersonationURL string
+	externalAccountRequestURL       string
+	externalAccountRequestData      string
+
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
 	impersonateScopes          []string
@@ -68,30 +74,35 @@ type databaseImpl struct {
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
 	conn := &connectionImpl{
-		ConnectionImplBase:         driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
-		authType:                   d.authType,
-		credentialsType:            d.credentialsType,
-		credentials:                d.credentials,
-		clientID:                   d.clientID,
-		clientSecret:               d.clientSecret,
-		refreshToken:               d.refreshToken,
-		accessToken:                d.accessToken,
-		accessTokenEndpoint:        d.accessTokenEndpoint,
-		accessTokenServerName:      d.accessTokenServerName,
-		impersonateTargetPrincipal: d.impersonateTargetPrincipal,
-		impersonateDelegates:       d.impersonateDelegates,
-		impersonateScopes:          d.impersonateScopes,
-		impersonateLifetime:        d.impersonateLifetime,
-		catalog:                    d.projectID,
-		dbSchema:                   d.datasetID,
-		location:                   d.location,
-		endpoint:                   d.endpoint,
-		storageEndpoint:            d.storageEndpoint,
-		resultRecordBufferSize:     defaultQueryResultBufferSize,
-		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
-		quotaProject:               d.quotaProject,
-		bulkIngestMethod:           d.bulkIngestMethod,
-		bulkIngestCompression:      d.bulkIngestCompression,
+		ConnectionImplBase:    driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
+		authType:              d.authType,
+		credentialsType:       d.credentialsType,
+		credentials:           d.credentials,
+		clientID:              d.clientID,
+		clientSecret:          d.clientSecret,
+		refreshToken:          d.refreshToken,
+		accessToken:           d.accessToken,
+		accessTokenEndpoint:   d.accessTokenEndpoint,
+		accessTokenServerName: d.accessTokenServerName,
+
+		externalAccountAudience:         d.externalAccountAudience,
+		externalAccountImpersonationURL: d.externalAccountImpersonationURL,
+		externalAccountRequestURL:       d.externalAccountRequestURL,
+		externalAccountRequestData:      d.externalAccountRequestData,
+		impersonateTargetPrincipal:      d.impersonateTargetPrincipal,
+		impersonateDelegates:            d.impersonateDelegates,
+		impersonateScopes:               d.impersonateScopes,
+		impersonateLifetime:             d.impersonateLifetime,
+		catalog:                         d.projectID,
+		dbSchema:                        d.datasetID,
+		location:                        d.location,
+		endpoint:                        d.endpoint,
+		storageEndpoint:                 d.storageEndpoint,
+		resultRecordBufferSize:          defaultQueryResultBufferSize,
+		prefetchConcurrency:             defaultQueryPrefetchConcurrency,
+		quotaProject:                    d.quotaProject,
+		bulkIngestMethod:                d.bulkIngestMethod,
+		bulkIngestCompression:           d.bulkIngestCompression,
 	}
 
 	err := conn.newClient(ctx)
@@ -130,6 +141,14 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.accessTokenEndpoint, nil
 	case OptionStringAuthAccessTokenServerName:
 		return d.accessTokenServerName, nil
+	case OptionStringAuthExternalAccountAudience:
+		return d.externalAccountAudience, nil
+	case OptionStringAuthExternalAccountImpersonationURL:
+		return d.externalAccountImpersonationURL, nil
+	case OptionStringAuthExternalAccountRequestURL:
+		return d.externalAccountRequestURL, nil
+	case OptionStringAuthExternalAccountRequestData:
+		return d.externalAccountRequestData, nil
 	case OptionAuthQuotaProject:
 		return d.quotaProject, nil
 	case OptionLocation:
@@ -217,6 +236,7 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			OptionValueAuthTypeUserAuthentication,
 			OptionValueAuthTypeAppDefaultCredentials,
 			OptionValueAuthTypeAnonymous,
+			OptionValueAuthTypeExternalAccount,
 			OptionValueAuthTypeTemporaryAccessToken:
 			d.authType = value
 		default:
@@ -257,6 +277,14 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.accessTokenEndpoint = value
 	case OptionStringAuthAccessTokenServerName:
 		d.accessTokenServerName = value
+	case OptionStringAuthExternalAccountAudience:
+		d.externalAccountAudience = value
+	case OptionStringAuthExternalAccountImpersonationURL:
+		d.externalAccountImpersonationURL = value
+	case OptionStringAuthExternalAccountRequestURL:
+		d.externalAccountRequestURL = value
+	case OptionStringAuthExternalAccountRequestData:
+		d.externalAccountRequestData = value
 	case OptionAuthQuotaProject:
 		d.quotaProject = value
 	case OptionImpersonateTargetPrincipal:

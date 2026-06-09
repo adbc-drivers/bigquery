@@ -88,6 +88,15 @@ const (
 	OptionValueAuthTypeTemporaryAccessToken = "adbc.bigquery.sql.auth_type.temporary_access_token"
 	OptionStringAuthAccessToken             = "adbc.bigquery.sql.auth.access_token"
 
+	// External-account (Workload Identity Federation): the subject token is
+	// obtained from an external OAuth2 IdP via the client-credentials grant and
+	// exchanged at Google STS.
+	OptionValueAuthTypeExternalAccount              = "adbc.bigquery.sql.auth_type.external_account"
+	OptionStringAuthExternalAccountAudience         = "adbc.bigquery.sql.auth.external_account.audience"
+	OptionStringAuthExternalAccountImpersonationURL = "adbc.bigquery.sql.auth.external_account.impersonation_url"
+	OptionStringAuthExternalAccountRequestURL       = "adbc.bigquery.sql.auth.external_account.request_url"
+	OptionStringAuthExternalAccountRequestData      = "adbc.bigquery.sql.auth.external_account.request_data"
+
 	// OptionQueryParameterMode specifies if the query uses positional syntax ("?")
 	// or the named syntax ("@p"). It is illegal to mix positional and named syntax.
 	// Default is OptionValueQueryParameterModePositional.
@@ -213,6 +222,10 @@ const (
 
 	AccessTokenEndpoint   = "https://accounts.google.com/o/oauth2/token"
 	AccessTokenServerName = "google.com"
+
+	// Google STS endpoint and default subject-token type for external-account.
+	DefaultSTSTokenURL      = "https://sts.googleapis.com/v1/token"
+	DefaultSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt"
 
 	// OptionImpersonateTargetPrincipal instructs the driver to impersonate the
 	// given service account email.
