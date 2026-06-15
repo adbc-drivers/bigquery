@@ -120,7 +120,7 @@ func getSqlTypeFromArrowField(f arrow.Field) string {
 	case arrow.BOOL:
 		return "BOOLEAN"
 	case arrow.UINT8, arrow.INT8, arrow.UINT16, arrow.INT16, arrow.UINT32, arrow.INT32, arrow.UINT64, arrow.INT64:
-		return "INTEGER"
+		return "INT64"
 	case arrow.FLOAT32, arrow.FLOAT64:
 		return "FLOAT64"
 	case arrow.STRING:
