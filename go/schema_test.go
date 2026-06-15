@@ -39,7 +39,7 @@ func (s *SchemaSuite) TestInt64() {
 	s.Equal("ints", field.Name)
 	s.Equal(arrow.INT64, field.Type.ID())
 	s.True(field.Nullable)
-	s.Equal("INTEGER", field.Metadata.ToMap()["BIGQUERY:type"])
+	s.Equal("INT64", field.Metadata.ToMap()["BIGQUERY:type"])
 
 	field, err = buildField(&bigquery.FieldSchema{
 		Name:     "ints",
@@ -50,7 +50,7 @@ func (s *SchemaSuite) TestInt64() {
 	s.Equal("ints", field.Name)
 	s.Equal(arrow.INT64, field.Type.ID())
 	s.False(field.Nullable)
-	s.Equal("INTEGER", field.Metadata.ToMap()["BIGQUERY:type"])
+	s.Equal("INT64", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestListInt64() {
@@ -64,7 +64,7 @@ func (s *SchemaSuite) TestListInt64() {
 	s.Equal("ints", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.True(field.Nullable)
-	s.Equal("ARRAY<INTEGER>", field.Metadata.ToMap()["BIGQUERY:type"])
+	s.Equal("ARRAY<INT64>", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestListGeography() {
@@ -162,7 +162,7 @@ func (s *SchemaSuite) TestStructList() {
 	s.Equal("record", field.Name)
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.True(field.Nullable)
-	s.Equal("ARRAY<STRUCT<`ints` INTEGER>>", field.Metadata.ToMap()["BIGQUERY:type"])
+	s.Equal("ARRAY<STRUCT<`ints` INT64>>", field.Metadata.ToMap()["BIGQUERY:type"])
 }
 
 func (s *SchemaSuite) TestNumeric() {
