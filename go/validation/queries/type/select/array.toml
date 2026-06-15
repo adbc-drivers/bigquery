@@ -16,10 +16,10 @@ ignore-lints = ["must-test-null-values"]
 
 [tags]
 field-type-name = [
-    "ARRAY<BOOL>",
-    "ARRAY<BOOL>",
-    "ARRAY<INT64>",
-    "ARRAY<INT64>",
+    "ARRAY<BOOLEAN>",
+    "ARRAY<BOOLEAN>",
+    "ARRAY<INTEGER>",
+    "ARRAY<INTEGER>",
     "ARRAY<STRING>",
     "ARRAY<STRING>",
 ]

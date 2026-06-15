@@ -1011,19 +1011,10 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		field.Type = arrow.BinaryTypes.Binary
 	case bigquery.IntegerFieldType:
 		field.Type = arrow.PrimitiveTypes.Int64
-		// XXX: inconsistency between documentation and
-		// API. Documentation calls it "INT64" but the API returns
-		// just "INTEGER", so correct it here
-		richSqlType = "INT64"
 	case bigquery.FloatFieldType:
 		field.Type = arrow.PrimitiveTypes.Float64
-		// XXX: inconsistency between documentation and
-		// API. Documentation calls it "FLOAT64" but the API returns
-		// just "FLOAT", so correct it here
-		richSqlType = "FLOAT64"
 	case bigquery.BooleanFieldType:
 		field.Type = arrow.FixedWidthTypes.Boolean
-		richSqlType = "BOOL"
 	case bigquery.TimestampFieldType:
 		field.Type = arrow.FixedWidthTypes.Timestamp_us
 	case bigquery.RecordFieldType:

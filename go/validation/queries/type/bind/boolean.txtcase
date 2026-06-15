@@ -14,4 +14,5 @@
 
 // part: metadata
 [tags]
+field-type-name = "BOOLEAN"
 sql-type-name = "BOOL"

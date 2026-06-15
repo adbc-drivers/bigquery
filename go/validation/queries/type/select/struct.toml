@@ -13,5 +13,5 @@
 # limitations under the License.
 
 [tags]
-field-type-name = "STRUCT<`a` BOOL, `b` INT64, `c` STRING, `d` ARRAY<INT64>>"
+field-type-name = "STRUCT<`a` BOOLEAN, `b` INTEGER, `c` STRING, `d` ARRAY<INTEGER>>"
 sql-type-name = "STRUCT"
