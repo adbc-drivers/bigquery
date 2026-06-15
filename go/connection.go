@@ -288,6 +288,7 @@ func (c *connectionImpl) GetCurrentDbSchema(ctx context.Context) (string, error)
 
 // SetCurrentCatalog implements driverbase.CurrentNamespacer.
 func (c *connectionImpl) SetCurrentCatalog(ctx context.Context, value string) error {
+	// TODO: is this really possible? we may have to recreate client
 	c.catalog = value
 	return nil
 }
@@ -299,6 +300,10 @@ func (c *connectionImpl) SetCurrentDbSchema(ctx context.Context, value string) e
 		return err
 	}
 	c.dbSchema = sanitized
+	// Check that the dataset exists
+	if _, err := c.client.DatasetInProject(c.catalog, c.dbSchema).Metadata(ctx); err != nil {
+		return errToAdbcErr(adbc.StatusInvalidArgument, err, "set current db schema to %s", quoteIdentifier(value))
+	}
 	return nil
 }
 
@@ -893,7 +898,7 @@ func (c *connectionImpl) getTableSchemaWithFilter(ctx context.Context, catalog *
 
 	md, err := c.client.DatasetInProject(*catalog, *dbSchema).Table(tableName).Metadata(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errToAdbcErr(adbc.StatusUnknown, err, "get metadata for table %s.%s.%s", quoteIdentifier(*catalog), quoteIdentifier(*dbSchema), quoteIdentifier(tableName))
 	}
 
 	metadata := make(map[string]string)
@@ -1006,10 +1011,19 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		field.Type = arrow.BinaryTypes.Binary
 	case bigquery.IntegerFieldType:
 		field.Type = arrow.PrimitiveTypes.Int64
+		// XXX: inconsistency between documentation and
+		// API. Documentation calls it "INT64" but the API returns
+		// just "INTEGER", so correct it here
+		richSqlType = "INT64"
 	case bigquery.FloatFieldType:
 		field.Type = arrow.PrimitiveTypes.Float64
+		// XXX: inconsistency between documentation and
+		// API. Documentation calls it "FLOAT64" but the API returns
+		// just "FLOAT", so correct it here
+		richSqlType = "FLOAT64"
 	case bigquery.BooleanFieldType:
 		field.Type = arrow.FixedWidthTypes.Boolean
+		richSqlType = "BOOL"
 	case bigquery.TimestampFieldType:
 		field.Type = arrow.FixedWidthTypes.Timestamp_us
 	case bigquery.RecordFieldType:
@@ -1057,10 +1071,13 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 		switch schema.RangeElementType.Type {
 		case bigquery.DateFieldType:
 			childType = arrow.FixedWidthTypes.Date32
+			richSqlType = "RANGE<DATE>"
 		case bigquery.DateTimeFieldType:
 			childType = &arrow.TimestampType{Unit: arrow.Microsecond}
+			richSqlType = "RANGE<DATETIME>"
 		case bigquery.TimestampFieldType:
 			childType = arrow.FixedWidthTypes.Timestamp_us
+			richSqlType = "RANGE<TIMESTAMP>"
 		default:
 			return arrow.Field{}, adbc.Error{
 				Code: adbc.StatusNotImplemented,

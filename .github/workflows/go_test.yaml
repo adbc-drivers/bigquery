@@ -95,7 +95,7 @@ jobs:
           # https://github.com/actions/runner-images/issues/2840
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -103,7 +103,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -119,7 +119,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0  # v0.9.5
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -219,7 +219,7 @@ jobs:
           # https://github.com/actions/runner-images/issues/2840
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -227,7 +227,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -243,7 +243,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0  # v0.9.5
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -343,7 +343,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: docs
+          name: docs-${{ matrix.vendor_version }}
           path: "go/generated/bigquery.md"
           retention-days: 7
 
@@ -364,7 +364,7 @@ jobs:
       packages: read
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -372,7 +372,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -388,7 +388,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0  # v0.9.5
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -421,7 +421,6 @@ jobs:
           fi
           set +a
           pixi run adbc-make check CI=true VERBOSE=true DRIVER=bigquery IMPL_LANG=go
-
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: drivers-${{ matrix.platform }}-${{ matrix.arch }}
@@ -438,7 +437,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -446,7 +445,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -461,7 +460,7 @@ jobs:
           check-latest: true
           go-version: "stable"
 
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0  # v0.9.5
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -489,7 +488,7 @@ jobs:
             --name bigquery \
             --root $(pwd) \
             --manifest-template $(pwd)/manifest.toml \
-            ${{ (inputs.release && '--release') || '' }}\
+             \
             -o ~/packages \
             ~/drivers/drivers-*-*/
 
@@ -517,7 +516,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: docs-${{ matrix.vendor_version }}
+          name: docs
           path: "go/generated/bigquery.md"
           retention-days: 2
 
@@ -539,7 +538,7 @@ jobs:
         with:
           cache: true
           go-version: 'stable'
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0  # v0.9.5
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
         with:
           pixi-version: v0.63.2
           run-install: false
@@ -560,14 +559,14 @@ jobs:
           echo "Installing ${driver_pkg}"
           ./dbc install --no-verify "${driver_pkg}"
           echo "Installed ${driver_pkg}"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 1
           persist-credentials: false
           submodules: 'recursive'
       - name: "checkout remote"
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -604,7 +603,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -612,7 +611,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -621,7 +620,7 @@ jobs:
           persist-credentials: false
           submodules: 'recursive'
 
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0  # v0.9.5
+      - uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11  # v0.9.6
         with:
           pixi-version: v0.63.2
           run-install: false

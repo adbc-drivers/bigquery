@@ -13,4 +13,5 @@
 # limitations under the License.
 
 [tags]
+field-type-name = "STRUCT<`a` BOOL, `b` INT64, `c` STRING, `d` ARRAY<INT64>>"
 sql-type-name = "STRUCT"

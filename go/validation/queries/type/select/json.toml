@@ -12,5 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ignore-lints = ["must-test-null-values"]
+
 [tags]
+field-type-name = ["JSON", "ARRAY<JSON>", "STRUCT<`a` JSON, `b` ARRAY<JSON>>"]
 sql-type-name = "JSON"

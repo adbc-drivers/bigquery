@@ -348,7 +348,7 @@ func (st *statement) SetOptionInt(ctx context.Context, key string, value int64) 
 		return nil
 	default:
 		return adbc.Error{
-			Code: adbc.StatusInvalidArgument,
+			Code: adbc.StatusNotImplemented,
 			Msg:  fmt.Sprintf("[bq] unknown statement string type option `%s`", key),
 		}
 	}
