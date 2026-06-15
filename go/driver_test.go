@@ -366,8 +366,8 @@ func (q *BigQueryQuirks) SampleTableSchemaMetadata(tblName string, dt arrow.Data
 		metadata["Type"] = "STRING"
 		metadata["BIGQUERY:type"] = "STRING"
 	case arrow.INT64:
-		metadata["Type"] = "INTEGER"
-		metadata["BIGQUERY:type"] = "INTEGER"
+		metadata["Type"] = "INT64"
+		metadata["BIGQUERY:type"] = "INT64"
 	}
 
 	return arrow.MetadataFrom(metadata)
