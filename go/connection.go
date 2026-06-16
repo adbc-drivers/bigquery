@@ -845,6 +845,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	storageAuthOptions := authOptions
 	if c.storageEndpoint != "" {
 		storageAuthOptions = append(storageAuthOptions, option.WithEndpoint(c.storageEndpoint))
+		// assume insecure since the purpose of this is to use the emulator, which does not use TLS
 		storageAuthOptions = append(storageAuthOptions, option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
 	}
 	err = client.EnableStorageReadClient(ctx, storageAuthOptions...)
