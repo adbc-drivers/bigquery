@@ -61,10 +61,10 @@ func checkContext(ctx context.Context, maybeErr error) error {
 	return ctx.Err()
 }
 
-func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, int64, error) {
+func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool) (bigquery.ArrowIterator, *bigquery.JobStatus, int64, error) {
 	job, err := query.Run(ctx)
 	if err != nil {
-		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
+		return nil, nil, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
 	}
 
 	// XXX: Google SDK badness.  We can't use Wait here because queries that
@@ -79,13 +79,13 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// their internal APIs mix both errors into a single error path.)
 	js, err := safeWaitForJob(ctx, logger, job)
 	if err != nil {
-		return nil, -1, err
+		return nil, nil, -1, err
 	}
 
 	if err := js.Err(); err != nil {
-		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
+		return nil, js, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
 	} else if !js.Done() {
-		return nil, -1, adbc.Error{
+		return nil, js, -1, adbc.Error{
 			Code: adbc.StatusInternal,
 			Msg:  "[bq] Query job did not complete",
 		}
@@ -94,16 +94,18 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	if executeUpdate {
 		stats, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
 		if ok {
-			return nil, stats.NumDMLAffectedRows, nil
+			return nil, js, stats.NumDMLAffectedRows, nil
 		}
-		return nil, -1, nil
+		return nil, js, -1, nil
+	} else if query.DryRun {
+		return nil, js, js.Statistics.TotalBytesProcessed, nil
 	}
 
 	// XXX: the Google SDK badness also applies here; it makes a similar
 	// mistake with the retry, so we wait for the job above.
 	iter, err := job.Read(ctx)
 	if err != nil {
-		return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "read query results")
+		return nil, js, -1, errToAdbcErr(adbc.StatusInternal, err, "read query results")
 	}
 
 	var arrowIterator bigquery.ArrowIterator
@@ -117,19 +119,19 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		// real error, so this is the best we can do.
 		// https://cloud.google.com/bigquery/docs/reference/storage#create_a_session
 		if !iter.IsAccelerated() {
-			return nil, -1, adbc.Error{
+			return nil, js, -1, adbc.Error{
 				Code: adbc.StatusUnauthorized,
 				Msg:  "[bq] Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282",
 			}
 		}
 		if arrowIterator, err = iter.ArrowIterator(); err != nil {
-			return nil, -1, errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results")
+			return nil, js, -1, errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results")
 		}
 	} else {
 		arrowIterator = emptyArrowIterator{iter.Schema}
 	}
 	totalRows := int64(iter.TotalRows)
-	return arrowIterator, totalRows, nil
+	return arrowIterator, js, totalRows, nil
 }
 
 func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
@@ -140,7 +142,7 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memo
 	for i, field := range arrowIterator.Schema() {
 		fields[i], err = buildField(field, 0)
 		if err != nil {
-			return nil, nil, errToAdbcErr(adbc.StatusInternal, err, "build schema")
+			return nil, nil, err
 		}
 	}
 
@@ -167,11 +169,41 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 	return parameters, nil
 }
 
-func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int) (bigqueryRdr *reader, totalRows int64, err error) {
-	arrowIterator, totalRows, err := runQuery(ctx, logger, query, false)
+func makeDryRunReader(js *bigquery.JobStatus) (array.RecordReader, error) {
+	statistics, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
+	var schema *arrow.Schema
+	if !ok {
+		// No schema, return an empty schema
+		schema = arrow.NewSchema([]arrow.Field{}, nil)
+	} else {
+		bqSchema := statistics.Schema
+		fields := make([]arrow.Field, len(bqSchema))
+		for i, field := range bqSchema {
+			var err error
+			fields[i], err = buildField(field, 0)
+			if err != nil {
+				return nil, err
+			}
+		}
+		schema = arrow.NewSchema(fields, nil)
+	}
+	rdr, _ := array.NewRecordReader(schema, []arrow.RecordBatch{})
+	return rdr, nil
+}
+
+func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
+	arrowIterator, jobStatus, totalRows, err := runQuery(ctx, logger, query, false)
 	if err != nil {
 		return nil, -1, err
+	} else if query.DryRun || arrowIterator == nil {
+		// Dry run queries don't have an arrow iterator, so return an empty reader
+		rdr, err := makeDryRunReader(jobStatus)
+		if err != nil {
+			return nil, -1, err
+		}
+		return rdr, totalRows, nil
 	}
+
 	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
 	if err != nil {
 		return nil, -1, err
@@ -224,9 +256,18 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			query.Parameters = parameters
 		}
 
-		arrowIterator, rows, err := runQuery(ctx, logger, query, false)
+		arrowIterator, jobStatus, rows, err := runQuery(ctx, logger, query, false)
 		if err != nil {
 			return -1, err
+		} else if arrowIterator == nil {
+			// Dry run
+			rdr, err := makeDryRunReader(jobStatus)
+			if err != nil {
+				return -1, err
+			}
+			rdrSchema(rdr.Schema())
+			rdr.Release()
+			continue
 		}
 		totalRows = rows
 		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
@@ -249,7 +290,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 
 // kicks off a goroutine for each endpoint and returns a reader which
 // gathers all of the records as they come in.
-func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int) (bigqueryRdr *reader, totalRows int64, err error) {
+func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
 	if boundParameters == nil {
 		return runPlainQuery(ctx, logger, query, alloc, resultRecordBufferSize)
 	}
@@ -274,7 +315,7 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Q
 		}
 	}()
 
-	bigqueryRdr = &reader{
+	rdr := &reader{
 		refCount: 1,
 		chs:      chs,
 		err:      nil,
@@ -288,16 +329,16 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Q
 		// and since we're doing this sequentially
 		// we don't need to call rec.Retain() here and call call rec.Release() in queryRecordWithSchemaCallback
 		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
-			bigqueryRdr.schema = schema
+			rdr.schema = schema
 		})
 		if err != nil {
 			return nil, -1, err
 		}
 		totalRows += batchRows
 	}
-	bigqueryRdr.err = group.Wait()
+	rdr.err = group.Wait()
 	defer close(ch)
-	return bigqueryRdr, totalRows, nil
+	return rdr, totalRows, nil
 }
 
 func (r *reader) Retain() {

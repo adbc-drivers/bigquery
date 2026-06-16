@@ -26,3 +26,17 @@ class TestStatement(statement_tests.TestStatement):
     @utils.retry_rate_limit
     def test_rows_affected(self, driver, conn) -> None:
         super().test_rows_affected(driver, conn)
+
+
+def test_dry_run(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.adbc_statement.set_options(**{"adbc.bigquery.sql.query.dry_run": True})
+        cursor.execute("SELECT 1 AS a, 'foobar' as b")
+        assert len(cursor.description) == 2
+        assert cursor.description[0][0] == "a"
+        assert cursor.description[1][0] == "b"
+
+        cursor.execute("SELECT 1 AS a, 'foobar' as b", parameters=[(1,), (2,)])
+        assert len(cursor.description) == 2
+        assert cursor.description[0][0] == "a"
+        assert cursor.description[1][0] == "b"

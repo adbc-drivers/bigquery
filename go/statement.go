@@ -396,7 +396,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 	}
 
 	if st.params == nil {
-		_, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
 		if err != nil {
 			return -1, err
 		}
@@ -418,7 +418,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
 				if err != nil {
 					return -1, err
 				}
@@ -450,10 +450,6 @@ func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
 	}
 
 	bqSchema := queryStats.Schema
-	if len(bqSchema) == 0 {
-		return arrow.NewSchema([]arrow.Field{}, nil), nil
-	}
-
 	fields := make([]arrow.Field, len(bqSchema))
 	for i, fieldSchema := range bqSchema {
 		f, err := buildField(fieldSchema, 0)
