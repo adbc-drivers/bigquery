@@ -91,14 +91,17 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		}
 	}
 
+	isSelectOrCall := false
+	stats, statsOk := js.Statistics.Details.(*bigquery.QueryStatistics)
 	if executeUpdate {
-		stats, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
-		if ok {
+		if statsOk {
 			return nil, js, stats.NumDMLAffectedRows, nil
 		}
 		return nil, js, -1, nil
 	} else if query.DryRun {
 		return nil, js, js.Statistics.TotalBytesProcessed, nil
+	} else if statsOk {
+		isSelectOrCall = stats.StatementType == "SELECT" || stats.StatementType == "CALL"
 	}
 
 	// XXX: the Google SDK badness also applies here; it makes a similar
@@ -109,9 +112,14 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	}
 
 	var arrowIterator bigquery.ArrowIterator
-	// If there is no schema in the row iterator, then arrow
-	// iterator should be empty (#2173)
-	if iter.TotalRows > 0 {
+	// We need to detect if this actually returned data. Originally we
+	// checked for the presence of a schema, but it turns out statements
+	// like CREATE VIEW return a schema! Then we checked if there are
+	// rows, but it turns out that bigquery-emulator returns
+	// iter.TotalRows == 0 (this is valid as per the API: the field is not
+	// _necessarily_ populated until after a call to Next). Finally we use
+	// job statistics instead
+	if isSelectOrCall {
 		// !IsAccelerated() -> failed to get Arrow stream -> we are
 		// probably lacking permissions.  readSessionUser may sound
 		// unrelated but creating a "read session" is the first step
