@@ -13,4 +13,5 @@
 # limitations under the License.
 
 [tags]
+field-type-name = "INTEGER"
 sql-type-name = "INT64"

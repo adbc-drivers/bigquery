@@ -26,8 +26,8 @@ class BigQueryQuirks(model.DriverQuirks):
     vendor_name = "BigQuery"
     # BigQuery doesn't really have a public facing version, so use the client
     # version instead
-    vendor_version = "cloud.google.com/go/bigquery v1.76.0"
-    short_version = "1.76.0"
+    vendor_version = "cloud.google.com/go/bigquery v1.77.0"
+    short_version = "1.77.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         # TODO(lidavidm): this is a bit weird; it does work, but we'd need two
@@ -38,6 +38,7 @@ class BigQueryQuirks(model.DriverQuirks):
         get_objects=True,
         get_objects_constraints_foreign=True,
         get_objects_constraints_primary=True,
+        metadata_type_name=True,
         statement_bind=True,
         statement_bulk_ingest=True,
         statement_bulk_ingest_schema=True,
@@ -76,6 +77,14 @@ class BigQueryQuirks(model.DriverQuirks):
     @property
     def queries_paths(self) -> tuple[Path]:
         return (Path(__file__).parent.parent / "queries",)
+
+    def query_override(self, context: str, default: str) -> str:
+        if context in {
+            "TestConnection.test_get_table_schema_schema",
+            "TestStatement.sample_table",
+        }:
+            return default.replace("VARCHAR", "STRING")
+        return super().query_override(context, default)
 
     @functools.cached_property
     def query_set(self) -> model.QuerySet:

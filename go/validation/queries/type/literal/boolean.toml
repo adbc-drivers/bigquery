@@ -13,4 +13,5 @@
 # limitations under the License.
 
 [tags]
+field-type-name = "BOOLEAN"
 sql-type-name = "BOOL"

@@ -19,5 +19,6 @@ VALUES
   (7, JSON 'true', [JSON 'true'], (JSON 'true', [JSON 'true'])),
   (8, JSON 'false', [JSON 'false'], (JSON 'false', [JSON 'false'])),
   (9, JSON '"string value"', [JSON '"string value"'], (JSON '"string value"', [JSON '"string value"'])),
-  (10, JSON '12345', [JSON '12345'], (JSON '12345', [JSON '12345']))
+  (10, JSON '12345', [JSON '12345'], (JSON '12345', [JSON '12345'])),
+  (11, NULL, NULL, NULL)
 ;

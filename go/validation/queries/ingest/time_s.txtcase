@@ -42,3 +42,4 @@ sql-type-name = "TIME"
 {"idx": 2, "value": 43200000000}
 {"idx": 3, "value": 49531000000}
 {"idx": 4, "value": 86399000000}
+{"idx": 5, "value": null}

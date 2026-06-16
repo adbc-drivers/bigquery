@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ignore-lints = ["must-test-null-values"]
+
 [tags]
+field-type-name = [
+    "ARRAY<BOOLEAN>",
+    "ARRAY<BOOLEAN>",
+    "ARRAY<INTEGER>",
+    "ARRAY<INTEGER>",
+    "ARRAY<STRING>",
+    "ARRAY<STRING>",
+]
 sql-type-name = "ARRAY"
 caveats = ["BigQuery treats NULL arrays as empty arrays in result sets, even though you can differentiate between them during query execution.  See https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#array_nulls for more details."]
