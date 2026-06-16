@@ -40,3 +40,7 @@ def test_dry_run(driver, conn) -> None:
         assert len(cursor.description) == 2
         assert cursor.description[0][0] == "a"
         assert cursor.description[1][0] == "b"
+
+        cursor.execute("SELECT 1 AS a, 'foobar' as b", parameters=[(1,), (2,)])
+        schema = cursor.fetchallarrow().schema
+        assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SELECT"
