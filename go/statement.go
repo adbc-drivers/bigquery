@@ -459,7 +459,11 @@ func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
 		fields[i] = f
 	}
 
-	return arrow.NewSchema(fields, nil), nil
+	metadata, err := metadataFromJobStatistics(status.Statistics)
+	if err != nil {
+		return nil, err
+	}
+	return arrow.NewSchema(fields, metadata), nil
 }
 
 // Prepare turns this statement into a prepared statement to be executed

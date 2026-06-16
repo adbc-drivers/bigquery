@@ -134,7 +134,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	return arrowIterator, js, totalRows, nil
 }
 
-func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
+func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatistics *bigquery.JobStatistics, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
 	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
 
@@ -149,7 +149,12 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, alloc memo
 	if err != nil {
 		return nil, nil, err
 	}
-	return rdr, arrow.NewSchema(fields, nil), nil
+
+	metadata, err := metadataFromJobStatistics(jobStatistics)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rdr, arrow.NewSchema(fields, metadata), nil
 }
 
 func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) ([]bigquery.QueryParameter, error) {
@@ -170,11 +175,16 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 }
 
 func makeDryRunReader(js *bigquery.JobStatus) (array.RecordReader, error) {
+	metadata, err := metadataFromJobStatistics(js.Statistics)
+	if err != nil {
+		return nil, err
+	}
+
 	statistics, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
 	var schema *arrow.Schema
 	if !ok {
 		// No schema, return an empty schema
-		schema = arrow.NewSchema([]arrow.Field{}, nil)
+		schema = arrow.NewSchema([]arrow.Field{}, metadata)
 	} else {
 		bqSchema := statistics.Schema
 		fields := make([]arrow.Field, len(bqSchema))
@@ -185,7 +195,7 @@ func makeDryRunReader(js *bigquery.JobStatus) (array.RecordReader, error) {
 				return nil, err
 			}
 		}
-		schema = arrow.NewSchema(fields, nil)
+		schema = arrow.NewSchema(fields, metadata)
 	}
 	rdr, _ := array.NewRecordReader(schema, []arrow.RecordBatch{})
 	return rdr, nil
@@ -204,7 +214,7 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Que
 		return rdr, totalRows, nil
 	}
 
-	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, alloc)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -270,7 +280,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			continue
 		}
 		totalRows = rows
-		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, alloc)
+		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, alloc)
 		if err != nil {
 			return -1, err
 		}
