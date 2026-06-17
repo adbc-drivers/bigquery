@@ -1680,6 +1680,16 @@ namespace AdbcDrivers.BigQuery
                         }
                         catch (Exception ex)
                         {
+                            // Best-effort: abort the newly-created session so it doesn't leak server-side.
+                            try
+                            {
+                                ExecuteSessionCommand($"CALL BQ.ABORT_SESSION('{_sessionId}')");
+                            }
+                            catch
+                            {
+                                // Ignore cleanup errors; original exception is more important.
+                            }
+
                             _sessionId = null;
                             throw new AdbcException("Failed to begin transaction", AdbcStatusCode.InternalError, ex);
                         }

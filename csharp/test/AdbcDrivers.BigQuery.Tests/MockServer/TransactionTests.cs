@@ -16,6 +16,7 @@
 
 #if NET8_0_OR_GREATER
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Apache.Arrow.Adbc;
@@ -27,80 +28,54 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
     [Trait("Category", "MockServer")]
     public class TransactionTests
     {
-        private static (BigQueryMockServer server, AdbcConnection connection) CreateMockConnection()
-        {
-            var mockServer = new BigQueryMockServer();
-            string projectId = "mock-project";
-            var parameters = new Dictionary<string, string>
-            {
-                { BigQueryParameters.ProjectId, projectId },
-                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
-                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
-                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
-            };
-
-            var driver = new BigQueryDriver();
-            AdbcDatabase database = driver.Open(parameters);
-            AdbcConnection connection = database.Connect(new Dictionary<string, string>());
-            return (mockServer, connection);
-        }
-
         [Fact]
         public void AutoCommit_IsEnabledByDefault()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                Assert.True(connection.AutoCommit);
+                Assert.True(resource.Connection.AutoCommit);
             }
         }
 
         [Fact]
         public void AutoCommit_CanBeDisabled()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                connection.AutoCommit = false;
+                resource.Connection.AutoCommit = false;
 
-                Assert.False(connection.AutoCommit);
+                Assert.False(resource.Connection.AutoCommit);
 
                 // Should have executed: SELECT 1 (create session) and BEGIN TRANSACTION
-                Assert.Contains(server.ExecutedQueries, q => q == "SELECT 1");
-                Assert.Contains(server.ExecutedQueries, q => q == "BEGIN TRANSACTION");
+                Assert.Contains(resource.Server.ExecutedQueries, q => q == "SELECT 1");
+                Assert.Contains(resource.Server.ExecutedQueries, q => q == "BEGIN TRANSACTION");
             }
         }
 
         [Fact]
         public void AutoCommit_CanBeReEnabled()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                connection.AutoCommit = false;
-                connection.AutoCommit = true;
+                resource.Connection.AutoCommit = false;
+                resource.Connection.AutoCommit = true;
 
-                Assert.True(connection.AutoCommit);
+                Assert.True(resource.Connection.AutoCommit);
 
                 // Should have executed COMMIT TRANSACTION and CALL BQ.ABORT_SESSION
-                Assert.Contains(server.ExecutedQueries, q => q == "COMMIT TRANSACTION");
-                Assert.Contains(server.ExecutedQueries, q => q.StartsWith("CALL BQ.ABORT_SESSION"));
+                Assert.Contains(resource.Server.ExecutedQueries, q => q == "COMMIT TRANSACTION");
+                Assert.Contains(resource.Server.ExecutedQueries, q => q.StartsWith("CALL BQ.ABORT_SESSION"));
             }
         }
 
         [Fact]
         public void AutoCommit_DisableWhenAlreadyDisabled_Throws()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                connection.AutoCommit = false;
+                resource.Connection.AutoCommit = false;
 
-                var ex = Assert.Throws<AdbcException>(() => connection.AutoCommit = false);
+                var ex = Assert.Throws<AdbcException>(() => resource.Connection.AutoCommit = false);
                 Assert.Equal(AdbcStatusCode.InvalidState, ex.Status);
             }
         }
@@ -108,11 +83,9 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Fact]
         public void AutoCommit_EnableWhenAlreadyEnabled_Throws()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                var ex = Assert.Throws<AdbcException>(() => connection.AutoCommit = true);
+                var ex = Assert.Throws<AdbcException>(() => resource.Connection.AutoCommit = true);
                 Assert.Equal(AdbcStatusCode.InvalidState, ex.Status);
             }
         }
@@ -120,11 +93,9 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Fact]
         public void Commit_WhenAutocommitEnabled_Throws()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                var ex = Assert.Throws<AdbcException>(() => connection.Commit());
+                var ex = Assert.Throws<AdbcException>(() => resource.Connection.Commit());
                 Assert.Equal(AdbcStatusCode.InvalidState, ex.Status);
             }
         }
@@ -132,11 +103,9 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Fact]
         public void Rollback_WhenAutocommitEnabled_Throws()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                var ex = Assert.Throws<AdbcException>(() => connection.Rollback());
+                var ex = Assert.Throws<AdbcException>(() => resource.Connection.Rollback());
                 Assert.Equal(AdbcStatusCode.InvalidState, ex.Status);
             }
         }
@@ -144,19 +113,17 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Fact]
         public void Commit_ExecutesCommitAndBeginTransaction()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                connection.AutoCommit = false;
+                resource.Connection.AutoCommit = false;
 
                 // Clear the queries recorded during setup
-                var queriesBefore = server.ExecutedQueries.Count;
+                var queriesBefore = resource.Server.ExecutedQueries.Count;
 
-                connection.Commit();
+                resource.Connection.Commit();
 
                 // Get only the new queries after commit
-                var newQueries = server.ExecutedQueries.Skip(queriesBefore).ToList();
+                var newQueries = resource.Server.ExecutedQueries.Skip(queriesBefore).ToList();
                 Assert.Equal(2, newQueries.Count);
                 Assert.Equal("COMMIT TRANSACTION", newQueries[0]);
                 Assert.Equal("BEGIN TRANSACTION", newQueries[1]);
@@ -166,17 +133,15 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Fact]
         public void Rollback_ExecutesRollbackAndBeginTransaction()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
-            using (connection)
+            using (var resource = new BigQueryResource())
             {
-                connection.AutoCommit = false;
+                resource.Connection.AutoCommit = false;
 
-                var queriesBefore = server.ExecutedQueries.Count;
+                var queriesBefore = resource.Server.ExecutedQueries.Count;
 
-                connection.Rollback();
+                resource.Connection.Rollback();
 
-                var newQueries = server.ExecutedQueries.Skip(queriesBefore).ToList();
+                var newQueries = resource.Server.ExecutedQueries.Skip(queriesBefore).ToList();
                 Assert.Equal(2, newQueries.Count);
                 Assert.Equal("ROLLBACK TRANSACTION", newQueries[0]);
                 Assert.Equal("BEGIN TRANSACTION", newQueries[1]);
@@ -186,25 +151,57 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Fact]
         public void Dispose_WithActiveSession_AbortsSession()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
+            using (var resource = new BigQueryResource())
             {
-                connection.AutoCommit = false;
-                connection.Dispose();
+                resource.Connection.AutoCommit = false;
+                resource.Connection.Dispose();
 
-                Assert.Contains(server.ExecutedQueries, q => q.StartsWith("CALL BQ.ABORT_SESSION"));
+                Assert.Contains(resource.Server.ExecutedQueries, q => q.StartsWith("CALL BQ.ABORT_SESSION"));
             }
         }
 
         [Fact]
         public void Dispose_WithoutActiveSession_DoesNotAbortSession()
         {
-            var (server, connection) = CreateMockConnection();
-            using (server)
+            using (var resource = new BigQueryResource())
             {
-                connection.Dispose();
+                resource.Connection.Dispose();
 
-                Assert.DoesNotContain(server.ExecutedQueries, q => q.StartsWith("CALL BQ.ABORT_SESSION"));
+                Assert.DoesNotContain(resource.Server.ExecutedQueries, q => q.StartsWith("CALL BQ.ABORT_SESSION"));
+            }
+        }
+
+        class BigQueryResource : IDisposable
+        {
+            private readonly BigQueryMockServer _server;
+            private readonly AdbcDatabase _database;
+            private readonly AdbcConnection _connection;
+
+            public BigQueryResource()
+            {
+                _server = new BigQueryMockServer();
+                string projectId = "mock-project";
+                var parameters = new Dictionary<string, string>
+                {
+                    { BigQueryParameters.ProjectId, projectId },
+                    { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                    { BigQueryParameters.TestRestEndpoint, _server.RestEndpoint },
+                    { BigQueryParameters.TestStorageEndpoint, _server.GrpcEndpoint },
+                };
+
+                var driver = new BigQueryDriver();
+                _database = driver.Open(parameters);
+                _connection = _database.Connect(new Dictionary<string, string>());
+            }
+
+            public BigQueryMockServer Server => _server;
+            public AdbcConnection Connection => _connection;
+
+            public void Dispose()
+            {
+                _connection.Dispose();
+                _database.Dispose();
+                _server.Dispose();
             }
         }
     }

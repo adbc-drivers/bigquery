@@ -19,7 +19,6 @@ using System.Collections.Generic;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Adbc.Tests;
-using Apache.Arrow.Types;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -99,8 +98,11 @@ namespace AdbcDrivers.BigQuery.Tests
                 RecordBatch? batch = result.Stream!.ReadNextRecordBatchAsync().GetAwaiter().GetResult();
                 if (batch != null)
                 {
-                    var countCol = (Int64Array)batch.Column(0);
-                    return countCol.GetValue(0)!.Value;
+                    using (batch)
+                    {
+                        var countCol = (Int64Array)batch.Column(0);
+                        return countCol.GetValue(0)!.Value;
+                    }
                 }
             }
             return -1;
