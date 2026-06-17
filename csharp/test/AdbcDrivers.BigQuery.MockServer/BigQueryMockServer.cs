@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO.Compression;
 using System.Net;
 using System.Threading;
@@ -43,6 +44,8 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly CancellationTokenSource _cts = new();
         private readonly ConcurrentDictionary<string, MockJob> _jobs = new();
         private readonly ConcurrentDictionary<string, Table> _tables = new();
+        private readonly ConcurrentDictionary<string, bool> _sessions = new();
+        private readonly ConcurrentQueue<string> _executedQueries = new();
 
         /// <summary>
         /// The REST API endpoint as host:port (e.g., "127.0.0.1:12345").
@@ -55,6 +58,11 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// Set this as the <c>adbc.bigquery.test.storage_endpoint</c> parameter.
         /// </summary>
         public string GrpcEndpoint { get; }
+
+        /// <summary>
+        /// Returns the list of SQL queries that were executed against this mock server, in order.
+        /// </summary>
+        public IReadOnlyList<string> ExecutedQueries => _executedQueries.ToArray();
 
         /// <summary>
         /// The mock gRPC service for configuring Storage Read API responses.
@@ -134,9 +142,50 @@ namespace AdbcDrivers.BigQuery.MockServer
             // POST /bigquery/v2/projects/{projectId}/jobs - Create a query job
             app.MapPost("/bigquery/v2/projects/{projectId}/jobs", async (HttpContext ctx, string projectId) =>
             {
-                await new System.IO.StreamReader(ctx.Request.Body).ReadToEndAsync();
+                string body;
+                if (string.Equals(ctx.Request.Headers["Content-Encoding"].ToString(), "gzip", StringComparison.OrdinalIgnoreCase))
+                {
+                    await using var gzipStream = new GZipStream(ctx.Request.Body, CompressionMode.Decompress, leaveOpen: true);
+                    using var reader = new System.IO.StreamReader(gzipStream);
+                    body = await reader.ReadToEndAsync();
+                }
+                else
+                {
+                    body = await new System.IO.StreamReader(ctx.Request.Body).ReadToEndAsync();
+                }
+
+                Job? jobRequest = null;
+                try
+                {
+                    jobRequest = NewtonsoftJsonSerializer.Instance.Deserialize<Job>(body);
+                }
+                catch
+                {
+                    // If deserialization fails, proceed without parsed request
+                }
 
                 string jobId = $"mock-job-{Guid.NewGuid():N}";
+                string? queryText = jobRequest?.Configuration?.Query?.Query;
+                bool createSession = jobRequest?.Configuration?.Query?.CreateSession == true;
+                string? sessionId = null;
+
+                // Check for session_id in ConnectionProperties
+                if (jobRequest?.Configuration?.Query?.ConnectionProperties != null)
+                {
+                    foreach (var prop in jobRequest.Configuration.Query.ConnectionProperties)
+                    {
+                        if (prop.Key == "session_id")
+                        {
+                            sessionId = prop.Value;
+                            break;
+                        }
+                    }
+                }
+
+                if (queryText != null)
+                {
+                    _executedQueries.Enqueue(queryText);
+                }
 
                 var mockJob = new MockJob
                 {
@@ -144,6 +193,19 @@ namespace AdbcDrivers.BigQuery.MockServer
                     ProjectId = projectId,
                     Status = "DONE",
                 };
+
+                // If CreateSession is requested, generate a new session ID
+                if (createSession)
+                {
+                    string newSessionId = $"mock-session-{Guid.NewGuid():N}";
+                    _sessions[newSessionId] = true;
+                    mockJob.SessionId = newSessionId;
+                }
+                else if (sessionId != null)
+                {
+                    mockJob.SessionId = sessionId;
+                }
+
                 _jobs[jobId] = mockJob;
 
                 var job = CreateJobResource(mockJob);
@@ -285,6 +347,27 @@ namespace AdbcDrivers.BigQuery.MockServer
         private static Job CreateJobResource(MockJob mockJob)
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var statistics = new JobStatistics
+            {
+                CreationTime = now,
+                StartTime = now,
+                EndTime = now,
+                Query = new JobStatistics2
+                {
+                    StatementType = "SELECT",
+                    TotalBytesProcessed = 0,
+                    TotalBytesBilled = 0,
+                }
+            };
+
+            if (mockJob.SessionId != null)
+            {
+                statistics.SessionInfo = new SessionInfo
+                {
+                    SessionId = mockJob.SessionId
+                };
+            }
+
             return new Job
             {
                 Kind = "bigquery#job",
@@ -309,18 +392,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                         UseLegacySql = false,
                     },
                 },
-                Statistics = new JobStatistics
-                {
-                    CreationTime = now,
-                    StartTime = now,
-                    EndTime = now,
-                    Query = new JobStatistics2
-                    {
-                        StatementType = "SELECT",
-                        TotalBytesProcessed = 0,
-                        TotalBytesBilled = 0,
-                    }
-                }
+                Statistics = statistics
             };
         }
 
@@ -346,6 +418,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             public string JobId { get; set; } = string.Empty;
             public string ProjectId { get; set; } = string.Empty;
             public string Status { get; set; } = "DONE";
+            public string? SessionId { get; set; }
         }
     }
 }

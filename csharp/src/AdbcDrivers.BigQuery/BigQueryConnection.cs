@@ -54,6 +54,7 @@ namespace AdbcDrivers.BigQuery
         readonly Dictionary<string, string> properties;
         readonly HttpClient httpClient;
         private readonly object _clientTimeoutLock = new object();
+        private string? _sessionId;
         const string ClassName = nameof(BigQueryConnection);
         const string infoDriverName = "ADBC BigQuery Driver";
         const string infoVendorName = "BigQuery";
@@ -182,6 +183,12 @@ namespace AdbcDrivers.BigQuery
         internal string DriverName => infoDriverName;
 
         internal BigQueryClient? Client { get; private set; }
+
+        /// <summary>
+        /// The active BigQuery session ID when autocommit is disabled, or null when in autocommit mode.
+        /// Used by <see cref="BigQueryStatement"/> to attach queries to the active session/transaction.
+        /// </summary>
+        internal string? SessionId => _sessionId;
 
         internal GoogleCredential? Credential { get; private set; }
 
@@ -792,6 +799,61 @@ namespace AdbcDrivers.BigQuery
         internal static bool IsUnauthorizedException(Exception ex, out GoogleApiException? googleEx)
         {
             return BigQueryUtils.ContainsException(ex, out googleEx) && googleEx!.Error.Code == (int)System.Net.HttpStatusCode.Unauthorized;
+        }
+
+        /// <summary>
+        /// Executes a SQL command within the context of the active session (if any).
+        /// Used internally for transaction management (BEGIN/COMMIT/ROLLBACK) and session lifecycle.
+        /// </summary>
+        /// <param name="sql">The SQL statement to execute.</param>
+        /// <param name="createSession">If true, requests BigQuery to create a new session.</param>
+        /// <returns>The BigQueryJob for the executed command.</returns>
+        private BigQueryJob ExecuteSessionCommand(string sql, bool createSession = false)
+        {
+            if (Client == null) { Client = Open(); }
+
+            return this.TraceActivity(activity =>
+            {
+                activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, sql, IsSafeToTrace);
+                if (_sessionId != null)
+                {
+                    activity?.AddBigQueryTag("session_id", _sessionId);
+                }
+                if (createSession)
+                {
+                    activity?.AddBigQueryTag("create_session", true);
+                }
+
+                QueryOptions queryOptions = new QueryOptions
+                {
+                    ConfigurationModifier = query =>
+                    {
+                        if (createSession)
+                        {
+                            query.CreateSession = true;
+                        }
+                        if (_sessionId != null)
+                        {
+                            query.ConnectionProperties ??= new List<ConnectionProperty>();
+                            query.ConnectionProperties.Add(new ConnectionProperty
+                            {
+                                Key = "session_id",
+                                Value = _sessionId,
+                            });
+                        }
+                    }
+                };
+
+                Task<BigQueryJob> func()
+                {
+                    return Client.CreateQueryJobAsync(sql, System.Array.Empty<BigQueryParameter>(), queryOptions);
+                }
+
+                BigQueryJob job = ExecuteWithRetriesAsync<BigQueryJob>(func, activity).GetAwaiter().GetResult();
+                activity?.AddBigQueryTag("job_id", job.Reference.JobId);
+                job.GetQueryResultsAsync().GetAwaiter().GetResult();
+                return job;
+            }, ClassName + "." + nameof(ExecuteSessionCommand));
         }
 
         private IArrowArray[] GetCatalogs(
@@ -1538,6 +1600,174 @@ namespace AdbcDrivers.BigQuery
             return new BigQueryInfoArrowStream(StandardSchemas.TableTypesSchema, dataArrays);
         }
 
+        /// <summary>
+        /// Gets or sets the autocommit state. When set to false, creates a BigQuery session and
+        /// begins a transaction. When set to true, commits any pending transaction and closes the session.
+        /// </summary>
+        public override bool AutoCommit
+        {
+            get => _sessionId == null;
+            set
+            {
+                this.TraceActivity(activity =>
+                {
+                    activity?.AddBigQueryTag("autocommit.target", value);
+                    if (_sessionId != null)
+                    {
+                        activity?.AddBigQueryTag("session_id", _sessionId);
+                    }
+
+                    if (value)
+                    {
+                        // Turning autocommit ON: commit pending transaction and close session
+                        if (_sessionId == null)
+                        {
+                            throw new AdbcException("Autocommit is already enabled", AdbcStatusCode.InvalidState);
+                        }
+
+                        try
+                        {
+                            ExecuteSessionCommand("COMMIT TRANSACTION");
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new AdbcException("Failed to commit transaction", AdbcStatusCode.InternalError, ex);
+                        }
+
+                        try
+                        {
+                            ExecuteSessionCommand($"CALL BQ.ABORT_SESSION('{_sessionId}')");
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new AdbcException("Failed to close session", AdbcStatusCode.InternalError, ex);
+                        }
+
+                        activity?.AddEvent("session_closed");
+                        _sessionId = null;
+                    }
+                    else
+                    {
+                        // Turning autocommit OFF: create session and begin transaction
+                        if (_sessionId != null)
+                        {
+                            throw new AdbcException("Autocommit is already disabled", AdbcStatusCode.InvalidState);
+                        }
+
+                        BigQueryJob sessionJob;
+                        try
+                        {
+                            sessionJob = ExecuteSessionCommand("SELECT 1", createSession: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new AdbcException("Failed to create session", AdbcStatusCode.InternalError, ex);
+                        }
+
+                        string? sessionId = sessionJob.Resource.Statistics?.SessionInfo?.SessionId;
+                        if (string.IsNullOrEmpty(sessionId))
+                        {
+                            throw new AdbcException("Could not create session: no session info in job status", AdbcStatusCode.InternalError);
+                        }
+
+                        _sessionId = sessionId;
+                        activity?.AddBigQueryTag("session_id", _sessionId);
+                        activity?.AddEvent("session_created");
+
+                        try
+                        {
+                            ExecuteSessionCommand("BEGIN TRANSACTION");
+                        }
+                        catch (Exception ex)
+                        {
+                            _sessionId = null;
+                            throw new AdbcException("Failed to begin transaction", AdbcStatusCode.InternalError, ex);
+                        }
+
+                        activity?.AddEvent("transaction_started");
+                    }
+                }, ClassName + ".set_" + nameof(AutoCommit));
+            }
+        }
+
+        /// <summary>
+        /// Commits the pending transaction and begins a new one.
+        /// Only used when autocommit is disabled.
+        /// </summary>
+        public override void Commit()
+        {
+            this.TraceActivity(activity =>
+            {
+                if (_sessionId == null)
+                {
+                    throw new AdbcException("Cannot commit when autocommit is enabled", AdbcStatusCode.InvalidState);
+                }
+
+                activity?.AddBigQueryTag("session_id", _sessionId);
+
+                try
+                {
+                    ExecuteSessionCommand("COMMIT TRANSACTION");
+                }
+                catch (Exception ex)
+                {
+                    throw new AdbcException("Failed to commit transaction", AdbcStatusCode.InternalError, ex);
+                }
+
+                activity?.AddEvent("transaction_committed");
+
+                try
+                {
+                    ExecuteSessionCommand("BEGIN TRANSACTION");
+                }
+                catch (Exception ex)
+                {
+                    throw new AdbcException("Failed to begin new transaction after commit", AdbcStatusCode.InternalError, ex);
+                }
+
+                activity?.AddEvent("transaction_started");
+            }, ClassName + "." + nameof(Commit));
+        }
+
+        /// <summary>
+        /// Rolls back the pending transaction and begins a new one.
+        /// Only used when autocommit is disabled.
+        /// </summary>
+        public override void Rollback()
+        {
+            this.TraceActivity(activity =>
+            {
+                if (_sessionId == null)
+                {
+                    throw new AdbcException("Cannot rollback when autocommit is enabled", AdbcStatusCode.InvalidState);
+                }
+
+                activity?.AddBigQueryTag("session_id", _sessionId);
+
+                try
+                {
+                    ExecuteSessionCommand("ROLLBACK TRANSACTION");
+                }
+                catch (Exception ex)
+                {
+                    throw new AdbcException("Failed to rollback transaction", AdbcStatusCode.InternalError, ex);
+                }
+
+                activity?.AddEvent("transaction_rolled_back");
+
+                try
+                {
+                    ExecuteSessionCommand("BEGIN TRANSACTION");
+                }
+                catch (Exception ex)
+                {
+                    throw new AdbcException("Failed to begin new transaction after rollback", AdbcStatusCode.InternalError, ex);
+                }
+
+                activity?.AddEvent("transaction_started");
+            }, ClassName + "." + nameof(Rollback));
+        }
+
         public override AdbcStatement CreateStatement()
         {
             if (Credential == null)
@@ -1584,6 +1814,19 @@ namespace AdbcDrivers.BigQuery
 
         public override void Dispose()
         {
+            if (_sessionId != null)
+            {
+                try
+                {
+                    ExecuteSessionCommand($"CALL BQ.ABORT_SESSION('{_sessionId}')");
+                }
+                catch
+                {
+                    // Best-effort session cleanup during disposal
+                }
+                _sessionId = null;
+            }
+
             Client?.Dispose();
             Client = null;
             this.httpClient?.Dispose();

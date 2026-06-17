@@ -852,11 +852,31 @@ namespace AdbcDrivers.BigQuery
 
                 using JobCancellationContext context = new(cancellationRegistry);
                 // Cannot set destination table in jobs with DDL statements, otherwise an error will be prompted
+                // Build query options with session properties if a transaction is active
+                QueryOptions? updateQueryOptions = null;
+                string? sessionId = this.bigQueryConnection.SessionId;
+                if (sessionId != null)
+                {
+                    activity?.AddBigQueryTag("session_id", sessionId);
+                    updateQueryOptions = new QueryOptions
+                    {
+                        ConfigurationModifier = query =>
+                        {
+                            query.ConnectionProperties ??= new List<Google.Apis.Bigquery.v2.Data.ConnectionProperty>();
+                            query.ConnectionProperties.Add(new Google.Apis.Bigquery.v2.Data.ConnectionProperty
+                            {
+                                Key = "session_id",
+                                Value = sessionId,
+                            });
+                        }
+                    };
+                }
+
                 Task<BigQueryResults> getQueryResultsAsyncFunc()
                 {
                     return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
                     {
-                        context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, null, context.CancellationToken).ConfigureAwait(false);
+                        context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, updateQueryOptions, context.CancellationToken).ConfigureAwait(false);
                         jobActivity?.AddEvent("getqueryresultsasync_started", [new("job.id", context.Job.Reference.JobId)]);
                         BigQueryResults results = await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
                         jobActivity?.AddEvent("getqueryresultsasync_completed", GetJobStatistics(jobActivity, context.Job));
@@ -1093,6 +1113,24 @@ namespace AdbcDrivers.BigQuery
             if (options.AllowLargeResults == true && options.DestinationTable == null)
             {
                 options.DestinationTable = TryGetLargeDestinationTableReference(largeResultDatasetId, activity);
+            }
+
+            // Attach session connection properties when a transaction is active
+            string? sessionId = this.bigQueryConnection.SessionId;
+            if (sessionId != null)
+            {
+                activity?.AddBigQueryTag("session_id", sessionId);
+                Action<JobConfigurationQuery>? existingModifier = options.ConfigurationModifier;
+                options.ConfigurationModifier = query =>
+                {
+                    existingModifier?.Invoke(query);
+                    query.ConnectionProperties ??= new List<Google.Apis.Bigquery.v2.Data.ConnectionProperty>();
+                    query.ConnectionProperties.Add(new Google.Apis.Bigquery.v2.Data.ConnectionProperty
+                    {
+                        Key = "session_id",
+                        Value = sessionId,
+                    });
+                };
             }
 
             return options;
