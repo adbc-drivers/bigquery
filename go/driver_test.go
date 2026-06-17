@@ -2223,7 +2223,6 @@ func (suite *BigQueryTests) TestOldOptionNames() {
 	for _, o := range []opt{
 		{k: "adbc.bigquery.sql.project_id", a: new(suite.Quirks.catalogName)},
 		{k: "adbc.bigquery.sql.dataset_id", a: new(suite.Quirks.schemaName)},
-		{k: "adbc.bigquery.sql.table_id", a: new("")},
 	} {
 		suite.Run("connection/get/"+o.k, func() {
 			v, err := cnxnGS.GetOption(ctx, o.k)
@@ -2247,7 +2246,6 @@ func (suite *BigQueryTests) TestOldOptionNames() {
 		{k: "adbc.bigquery.sql.location", v: "US"},
 		{k: "adbc.bigquery.sql.project_id", v: "project"},
 		{k: "adbc.bigquery.sql.dataset_id", v: "dataset"},
-		{k: "adbc.bigquery.sql.table_id", v: "table"},
 		{k: "adbc.bigquery.sql.endpoint", v: "bigquery.googleapis.com:443"},
 		{k: "adbc.bigquery.sql.storage_endpoint", v: "storage.googleapis.com:443"},
 		{k: "adbc.bigquery.sql.impersonate.lifetime", v: "1800s", a: new("30m0s")},
@@ -2290,7 +2288,6 @@ func TestOldOptionNamesURI(t *testing.T) {
 		"adbc.bigquery.sql.auth.refresh_token",
 		"adbc.bigquery.sql.dataset_id",
 		"adbc.bigquery.sql.location",
-		"adbc.bigquery.sql.table_id",
 		"adbc.bigquery.sql.auth.quota_project",
 		"adbc.bigquery.sql.impersonate.target_principal",
 		"adbc.bigquery.sql.impersonate.delegates",
