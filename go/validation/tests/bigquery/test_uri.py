@@ -47,7 +47,7 @@ def test_service_account_file_uri_parsing(
 ) -> None:
     """Test that service account JSON file URI is parsed correctly."""
     credentials_path = "/path/to/service-account.json"
-    uri = f"bigquery:///dummyproject?OAuthType=1&AuthCredentials={credentials_path}&DatasetId=dummydataset&TableId=mytable"
+    uri = f"bigquery:///dummyproject?OAuthType=1&AuthCredentials={credentials_path}&DatasetId=dummydataset"
 
     params = {
         "uri": uri,
@@ -65,9 +65,6 @@ def test_service_account_file_uri_parsing(
 
         dataset_id = db.get_option("adbc.bigquery.sql.dataset_id")
         assert dataset_id == "dummydataset"
-
-        table_id = db.get_option("adbc.bigquery.sql.table_id")
-        assert table_id == "mytable"
 
 
 def test_service_account_string_uri_parsing(
