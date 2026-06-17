@@ -110,8 +110,8 @@ func (q *BigQueryQuirks) TearDownDriver(t *testing.T, _ driverbase.DriverWithCon
 
 func (q *BigQueryQuirks) DatabaseOptions() map[string]string {
 	return map[string]string{
-		driver.OptionStringProjectID: q.catalogName,
-		driver.OptionStringDatasetID: q.schemaName,
+		driver.OptionProjectID: q.catalogName,
+		driver.OptionDatasetID: q.schemaName,
 	}
 }
 
@@ -199,7 +199,7 @@ func (q *BigQueryQuirks) CreateSampleTableWithRecords(tableName string, r arrow.
 	}
 	defer func() { err = errors.Join(err, stmt.Close(ctx)) }()
 
-	if err = stmt.SetOption(ctx, driver.OptionBoolQueryUseLegacySQL, "false"); err != nil {
+	if err = stmt.SetOption(ctx, driver.OptionQueryUseLegacySQL, "false"); err != nil {
 		return err
 	}
 
@@ -267,7 +267,7 @@ func (q *BigQueryQuirks) CreateSampleTableWithStreams(tableName string, rdr arra
 	}
 	defer func() { err = errors.Join(err, stmt.Close(ctx)) }()
 
-	if err = stmt.SetOption(ctx, driver.OptionBoolQueryUseLegacySQL, "false"); err != nil {
+	if err = stmt.SetOption(ctx, driver.OptionQueryUseLegacySQL, "false"); err != nil {
 		return err
 	}
 
@@ -649,8 +649,8 @@ func (suite *BigQueryTests) TestCreateView() {
 }
 
 func (suite *BigQueryTests) TestNewDatabaseGetSetOptions() {
-	key1, val1 := driver.OptionStringProjectID, "val1"
-	key2, val2 := driver.OptionStringDatasetID, "val2"
+	key1, val1 := driver.OptionProjectID, "val1"
+	key2, val2 := driver.OptionDatasetID, "val2"
 
 	db, err := suite.driver.NewDatabaseWithContext(suite.ctx, map[string]string{
 		key1: val1,
@@ -770,7 +770,7 @@ func (suite *BigQueryTests) TestBulkInsertWrite() {
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionKeyIngestTargetTable, table))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionValueIngestTargetDBSchema, suite.Quirks.DBSchema()))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, adbc.OptionKeyIngestMode, adbc.OptionValueIngestModeReplace))
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, driver.OptionStringBulkIngestMethod, driver.OptionValueBulkIngestMethodStorageWrite))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, driver.OptionBulkIngestMethod, driver.OptionValueBulkIngestMethodStorageWrite))
 	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
 	suite.Require().NoError(err)
 
@@ -1612,14 +1612,14 @@ func TestAuthTypeConsolidation(t *testing.T) {
 	}
 
 	for _, authType := range validAuthTypes {
-		err := db.SetOptions(ctx, map[string]string{driver.OptionStringAuthType: authType})
+		err := db.SetOptions(ctx, map[string]string{driver.OptionAuthType: authType})
 		if err != nil {
 			t.Errorf("Failed to set auth type %s: %v", authType, err)
 		}
 	}
 
 	// Test invalid auth type
-	err = db.SetOptions(ctx, map[string]string{driver.OptionStringAuthType: "invalid_auth_type"})
+	err = db.SetOptions(ctx, map[string]string{driver.OptionAuthType: "invalid_auth_type"})
 	if err == nil {
 		t.Error("Expected error for invalid auth type")
 	} else if !strings.Contains(err.Error(), "unknown database auth type value") {
@@ -1647,8 +1647,8 @@ func (s *BigQueryTestSuite) SetupSuite() {
 
 	s.driver = driver.NewDriver(s.mem)
 	s.db, err = s.driver.NewDatabaseWithContext(s.ctx, map[string]string{
-		driver.OptionStringProjectID: s.project,
-		driver.OptionStringDatasetID: s.dataset,
+		driver.OptionProjectID: s.project,
+		driver.OptionDatasetID: s.dataset,
 	})
 	s.NoError(err)
 
@@ -1936,56 +1936,56 @@ func TestBigQueryURIParsing(t *testing.T) {
 			require.NoError(t, err, "unexpected error during URI parsing")
 
 			if tt.expectedProjectID != "" {
-				assert.Equal(t, tt.expectedProjectID, params[driver.OptionStringProjectID], "project ID mismatch")
+				assert.Equal(t, tt.expectedProjectID, params[driver.OptionProjectID], "project ID mismatch")
 			}
 
 			if tt.expectedDatasetID != "" {
-				assert.Equal(t, tt.expectedDatasetID, params[driver.OptionStringDatasetID], "dataset ID mismatch")
+				assert.Equal(t, tt.expectedDatasetID, params[driver.OptionDatasetID], "dataset ID mismatch")
 			}
 
 			if tt.expectedAuthType != "" {
-				assert.Equal(t, tt.expectedAuthType, params[driver.OptionStringAuthType], "auth type mismatch")
+				assert.Equal(t, tt.expectedAuthType, params[driver.OptionAuthType], "auth type mismatch")
 			}
 
 			if tt.expectedCredentials != "" {
-				assert.Equal(t, tt.expectedCredentials, params[driver.OptionStringAuthCredentials], "credentials mismatch")
+				assert.Equal(t, tt.expectedCredentials, params[driver.OptionAuthCredentials], "credentials mismatch")
 			}
 
 			if tt.expectedClientID != "" {
-				assert.Equal(t, tt.expectedClientID, params[driver.OptionStringAuthClientID], "client ID mismatch")
+				assert.Equal(t, tt.expectedClientID, params[driver.OptionAuthClientID], "client ID mismatch")
 			}
 
 			if tt.expectedClientSecret != "" {
-				assert.Equal(t, tt.expectedClientSecret, params[driver.OptionStringAuthClientSecret], "client secret mismatch")
+				assert.Equal(t, tt.expectedClientSecret, params[driver.OptionAuthClientSecret], "client secret mismatch")
 			}
 
 			if tt.expectedRefreshToken != "" {
-				assert.Equal(t, tt.expectedRefreshToken, params[driver.OptionStringAuthRefreshToken], "refresh token mismatch")
+				assert.Equal(t, tt.expectedRefreshToken, params[driver.OptionAuthRefreshToken], "refresh token mismatch")
 			}
 
 			if tt.expectedLocation != "" {
-				assert.Equal(t, tt.expectedLocation, params[driver.OptionStringLocation], "location mismatch")
+				assert.Equal(t, tt.expectedLocation, params[driver.OptionLocation], "location mismatch")
 			}
 			if tt.expectedEndpoint != "" {
-				assert.Equal(t, tt.expectedEndpoint, params[driver.OptionStringEndpoint], "endpoint mismatch")
+				assert.Equal(t, tt.expectedEndpoint, params[driver.OptionEndpoint], "endpoint mismatch")
 			}
 			if tt.expectedQuotaProject != "" {
-				assert.Equal(t, tt.expectedQuotaProject, params[driver.OptionStringAuthQuotaProject], "quota project mismatch")
+				assert.Equal(t, tt.expectedQuotaProject, params[driver.OptionAuthQuotaProject], "quota project mismatch")
 			}
 			if tt.expectedTableID != "" {
-				assert.Equal(t, tt.expectedTableID, params[driver.OptionStringTableID], "table ID mismatch")
+				assert.Equal(t, tt.expectedTableID, params[driver.OptionTableID], "table ID mismatch")
 			}
 			if tt.expectedImpersonateTarget != "" {
-				assert.Equal(t, tt.expectedImpersonateTarget, params[driver.OptionStringImpersonateTargetPrincipal], "impersonate target mismatch")
+				assert.Equal(t, tt.expectedImpersonateTarget, params[driver.OptionImpersonateTargetPrincipal], "impersonate target mismatch")
 			}
 			if tt.expectedImpersonateLifetime != "" {
-				assert.Equal(t, tt.expectedImpersonateLifetime, params[driver.OptionStringImpersonateLifetime], "impersonate lifetime mismatch")
+				assert.Equal(t, tt.expectedImpersonateLifetime, params[driver.OptionImpersonateLifetime], "impersonate lifetime mismatch")
 			}
 			if tt.expectedImpersonateDelegates != "" {
-				assert.Equal(t, tt.expectedImpersonateDelegates, params[driver.OptionStringImpersonateDelegates], "impersonate delegates mismatch")
+				assert.Equal(t, tt.expectedImpersonateDelegates, params[driver.OptionImpersonateDelegates], "impersonate delegates mismatch")
 			}
 			if tt.expectedImpersonateScopes != "" {
-				assert.Equal(t, tt.expectedImpersonateScopes, params[driver.OptionStringImpersonateScopes], "impersonate scopes mismatch")
+				assert.Equal(t, tt.expectedImpersonateScopes, params[driver.OptionImpersonateScopes], "impersonate scopes mismatch")
 			}
 		})
 	}
@@ -2137,4 +2137,173 @@ func (suite *BigQueryTests) TestGetStatisticNames() {
 	suite.True(rdr.Next())
 	rec := rdr.RecordBatch()
 	suite.Equal(int64(8), rec.NumRows())
+}
+
+func (suite *BigQueryTests) TestOldOptionNames() {
+	ctx := context.Background()
+	stmtGS := suite.stmt.(adbc.GetSetOptionsWithContext)
+	for _, k := range []string{
+		"adbc.bigquery.sql.query.max_billing_tier",
+		"adbc.bigquery.sql.query.max_bytes_billed",
+		"adbc.bigquery.sql.query.job_timeout",
+		"adbc.bigquery.sql.query.result_buffer_size",
+		"adbc.bigquery.sql.query.prefetch_concurrency",
+	} {
+		suite.Run("int/"+k, func() {
+			expected := int64(12)
+			suite.NoError(stmtGS.SetOptionInt(ctx, k, expected))
+			v, err := stmtGS.GetOptionInt(ctx, k)
+			suite.NoError(err)
+			suite.Equal(expected, v)
+		})
+	}
+
+	type opt struct {
+		k, v string
+		a    *string
+	}
+
+	for _, o := range []opt{
+		{k: "adbc.bigquery.sql.query.default_dataset_id", v: "foobar"},
+		{k: "adbc.bigquery.sql.query.default_project_id", v: "foobar"},
+		{k: "adbc.bigquery.sql.query.destination_table", v: "foobar", a: new(fmt.Sprintf("%s.%s.foobar", suite.Quirks.catalogName, suite.Quirks.schemaName))},
+		{k: "adbc.bigquery.sql.query.parameter_mode", v: "adbc.bigquery.sql.query.parameter_mode_named", a: new("named")},
+		{k: "adbc.bigquery.sql.query.parameter_mode", v: "adbc.bigquery.sql.query.parameter_mode_positional", a: new("positional")},
+		{k: "adbc.bigquery.sql.query.create_disposition", v: "CREATE_IF_NEEDED"},
+		{k: "adbc.bigquery.sql.query.write_disposition", v: "WRITE_APPEND"},
+		{k: "adbc.bigquery.sql.query.disable_query_cache", v: "true"},
+		{k: "adbc.bigquery.sql.query.disable_flattened_results", v: "true"},
+		{k: "adbc.bigquery.sql.query.allow_large_results", v: "true"},
+		{k: "adbc.bigquery.sql.query.priority", v: "BATCH"},
+		{k: "adbc.bigquery.sql.query.use_legacy_sql", v: "true"},
+		{k: "adbc.bigquery.sql.query.dry_run", v: "true"},
+		{k: "adbc.bigquery.sql.query.create_session", v: "true"},
+	} {
+		suite.Run("string/"+o.k, func() {
+			suite.NoError(stmtGS.SetOption(ctx, o.k, o.v))
+			v, err := stmtGS.GetOption(ctx, o.k)
+			suite.NoError(err)
+			expected := o.v
+			if o.a != nil {
+				expected = *o.a
+			}
+			suite.Equal(expected, v)
+		})
+	}
+
+	cnxnGS := suite.cnxn.(adbc.GetSetOptionsWithContext)
+	for _, k := range []string{
+		"adbc.bigquery.sql.query.result_buffer_size",
+		"adbc.bigquery.sql.query.prefetch_concurrency",
+	} {
+		suite.Run("connection/int/"+k, func() {
+			expected := int64(12)
+			suite.NoError(cnxnGS.SetOptionInt(ctx, k, expected))
+			v, err := cnxnGS.GetOptionInt(ctx, k)
+			suite.NoError(err)
+			suite.Equal(expected, v)
+		})
+	}
+
+	for _, o := range []opt{
+		{k: "adbc.bigquery.sql.auth_type", v: "adbc.bigquery.sql.auth_type.anonymous", a: new("anonymous")},
+		{k: "adbc.bigquery.sql.auth_credentials", v: "credentials"},
+		{k: "adbc.bigquery.sql.auth.client_id", v: "client"},
+		{k: "adbc.bigquery.sql.auth.client_secret", v: "secret"},
+		{k: "adbc.bigquery.sql.auth.refresh_token", v: "token"},
+		{k: "adbc.bigquery.sql.auth.quota_project", v: "quota"},
+		{k: "adbc.bigquery.sql.impersonate.lifetime", v: "1800s", a: new("30m0s")},
+	} {
+		suite.Run("connection/string/"+o.k, func() {
+			suite.NoError(cnxnGS.SetOption(ctx, o.k, o.v))
+			v, err := cnxnGS.GetOption(ctx, o.k)
+			suite.NoError(err)
+			expected := o.v
+			if o.a != nil {
+				expected = *o.a
+			}
+			suite.Equal(expected, v)
+		})
+	}
+
+	for _, o := range []opt{
+		{k: "adbc.bigquery.sql.project_id", a: new(suite.Quirks.catalogName)},
+		{k: "adbc.bigquery.sql.dataset_id", a: new(suite.Quirks.schemaName)},
+		{k: "adbc.bigquery.sql.table_id", a: new("")},
+	} {
+		suite.Run("connection/get/"+o.k, func() {
+			v, err := cnxnGS.GetOption(ctx, o.k)
+			suite.NoError(err)
+			suite.Equal(*o.a, v)
+		})
+	}
+
+	db, err := suite.driver.NewDatabaseWithContext(ctx, nil)
+	suite.Require().NoError(err)
+	defer testutil.CheckedCloseWithContext(suite.T(), db, ctx)
+	dbGS := db.(adbc.GetSetOptionsWithContext)
+
+	for _, o := range []opt{
+		{k: "adbc.bigquery.sql.auth_type", v: "adbc.bigquery.sql.auth_type.anonymous", a: new("anonymous")},
+		{k: "adbc.bigquery.sql.auth_credentials", v: "credentials"},
+		{k: "adbc.bigquery.sql.auth.client_id", v: "client"},
+		{k: "adbc.bigquery.sql.auth.client_secret", v: "secret"},
+		{k: "adbc.bigquery.sql.auth.refresh_token", v: "token"},
+		{k: "adbc.bigquery.sql.auth.quota_project", v: "quota"},
+		{k: "adbc.bigquery.sql.location", v: "US"},
+		{k: "adbc.bigquery.sql.project_id", v: "project"},
+		{k: "adbc.bigquery.sql.dataset_id", v: "dataset"},
+		{k: "adbc.bigquery.sql.table_id", v: "table"},
+		{k: "adbc.bigquery.sql.endpoint", v: "bigquery.googleapis.com:443"},
+		{k: "adbc.bigquery.sql.storage_endpoint", v: "storage.googleapis.com:443"},
+		{k: "adbc.bigquery.sql.impersonate.lifetime", v: "1800s", a: new("30m0s")},
+	} {
+		suite.Run("database/string/"+o.k, func() {
+			suite.NoError(dbGS.SetOption(ctx, o.k, o.v))
+			v, err := dbGS.GetOption(ctx, o.k)
+			suite.NoError(err)
+			expected := o.v
+			if o.a != nil {
+				expected = *o.a
+			}
+			suite.Equal(expected, v)
+		})
+	}
+}
+
+func TestOldOptionNamesURI(t *testing.T) {
+	params, err := driver.ParseBigQueryURIToParams("bigquery:///project?OAuthType=3&AuthClientId=client&AuthClientSecret=secret&AuthRefreshToken=token&DatasetId=dataset&Location=US&TableId=table&QuotaProject=quota&ImpersonateTargetPrincipal=svc@example.com&ImpersonateDelegates=delegate@example.com&ImpersonateScopes=scope&ImpersonateLifetime=1800s")
+	require.NoError(t, err)
+
+	assert.Equal(t, "project", params[driver.OptionProjectID])
+	assert.Equal(t, driver.OptionValueAuthTypeUserAuthentication, params[driver.OptionAuthType])
+	assert.Equal(t, "client", params[driver.OptionAuthClientID])
+	assert.Equal(t, "secret", params[driver.OptionAuthClientSecret])
+	assert.Equal(t, "token", params[driver.OptionAuthRefreshToken])
+	assert.Equal(t, "dataset", params[driver.OptionDatasetID])
+	assert.Equal(t, "US", params[driver.OptionLocation])
+	assert.Equal(t, "table", params[driver.OptionTableID])
+	assert.Equal(t, "quota", params[driver.OptionAuthQuotaProject])
+	assert.Equal(t, "svc@example.com", params[driver.OptionImpersonateTargetPrincipal])
+	assert.Equal(t, "delegate@example.com", params[driver.OptionImpersonateDelegates])
+	assert.Equal(t, "scope", params[driver.OptionImpersonateScopes])
+	assert.Equal(t, "1800s", params[driver.OptionImpersonateLifetime])
+
+	for _, oldKey := range []string{
+		"adbc.bigquery.sql.project_id",
+		"adbc.bigquery.sql.auth_type",
+		"adbc.bigquery.sql.auth.client_id",
+		"adbc.bigquery.sql.auth.client_secret",
+		"adbc.bigquery.sql.auth.refresh_token",
+		"adbc.bigquery.sql.dataset_id",
+		"adbc.bigquery.sql.location",
+		"adbc.bigquery.sql.table_id",
+		"adbc.bigquery.sql.auth.quota_project",
+		"adbc.bigquery.sql.impersonate.target_principal",
+		"adbc.bigquery.sql.impersonate.delegates",
+		"adbc.bigquery.sql.impersonate.scopes",
+		"adbc.bigquery.sql.impersonate.lifetime",
+	} {
+		assert.NotContains(t, params, oldKey)
+	}
 }

@@ -109,47 +109,48 @@ func (st *statement) Close(ctx context.Context) error {
 }
 
 func (st *statement) GetOption(ctx context.Context, key string) (string, error) {
+	key = remapOption(key)
 	switch key {
-	case OptionStringProjectID:
-		val, err := st.cnxn.GetOption(ctx, OptionStringProjectID)
+	case OptionProjectID:
+		val, err := st.cnxn.GetOption(ctx, OptionProjectID)
 		if err != nil {
 			return "", err
 		} else {
 			return val, nil
 		}
-	case OptionStringQueryParameterMode:
+	case OptionQueryParameterMode:
 		return st.parameterMode, nil
-	case OptionStringQueryDestinationTable:
+	case OptionQueryDestinationTable:
 		return tableToString(st.queryConfig.Dst), nil
-	case OptionStringQueryDefaultProjectID:
+	case OptionQueryDefaultProjectID:
 		return st.queryConfig.DefaultProjectID, nil
-	case OptionStringQueryDefaultDatasetID:
+	case OptionQueryDefaultDatasetID:
 		return st.queryConfig.DefaultDatasetID, nil
-	case OptionStringQueryCreateDisposition:
+	case OptionQueryCreateDisposition:
 		return string(st.queryConfig.CreateDisposition), nil
-	case OptionStringQueryWriteDisposition:
+	case OptionQueryWriteDisposition:
 		return string(st.queryConfig.WriteDisposition), nil
-	case OptionBoolQueryDisableQueryCache:
+	case OptionQueryDisableQueryCache:
 		return strconv.FormatBool(st.queryConfig.DisableQueryCache), nil
-	case OptionBoolDisableFlattenedResults:
+	case OptionQueryDisableFlattenedResults:
 		return strconv.FormatBool(st.queryConfig.DisableFlattenedResults), nil
-	case OptionBoolQueryAllowLargeResults:
+	case OptionQueryAllowLargeResults:
 		return strconv.FormatBool(st.queryConfig.AllowLargeResults), nil
-	case OptionStringQueryPriority:
+	case OptionQueryPriority:
 		return string(st.queryConfig.Priority), nil
-	case OptionBoolQueryUseLegacySQL:
+	case OptionQueryUseLegacySQL:
 		return strconv.FormatBool(st.queryConfig.UseLegacySQL), nil
-	case OptionBoolQueryDryRun:
+	case OptionQueryDryRun:
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
-	case OptionBoolQueryCreateSession:
+	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
-	case OptionStringBulkIngestMethod:
+	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
 			return st.bulkIngestMethod, nil
 		}
 		return st.cnxn.GetOption(ctx, key)
-	case OptionStringBulkIngestCompression:
+	case OptionBulkIngestCompression:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestCompression != "" {
 			return st.bulkIngestCompression, nil
@@ -165,16 +166,17 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 }
 
 func (st *statement) GetOptionInt(ctx context.Context, key string) (int64, error) {
+	key = remapOption(key)
 	switch key {
-	case OptionIntQueryMaxBillingTier:
+	case OptionQueryMaxBillingTier:
 		return int64(st.queryConfig.MaxBillingTier), nil
-	case OptionIntQueryMaxBytesBilled:
+	case OptionQueryMaxBytesBilled:
 		return st.queryConfig.MaxBytesBilled, nil
-	case OptionIntQueryJobTimeout:
+	case OptionQueryJobTimeout:
 		return st.queryConfig.JobTimeout.Milliseconds(), nil
-	case OptionIntQueryResultBufferSize:
+	case OptionQueryResultBufferSize:
 		return int64(st.resultRecordBufferSize), nil
-	case OptionIntQueryPrefetchConcurrency:
+	case OptionQueryPrefetchConcurrency:
 		return int64(st.prefetchConcurrency), nil
 	default:
 		val, err := st.cnxn.GetOptionInt(ctx, key)
@@ -186,6 +188,7 @@ func (st *statement) GetOptionInt(ctx context.Context, key string) (int64, error
 }
 
 func (st *statement) SetOption(ctx context.Context, key string, v string) error {
+	key = remapOption(key)
 	switch key {
 	case adbc.OptionKeyIngestTargetTable:
 		st.ingest.TableName = v
@@ -215,7 +218,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 				Code: adbc.StatusInvalidArgument,
 			}
 		}
-	case OptionStringQueryParameterMode:
+	case OptionQueryParameterMode:
+		v = remapOption(v)
 		switch v {
 		case OptionValueQueryParameterModeNamed, OptionValueQueryParameterModePositional:
 			st.parameterMode = v
@@ -225,7 +229,7 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 				Msg:  fmt.Sprintf("[bq] Parameter mode for the statement can only be either %s or %s", OptionValueQueryParameterModeNamed, OptionValueQueryParameterModePositional),
 			}
 		}
-	case OptionStringQueryDestinationTable:
+	case OptionQueryDestinationTable:
 		if v == "" {
 			st.queryConfig.Dst = nil
 		} else {
@@ -236,74 +240,74 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 				return err
 			}
 		}
-	case OptionStringQueryDefaultProjectID:
+	case OptionQueryDefaultProjectID:
 		st.queryConfig.DefaultProjectID = v
-	case OptionStringQueryDefaultDatasetID:
+	case OptionQueryDefaultDatasetID:
 		st.queryConfig.DefaultDatasetID = v
-	case OptionStringQueryCreateDisposition:
+	case OptionQueryCreateDisposition:
 		val, err := stringToTableCreateDisposition(v)
 		if err == nil {
 			st.queryConfig.CreateDisposition = val
 		} else {
 			return err
 		}
-	case OptionStringQueryWriteDisposition:
+	case OptionQueryWriteDisposition:
 		val, err := stringToTableWriteDisposition(v)
 		if err == nil {
 			st.queryConfig.WriteDisposition = val
 		} else {
 			return err
 		}
-	case OptionBoolQueryDisableQueryCache:
+	case OptionQueryDisableQueryCache:
 		val, err := strconv.ParseBool(v)
 		if err == nil {
 			st.queryConfig.DisableQueryCache = val
 		} else {
 			return err
 		}
-	case OptionBoolDisableFlattenedResults:
+	case OptionQueryDisableFlattenedResults:
 		val, err := strconv.ParseBool(v)
 		if err == nil {
 			st.queryConfig.DisableFlattenedResults = val
 		} else {
 			return err
 		}
-	case OptionBoolQueryAllowLargeResults:
+	case OptionQueryAllowLargeResults:
 		val, err := strconv.ParseBool(v)
 		if err == nil {
 			st.queryConfig.AllowLargeResults = val
 		} else {
 			return err
 		}
-	case OptionStringQueryPriority:
+	case OptionQueryPriority:
 		val, err := stringToQueryPriority(v)
 		if err == nil {
 			st.queryConfig.Priority = val
 		} else {
 			return err
 		}
-	case OptionBoolQueryUseLegacySQL:
+	case OptionQueryUseLegacySQL:
 		val, err := strconv.ParseBool(v)
 		if err == nil {
 			st.queryConfig.UseLegacySQL = val
 		} else {
 			return err
 		}
-	case OptionBoolQueryDryRun:
+	case OptionQueryDryRun:
 		val, err := strconv.ParseBool(v)
 		if err == nil {
 			st.queryConfig.DryRun = val
 		} else {
 			return err
 		}
-	case OptionBoolQueryCreateSession:
+	case OptionQueryCreateSession:
 		val, err := strconv.ParseBool(v)
 		if err == nil {
 			st.queryConfig.CreateSession = val
 		} else {
 			return err
 		}
-	case OptionStringBulkIngestMethod:
+	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
 			return adbc.Error{
@@ -312,7 +316,7 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.bulkIngestMethod = v
-	case OptionStringBulkIngestCompression:
+	case OptionBulkIngestCompression:
 		if v != OptionValueCompressionNone &&
 			v != OptionValueCompressionLZ4 &&
 			v != OptionValueCompressionZSTD {
@@ -333,17 +337,18 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 }
 
 func (st *statement) SetOptionInt(ctx context.Context, key string, value int64) error {
+	key = remapOption(key)
 	switch key {
-	case OptionIntQueryMaxBillingTier:
+	case OptionQueryMaxBillingTier:
 		st.queryConfig.MaxBillingTier = int(value)
-	case OptionIntQueryMaxBytesBilled:
+	case OptionQueryMaxBytesBilled:
 		st.queryConfig.MaxBytesBilled = value
-	case OptionIntQueryJobTimeout:
+	case OptionQueryJobTimeout:
 		st.queryConfig.JobTimeout = time.Duration(value) * time.Millisecond
-	case OptionIntQueryResultBufferSize:
+	case OptionQueryResultBufferSize:
 		st.resultRecordBufferSize = int(value)
 		return nil
-	case OptionIntQueryPrefetchConcurrency:
+	case OptionQueryPrefetchConcurrency:
 		st.prefetchConcurrency = int(value)
 		return nil
 	default:
@@ -908,7 +913,7 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	}
 
 	// Check which implementation to use (statement-level option takes precedence)
-	method, err := st.GetOption(ctx, OptionStringBulkIngestMethod)
+	method, err := st.GetOption(ctx, OptionBulkIngestMethod)
 	if err != nil {
 		method = OptionValueBulkIngestMethodLoad
 	}
