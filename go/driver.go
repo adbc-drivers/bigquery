@@ -35,55 +35,66 @@ import (
 )
 
 const (
-	OptionStringAuthType = "adbc.bigquery.sql.auth_type"
+	OptionAuthType = "bigquery.auth_type"
 	// https://pkg.go.dev/google.golang.org/api@v0.258.0/option#WithAuthCredentialsJSON
 	// https://pkg.go.dev/google.golang.org/api@v0.258.0/internal/credentialstype#CredType
-	OptionAuthCredentialsType   = "bigquery.auth.credentials_type"
-	OptionStringLocation        = "adbc.bigquery.sql.location"
-	OptionStringProjectID       = "adbc.bigquery.sql.project_id"
-	OptionStringDatasetID       = "adbc.bigquery.sql.dataset_id"
-	OptionStringTableID         = "adbc.bigquery.sql.table_id"
-	OptionStringEndpoint        = "adbc.bigquery.sql.endpoint"
-	OptionStringStorageEndpoint = "adbc.bigquery.sql.storage_endpoint"
+	OptionAuthCredentialsType = "bigquery.auth.credentials_type"
+	OptionLocation            = "bigquery.location"
+	OptionProjectID           = "bigquery.project_id"
+	OptionDatasetID           = "bigquery.dataset_id"
+	OptionTableID             = "bigquery.table_id"
+	OptionEndpoint            = "bigquery.endpoint"
+	OptionStorageEndpoint     = "bigquery.storage_endpoint"
 
-	OptionValueAuthTypeDefault = "adbc.bigquery.sql.auth_type.auth_bigquery"
+	OptionValueAuthTypeDefault              = "auth_bigquery"
+	OptionValueAuthTypeJSONCredentialFile   = "json_credential_file"
+	OptionValueAuthTypeJSONCredentialString = "json_credential_string"
+	OptionValueAuthTypeAnonymous            = "anonymous"
+	OptionValueAuthTypeUserAuthentication   = "user_authentication"
+	// WithAppDefaultCredentials instructs the driver to authenticate using
+	// Application Default Credentials (ADC).
+	OptionValueAuthTypeAppDefaultCredentials = "app_default_credentials"
+	// WithJSONCredentials instructs the driver to authenticate using the
+	// given JSON credentials. The value should be a byte array representing
+	// the JSON credentials.
+	OptionValueAuthTypeJSONCredentials = "json_credentials"
+	// WithOAuthClientIDs instructs the driver to authenticate using the given
+	// OAuth client ID and client secret. The value should be a string array
+	// of length 2, where the first element is the client ID and the second
+	// is the client secret.
+	OptionValueAuthTypeOAuthClientIDs = "oauth_client_ids"
 
-	OptionValueAuthTypeJSONCredentialFile   = "adbc.bigquery.sql.auth_type.json_credential_file"
-	OptionValueAuthTypeJSONCredentialString = "adbc.bigquery.sql.auth_type.json_credential_string"
-	OptionValueAuthTypeAnonymous            = "adbc.bigquery.sql.auth_type.anonymous"
-	OptionStringAuthCredentials             = "adbc.bigquery.sql.auth_credentials"
+	OptionAuthCredentials  = "bigquery.auth.credentials"
+	OptionAuthClientID     = "bigquery.auth.client_id"
+	OptionAuthClientSecret = "bigquery.auth.client_secret"
+	OptionAuthRefreshToken = "bigquery.auth.refresh_token"
+	OptionAuthQuotaProject = "bigquery.auth.quota_project"
 
-	OptionValueAuthTypeUserAuthentication = "adbc.bigquery.sql.auth_type.user_authentication"
-	OptionStringAuthClientID              = "adbc.bigquery.sql.auth.client_id"
-	OptionStringAuthClientSecret          = "adbc.bigquery.sql.auth.client_secret"
-	OptionStringAuthRefreshToken          = "adbc.bigquery.sql.auth.refresh_token"
-	OptionStringAuthQuotaProject          = "adbc.bigquery.sql.auth.quota_project"
-
-	// OptionStringQueryParameterMode specifies if the query uses positional syntax ("?")
+	// OptionQueryParameterMode specifies if the query uses positional syntax ("?")
 	// or the named syntax ("@p"). It is illegal to mix positional and named syntax.
 	// Default is OptionValueQueryParameterModePositional.
-	OptionStringQueryParameterMode          = "adbc.bigquery.sql.query.parameter_mode"
-	OptionValueQueryParameterModeNamed      = "adbc.bigquery.sql.query.parameter_mode_named"
-	OptionValueQueryParameterModePositional = "adbc.bigquery.sql.query.parameter_mode_positional"
+	OptionQueryParameterMode                = "bigquery.query.parameter_mode"
+	OptionValueQueryParameterModeNamed      = "named"
+	OptionValueQueryParameterModePositional = "positional"
 
-	OptionStringQueryDestinationTable  = "adbc.bigquery.sql.query.destination_table"
-	OptionStringQueryDefaultProjectID  = "adbc.bigquery.sql.query.default_project_id"
-	OptionStringQueryDefaultDatasetID  = "adbc.bigquery.sql.query.default_dataset_id"
-	OptionStringQueryCreateDisposition = "adbc.bigquery.sql.query.create_disposition"
-	OptionStringQueryWriteDisposition  = "adbc.bigquery.sql.query.write_disposition"
-	OptionBoolQueryDisableQueryCache   = "adbc.bigquery.sql.query.disable_query_cache"
-	OptionBoolDisableFlattenedResults  = "adbc.bigquery.sql.query.disable_flattened_results"
-	OptionBoolQueryAllowLargeResults   = "adbc.bigquery.sql.query.allow_large_results"
-	OptionStringQueryPriority          = "adbc.bigquery.sql.query.priority"
-	OptionIntQueryMaxBillingTier       = "adbc.bigquery.sql.query.max_billing_tier"
-	OptionIntQueryMaxBytesBilled       = "adbc.bigquery.sql.query.max_bytes_billed"
-	OptionBoolQueryUseLegacySQL        = "adbc.bigquery.sql.query.use_legacy_sql"
-	OptionBoolQueryDryRun              = "adbc.bigquery.sql.query.dry_run"
-	OptionBoolQueryCreateSession       = "adbc.bigquery.sql.query.create_session"
-	OptionIntQueryJobTimeout           = "adbc.bigquery.sql.query.job_timeout"
+	OptionQueryDestinationTable        = "bigquery.query.destination_table"
+	OptionQueryDefaultProjectID        = "bigquery.query.default_project_id"
+	OptionQueryDefaultDatasetID        = "bigquery.query.default_dataset_id"
+	OptionQueryCreateDisposition       = "bigquery.query.create_disposition"
+	OptionQueryWriteDisposition        = "bigquery.query.write_disposition"
+	OptionQueryDisableQueryCache       = "bigquery.query.disable_query_cache"
+	OptionQueryDisableFlattenedResults = "bigquery.query.disable_flattened_results"
+	OptionQueryAllowLargeResults       = "bigquery.query.allow_large_results"
+	OptionQueryPriority                = "bigquery.query.priority"
+	OptionQueryMaxBillingTier          = "bigquery.query.max_billing_tier"
+	OptionQueryMaxBytesBilled          = "bigquery.query.max_bytes_billed"
+	OptionQueryUseLegacySQL            = "bigquery.query.use_legacy_sql"
+	OptionQueryDryRun                  = "bigquery.query.dry_run"
+	OptionQueryCreateSession           = "bigquery.query.create_session"
+	OptionQueryJobTimeout              = "bigquery.query.job_timeout"
 
-	OptionIntQueryResultBufferSize    = "adbc.bigquery.sql.query.result_buffer_size"
-	OptionIntQueryPrefetchConcurrency = "adbc.bigquery.sql.query.prefetch_concurrency"
+	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
+	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
@@ -91,55 +102,96 @@ const (
 	AccessTokenEndpoint   = "https://accounts.google.com/o/oauth2/token"
 	AccessTokenServerName = "google.com"
 
-	// WithAppDefaultCredentials instructs the driver to authenticate using
-	// Application Default Credentials (ADC).
-	OptionValueAuthTypeAppDefaultCredentials = "adbc.bigquery.sql.auth_type.app_default_credentials"
-
-	// WithJSONCredentials instructs the driver to authenticate using the
-	// given JSON credentials. The value should be a byte array representing
-	// the JSON credentials.
-	OptionValueAuthTypeJSONCredentials = "adbc.bigquery.sql.auth_type.json_credentials"
-
-	// WithOAuthClientIDs instructs the driver to authenticate using the given
-	// OAuth client ID and client secret. The value should be a string array
-	// of length 2, where the first element is the client ID and the second
-	// is the client secret.
-	OptionValueAuthTypeOAuthClientIDs = "adbc.bigquery.sql.auth_type.oauth_client_ids"
-
-	// OptionStringImpersonateTargetPrincipal instructs the driver to impersonate the
+	// OptionImpersonateTargetPrincipal instructs the driver to impersonate the
 	// given service account email.
-	OptionStringImpersonateTargetPrincipal = "adbc.bigquery.sql.impersonate.target_principal"
+	OptionImpersonateTargetPrincipal = "bigquery.impersonate.target_principal"
 
-	// OptionStringImpersonateDelegates instructs the driver to impersonate using the
+	// OptionImpersonateDelegates instructs the driver to impersonate using the
 	// given comma-separated list of service account emails in the delegation
 	// chain.
-	OptionStringImpersonateDelegates = "adbc.bigquery.sql.impersonate.delegates"
+	OptionImpersonateDelegates = "bigquery.impersonate.delegates"
 
-	// OptionStringImpersonateScopes instructs the driver to impersonate using the
+	// OptionImpersonateScopes instructs the driver to impersonate using the
 	// given comma-separated list of OAuth 2.0 scopes.
-	OptionStringImpersonateScopes = "adbc.bigquery.sql.impersonate.scopes"
+	OptionImpersonateScopes = "bigquery.impersonate.scopes"
 
-	// OptionStringImpersonateLifetime instructs the driver to impersonate for the
+	// OptionImpersonateLifetime instructs the driver to impersonate for the
 	// given duration (e.g. "3600s").
-	OptionStringImpersonateLifetime = "adbc.bigquery.sql.impersonate.lifetime"
+	OptionImpersonateLifetime = "bigquery.impersonate.lifetime"
 
-	// OptionStringBulkIngestMethod specifies the bulk ingest implementation to use.
+	// OptionBulkIngestMethod specifies the bulk ingest implementation to use.
 	// Default is "load" (Parquet + LoaderFrom). "storage_write" uses Storage Write API.
-	OptionStringBulkIngestMethod            = "bigquery.bulk_ingest.method"
+	OptionBulkIngestMethod                  = "bigquery.bulk_ingest.method"
 	OptionValueBulkIngestMethodLoad         = "load"
 	OptionValueBulkIngestMethodStorageWrite = "storage_write"
 
-	// OptionStringBulkIngestCompression specifies compression for Storage Write API.
+	// OptionBulkIngestCompression specifies compression for Storage Write API.
 	// Only applies when using storage_write method.
-	OptionStringBulkIngestCompression = "bigquery.bulk_ingest.compression"
-	OptionValueCompressionNone        = "none"
-	OptionValueCompressionLZ4         = "lz4"
-	OptionValueCompressionZSTD        = "zstd"
+	OptionBulkIngestCompression = "bigquery.bulk_ingest.compression"
+	OptionValueCompressionNone  = "none"
+	OptionValueCompressionLZ4   = "lz4"
+	OptionValueCompressionZSTD  = "zstd"
 )
 
 var (
 	infoVendorVersion string
+
+	// Accept old option values, but document/encourage the new ones
+	optionRemapping = map[string]string{
+		"adbc.bigquery.sql.auth.client_id":                    OptionAuthClientID,
+		"adbc.bigquery.sql.auth.client_secret":                OptionAuthClientSecret,
+		"adbc.bigquery.sql.auth.quota_project":                OptionAuthQuotaProject,
+		"adbc.bigquery.sql.auth.refresh_token":                OptionAuthRefreshToken,
+		"adbc.bigquery.sql.auth_credentials":                  OptionAuthCredentials,
+		"adbc.bigquery.sql.auth_type":                         OptionAuthType,
+		"adbc.bigquery.sql.auth_type.anonymous":               OptionValueAuthTypeAnonymous,
+		"adbc.bigquery.sql.auth_type.app_default_credentials": OptionValueAuthTypeAppDefaultCredentials,
+		"adbc.bigquery.sql.auth_type.auth_bigquery":           OptionValueAuthTypeDefault,
+		"adbc.bigquery.sql.auth_type.json_credential_file":    OptionValueAuthTypeJSONCredentialFile,
+		"adbc.bigquery.sql.auth_type.json_credential_string":  OptionValueAuthTypeJSONCredentialString,
+		"adbc.bigquery.sql.auth_type.json_credentials":        OptionValueAuthTypeJSONCredentials,
+		"adbc.bigquery.sql.auth_type.oauth_client_ids":        OptionValueAuthTypeOAuthClientIDs,
+		"adbc.bigquery.sql.auth_type.user_authentication":     OptionValueAuthTypeUserAuthentication,
+		"adbc.bigquery.sql.dataset_id":                        OptionDatasetID,
+		"adbc.bigquery.sql.endpoint":                          OptionEndpoint,
+		"adbc.bigquery.sql.impersonate.delegates":             OptionImpersonateDelegates,
+		"adbc.bigquery.sql.impersonate.lifetime":              OptionImpersonateLifetime,
+		"adbc.bigquery.sql.impersonate.scopes":                OptionImpersonateScopes,
+		"adbc.bigquery.sql.impersonate.target_principal":      OptionImpersonateTargetPrincipal,
+		"adbc.bigquery.sql.location":                          OptionLocation,
+		"adbc.bigquery.sql.project_id":                        OptionProjectID,
+		"adbc.bigquery.sql.query.allow_large_results":         OptionQueryAllowLargeResults,
+		"adbc.bigquery.sql.query.create_disposition":          OptionQueryCreateDisposition,
+		"adbc.bigquery.sql.query.create_session":              OptionQueryCreateSession,
+		"adbc.bigquery.sql.query.default_dataset_id":          OptionQueryDefaultDatasetID,
+		"adbc.bigquery.sql.query.default_project_id":          OptionQueryDefaultProjectID,
+		"adbc.bigquery.sql.query.destination_table":           OptionQueryDestinationTable,
+		"adbc.bigquery.sql.query.disable_flattened_results":   OptionQueryDisableFlattenedResults,
+		"adbc.bigquery.sql.query.disable_query_cache":         OptionQueryDisableQueryCache,
+		"adbc.bigquery.sql.query.dry_run":                     OptionQueryDryRun,
+		"adbc.bigquery.sql.query.job_timeout":                 OptionQueryJobTimeout,
+		"adbc.bigquery.sql.query.max_billing_tier":            OptionQueryMaxBillingTier,
+		"adbc.bigquery.sql.query.max_bytes_billed":            OptionQueryMaxBytesBilled,
+		"adbc.bigquery.sql.query.parameter_mode":              OptionQueryParameterMode,
+		"adbc.bigquery.sql.query.parameter_mode_named":        OptionValueQueryParameterModeNamed,
+		"adbc.bigquery.sql.query.parameter_mode_positional":   OptionValueQueryParameterModePositional,
+		"adbc.bigquery.sql.query.prefetch_concurrency":        OptionQueryPrefetchConcurrency,
+		"adbc.bigquery.sql.query.priority":                    OptionQueryPriority,
+		"adbc.bigquery.sql.query.result_buffer_size":          OptionQueryResultBufferSize,
+		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
+		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
+		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
+		"adbc.bigquery.sql.table_id":                          OptionTableID,
+	}
 )
+
+// remapOption remaps old option keys/values to new ones, if applicable.
+func remapOption(v string) string {
+	if newV, ok := optionRemapping[v]; ok {
+		return newV
+	}
+	return v
+}
 
 func init() {
 	if info, ok := debug.ReadBuildInfo(); ok {

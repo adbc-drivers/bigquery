@@ -569,28 +569,29 @@ func (c *connectionImpl) NewStatement(ctx context.Context) (adbc.StatementWithCo
 }
 
 func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, error) {
+	key = remapOption(key)
 	switch key {
-	case OptionStringAuthType:
+	case OptionAuthType:
 		return c.authType, nil
 	case OptionAuthCredentialsType:
 		return string(c.credentialsType), nil
-	case OptionStringAuthCredentials:
+	case OptionAuthCredentials:
 		return c.credentials, nil
-	case OptionStringAuthClientID:
+	case OptionAuthClientID:
 		return c.clientID, nil
-	case OptionStringAuthClientSecret:
+	case OptionAuthClientSecret:
 		return c.clientSecret, nil
-	case OptionStringAuthRefreshToken:
+	case OptionAuthRefreshToken:
 		return c.refreshToken, nil
-	case OptionStringAuthQuotaProject:
+	case OptionAuthQuotaProject:
 		return c.quotaProject, nil
-	case OptionStringProjectID:
+	case OptionProjectID:
 		return c.catalog, nil
-	case OptionStringDatasetID:
+	case OptionDatasetID:
 		return c.dbSchema, nil
-	case OptionStringTableID:
+	case OptionTableID:
 		return c.tableID, nil
-	case OptionStringImpersonateLifetime:
+	case OptionImpersonateLifetime:
 		if c.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
 			if c.hasImpersonationOptions() {
@@ -599,12 +600,12 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 			return "", nil
 		}
 		return c.impersonateLifetime.String(), nil
-	case OptionStringBulkIngestMethod:
+	case OptionBulkIngestMethod:
 		if c.bulkIngestMethod == "" {
 			return OptionValueBulkIngestMethodLoad, nil
 		}
 		return c.bulkIngestMethod, nil
-	case OptionStringBulkIngestCompression:
+	case OptionBulkIngestCompression:
 		if c.bulkIngestCompression == "" {
 			return OptionValueCompressionNone, nil
 		}
@@ -615,8 +616,10 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 }
 
 func (c *connectionImpl) SetOption(ctx context.Context, key string, value string) error {
+	key = remapOption(key)
 	switch key {
-	case OptionStringAuthType:
+	case OptionAuthType:
+		value = remapOption(value)
 		c.authType = value
 	case OptionAuthCredentialsType:
 		// N.B. ExternalAccountAuthorizedUser, GDCHServiceAccount aren't re-exported by google.golang.org/api/option
@@ -635,32 +638,32 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 				Msg:  fmt.Sprintf("[bq] unknown %s=%s", key, value),
 			}
 		}
-	case OptionStringAuthCredentials:
+	case OptionAuthCredentials:
 		c.credentials = value
-	case OptionStringAuthClientID:
+	case OptionAuthClientID:
 		c.clientID = value
-	case OptionStringAuthClientSecret:
+	case OptionAuthClientSecret:
 		c.clientSecret = value
-	case OptionStringAuthRefreshToken:
+	case OptionAuthRefreshToken:
 		c.refreshToken = value
-	case OptionStringAuthQuotaProject:
+	case OptionAuthQuotaProject:
 		c.quotaProject = value
-	case OptionStringImpersonateTargetPrincipal:
+	case OptionImpersonateTargetPrincipal:
 		c.impersonateTargetPrincipal = value
-	case OptionStringImpersonateDelegates:
+	case OptionImpersonateDelegates:
 		c.impersonateDelegates = strings.Split(value, ",")
-	case OptionStringImpersonateScopes:
+	case OptionImpersonateScopes:
 		c.impersonateScopes = strings.Split(value, ",")
-	case OptionStringImpersonateLifetime:
+	case OptionImpersonateLifetime:
 		dur, err := time.ParseDuration(value)
 		if err != nil {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("Invalid duration string for %s: %s", OptionStringImpersonateLifetime, err.Error()),
+				Msg:  fmt.Sprintf("Invalid duration string for %s: %s", OptionImpersonateLifetime, err.Error()),
 			}
 		}
 		c.impersonateLifetime = dur
-	case OptionStringBulkIngestMethod:
+	case OptionBulkIngestMethod:
 		if value != OptionValueBulkIngestMethodLoad &&
 			value != OptionValueBulkIngestMethodStorageWrite {
 			return adbc.Error{
@@ -669,7 +672,7 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 			}
 		}
 		c.bulkIngestMethod = value
-	case OptionStringBulkIngestCompression:
+	case OptionBulkIngestCompression:
 		if value != OptionValueCompressionNone &&
 			value != OptionValueCompressionLZ4 &&
 			value != OptionValueCompressionZSTD {
@@ -686,10 +689,11 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 }
 
 func (c *connectionImpl) GetOptionInt(ctx context.Context, key string) (int64, error) {
+	key = remapOption(key)
 	switch key {
-	case OptionIntQueryResultBufferSize:
+	case OptionQueryResultBufferSize:
 		return int64(c.resultRecordBufferSize), nil
-	case OptionIntQueryPrefetchConcurrency:
+	case OptionQueryPrefetchConcurrency:
 		return int64(c.prefetchConcurrency), nil
 	default:
 		return c.ConnectionImplBase.GetOptionInt(ctx, key)
@@ -697,11 +701,12 @@ func (c *connectionImpl) GetOptionInt(ctx context.Context, key string) (int64, e
 }
 
 func (c *connectionImpl) SetOptionInt(ctx context.Context, key string, value int64) error {
+	key = remapOption(key)
 	switch key {
-	case OptionIntQueryResultBufferSize:
+	case OptionQueryResultBufferSize:
 		c.resultRecordBufferSize = int(value)
 		return nil
-	case OptionIntQueryPrefetchConcurrency:
+	case OptionQueryPrefetchConcurrency:
 		c.prefetchConcurrency = int(value)
 		return nil
 	default:
@@ -756,19 +761,19 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		if c.clientID == "" {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthClientID),
+				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthClientID),
 			}
 		}
 		if c.clientSecret == "" {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthClientSecret),
+				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthClientSecret),
 			}
 		}
 		if c.refreshToken == "" {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionStringAuthRefreshToken),
+				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthRefreshToken),
 			}
 		}
 		c.Logger.Debug("Using user OAuth authentication")
@@ -797,7 +802,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		if c.impersonateTargetPrincipal == "" {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty for impersonation", OptionStringImpersonateTargetPrincipal),
+				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty for impersonation", OptionImpersonateTargetPrincipal),
 			}
 		}
 
@@ -1106,9 +1111,6 @@ func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	case bigquery.IntervalFieldType:
 		field.Type = arrow.FixedWidthTypes.MonthDayNanoInterval
 	default:
-		// TODO: unsupported ones are:
-		// - bigquery.IntervalFieldType
-		// - bigquery.RangeFieldType
 		return arrow.Field{}, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("Google SQL type `%s` is not supported yet", schema.Type),
