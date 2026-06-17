@@ -45,6 +45,8 @@ import (
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type connectionImpl struct {
@@ -72,7 +74,8 @@ type connectionImpl struct {
 	// tableID is the default table for statement
 	tableID string
 	// endpoint is the custom BigQuery API endpoint
-	endpoint string
+	endpoint        string
+	storageEndpoint string
 
 	sessionID *string
 
@@ -774,6 +777,9 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		c.Logger.Debug("Using Application Default Credentials (ADC)", "authType", c.authType)
 		// Use Application Default Credentials (default behavior)
 		// No additional options needed - ADC is used by default
+	case OptionValueAuthTypeAnonymous:
+		c.Logger.Debug("Using anonymous authentication")
+		authOptions = append(authOptions, option.WithoutAuthentication())
 	default:
 		return adbc.Error{
 			Code: adbc.StatusInvalidArgument,
@@ -836,7 +842,13 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	}
 
 	// Use original authOptions without custom endpoint for Storage Read API
-	err = client.EnableStorageReadClient(ctx, authOptions...)
+	storageAuthOptions := authOptions
+	if c.storageEndpoint != "" {
+		storageAuthOptions = append(storageAuthOptions, option.WithEndpoint(c.storageEndpoint))
+		// assume insecure since the purpose of this is to use the emulator, which does not use TLS
+		storageAuthOptions = append(storageAuthOptions, option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+	}
+	err = client.EnableStorageReadClient(ctx, storageAuthOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "enable storage read client")
 	}

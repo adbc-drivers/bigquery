@@ -53,11 +53,12 @@ type databaseImpl struct {
 	// projectID is the catalog
 	projectID string
 	// datasetID is the schema
-	datasetID    string
-	tableID      string
-	location     string
-	quotaProject string
-	endpoint     string
+	datasetID       string
+	tableID         string
+	location        string
+	quotaProject    string
+	endpoint        string
+	storageEndpoint string
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
@@ -81,6 +82,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		dbSchema:                   d.datasetID,
 		location:                   d.location,
 		endpoint:                   d.endpoint,
+		storageEndpoint:            d.storageEndpoint,
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
@@ -129,6 +131,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.tableID, nil
 	case OptionStringEndpoint:
 		return d.endpoint, nil
+	case OptionStringStorageEndpoint:
+		return d.storageEndpoint, nil
 	case OptionStringImpersonateLifetime:
 		if d.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
@@ -200,7 +204,8 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			OptionValueAuthTypeJSONCredentialFile,
 			OptionValueAuthTypeJSONCredentialString,
 			OptionValueAuthTypeUserAuthentication,
-			OptionValueAuthTypeAppDefaultCredentials:
+			OptionValueAuthTypeAppDefaultCredentials,
+			OptionValueAuthTypeAnonymous:
 			d.authType = value
 		default:
 			return adbc.Error{
@@ -258,6 +263,8 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.tableID = value
 	case OptionStringEndpoint:
 		d.endpoint = value
+	case OptionStringStorageEndpoint:
+		d.storageEndpoint = value
 	case OptionStringLocation:
 		d.location = value
 	case OptionStringBulkIngestMethod:

@@ -91,6 +91,10 @@ Components:
 Reserved characters in URI elements must be URI-encoded. For example, `@` becomes `%40`.
 :::
 
+:::{note}
+Overriding the endpoint via the URI will lead to HTTPS always being assumed.
+:::
+
 Examples:
 
 - `bigquery:///my-project-123` (uses Application Default Credentials)
