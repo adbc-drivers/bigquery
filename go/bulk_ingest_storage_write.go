@@ -101,6 +101,7 @@ func (impl *storageWriteBulkIngestImpl) Init(ctx context.Context) error {
 	// update schema/prepare to transform batches
 	// TODO: this needs to be generalized to cover lists; we have to remove null list values and splice in empty lists instead.
 	// TODO: we need an option to allow unsafe casts
+	// TODO: actually use the compression option
 	fields := make([]arrow.Field, len(impl.schema.Fields()))
 	for i, field := range impl.schema.Fields() {
 		fields[i] = field

@@ -1693,7 +1693,6 @@ func TestBigQueryURIParsing(t *testing.T) {
 		expectedLocation             string
 		expectedEndpoint             string
 		expectedQuotaProject         string
-		expectedTableID              string
 		expectedImpersonateTarget    string
 		expectedImpersonateLifetime  string
 		expectedImpersonateDelegates string
@@ -1815,11 +1814,10 @@ func TestBigQueryURIParsing(t *testing.T) {
 		},
 		{
 			name:              "table id parameter",
-			uri:               "bigquery:///my-project-123?OAuthType=0&DatasetId=test&TableId=my_table",
+			uri:               "bigquery:///my-project-123?OAuthType=0&DatasetId=test",
 			expectedProjectID: "my-project-123",
 			expectedDatasetID: "test",
 			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			expectedTableID:   "my_table",
 		},
 		{
 			name:                        "impersonation parameters",
@@ -1859,13 +1857,12 @@ func TestBigQueryURIParsing(t *testing.T) {
 		},
 		{
 			name:                      "all optional parameters",
-			uri:                       "bigquery:///my-project-123?OAuthType=0&DatasetId=analytics&Location=EU&QuotaProject=billing&TableId=orders&ImpersonateTargetPrincipal=svc@example.com",
+			uri:                       "bigquery:///my-project-123?OAuthType=0&DatasetId=analytics&Location=EU&QuotaProject=billing&ImpersonateTargetPrincipal=svc@example.com",
 			expectedProjectID:         "my-project-123",
 			expectedDatasetID:         "analytics",
 			expectedAuthType:          driver.OptionValueAuthTypeAppDefaultCredentials,
 			expectedLocation:          "EU",
 			expectedQuotaProject:      "billing",
-			expectedTableID:           "orders",
 			expectedImpersonateTarget: "svc@example.com",
 		},
 		{
@@ -1971,9 +1968,6 @@ func TestBigQueryURIParsing(t *testing.T) {
 			}
 			if tt.expectedQuotaProject != "" {
 				assert.Equal(t, tt.expectedQuotaProject, params[driver.OptionAuthQuotaProject], "quota project mismatch")
-			}
-			if tt.expectedTableID != "" {
-				assert.Equal(t, tt.expectedTableID, params[driver.OptionTableID], "table ID mismatch")
 			}
 			if tt.expectedImpersonateTarget != "" {
 				assert.Equal(t, tt.expectedImpersonateTarget, params[driver.OptionImpersonateTargetPrincipal], "impersonate target mismatch")
@@ -2272,7 +2266,7 @@ func (suite *BigQueryTests) TestOldOptionNames() {
 }
 
 func TestOldOptionNamesURI(t *testing.T) {
-	params, err := driver.ParseBigQueryURIToParams("bigquery:///project?OAuthType=3&AuthClientId=client&AuthClientSecret=secret&AuthRefreshToken=token&DatasetId=dataset&Location=US&TableId=table&QuotaProject=quota&ImpersonateTargetPrincipal=svc@example.com&ImpersonateDelegates=delegate@example.com&ImpersonateScopes=scope&ImpersonateLifetime=1800s")
+	params, err := driver.ParseBigQueryURIToParams("bigquery:///project?OAuthType=3&AuthClientId=client&AuthClientSecret=secret&AuthRefreshToken=token&DatasetId=dataset&Location=US&QuotaProject=quota&ImpersonateTargetPrincipal=svc@example.com&ImpersonateDelegates=delegate@example.com&ImpersonateScopes=scope&ImpersonateLifetime=1800s")
 	require.NoError(t, err)
 
 	assert.Equal(t, "project", params[driver.OptionProjectID])
@@ -2282,7 +2276,6 @@ func TestOldOptionNamesURI(t *testing.T) {
 	assert.Equal(t, "token", params[driver.OptionAuthRefreshToken])
 	assert.Equal(t, "dataset", params[driver.OptionDatasetID])
 	assert.Equal(t, "US", params[driver.OptionLocation])
-	assert.Equal(t, "table", params[driver.OptionTableID])
 	assert.Equal(t, "quota", params[driver.OptionAuthQuotaProject])
 	assert.Equal(t, "svc@example.com", params[driver.OptionImpersonateTargetPrincipal])
 	assert.Equal(t, "delegate@example.com", params[driver.OptionImpersonateDelegates])

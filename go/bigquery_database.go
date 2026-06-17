@@ -54,7 +54,6 @@ type databaseImpl struct {
 	projectID string
 	// datasetID is the schema
 	datasetID       string
-	tableID         string
 	location        string
 	quotaProject    string
 	endpoint        string
@@ -77,7 +76,6 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		impersonateDelegates:       d.impersonateDelegates,
 		impersonateScopes:          d.impersonateScopes,
 		impersonateLifetime:        d.impersonateLifetime,
-		tableID:                    d.tableID,
 		catalog:                    d.projectID,
 		dbSchema:                   d.datasetID,
 		location:                   d.location,
@@ -128,8 +126,6 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.projectID, nil
 	case OptionDatasetID:
 		return d.datasetID, nil
-	case OptionTableID:
-		return d.tableID, nil
 	case OptionEndpoint:
 		return d.endpoint, nil
 	case OptionStorageEndpoint:
@@ -263,8 +259,6 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.projectID = value
 	case OptionDatasetID:
 		d.datasetID = value
-	case OptionTableID:
-		d.tableID = value
 	case OptionEndpoint:
 		d.endpoint = value
 	case OptionStorageEndpoint:
@@ -439,7 +433,6 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	parameterMap := map[string]string{
 		"DatasetId":    OptionDatasetID,
 		"Location":     OptionLocation,
-		"TableId":      OptionTableID,
 		"QuotaProject": OptionAuthQuotaProject,
 
 		// Auth parameters - processed in OAuthType switch above, here for consistency

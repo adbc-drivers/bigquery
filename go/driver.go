@@ -42,7 +42,6 @@ const (
 	OptionLocation            = "bigquery.location"
 	OptionProjectID           = "bigquery.project_id"
 	OptionDatasetID           = "bigquery.dataset_id"
-	OptionTableID             = "bigquery.table_id"
 	OptionEndpoint            = "bigquery.endpoint"
 	OptionStorageEndpoint     = "bigquery.storage_endpoint"
 
@@ -181,7 +180,6 @@ var (
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
 		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
-		"adbc.bigquery.sql.table_id":                          OptionTableID,
 	}
 )
 

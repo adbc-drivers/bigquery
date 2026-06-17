@@ -71,8 +71,6 @@ type connectionImpl struct {
 	catalog string
 	// dbSchema is the same as the dataset id in BigQuery
 	dbSchema string
-	// tableID is the default table for statement
-	tableID string
 	// endpoint is the custom BigQuery API endpoint
 	endpoint        string
 	storageEndpoint string
@@ -589,8 +587,6 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.catalog, nil
 	case OptionDatasetID:
 		return c.dbSchema, nil
-	case OptionTableID:
-		return c.tableID, nil
 	case OptionImpersonateLifetime:
 		if c.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
