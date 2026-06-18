@@ -322,6 +322,7 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Q
 
 	ch := make(chan arrow.RecordBatch, resultRecordBufferSize)
 	group, ctx := errgroup.WithContext(ctx)
+	// TODO(lidavidm): we never actually make use of concurrency
 	group.SetLimit(prefetchConcurrency)
 	ctx, cancelFn := context.WithCancel(ctx)
 	chs[0] = ch
