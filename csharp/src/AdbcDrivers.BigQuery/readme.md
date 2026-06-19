@@ -126,21 +126,21 @@ There are some limitations to both C# and the C# Arrow implementation that limit
 
 The following table depicts how the BigQuery ADBC driver converts a BigQuery type to an Arrow type.
 
-|  BigQuery Type   |      Arrow Type   | C# Type
-|----------|:-------------:|
-| BIGNUMERIC |    Decimal256    | string
-| BOOL |    Boolean   | bool
-| BYTES |    Binary   | byte[]
-| DATE |    Date32   | DateTime
-| DATETIME |    Timestamp   | DateTime
-| FLOAT64 |    Double   | double
-| GEOGRAPHY |    String   | string
-| INT64 |    Int64   | long
-| NUMERIC |    Decimal128   | SqlDecimal
-| STRING |    String   | string
-| STRUCT |    String+   | string
-| TIME |Time64   | long
-| TIMESTAMP |    Timestamp   | DateTimeOffset
+| BigQuery Type | Arrow Type | C# Type |
+| ----------    | :--------: | :---    |
+| BIGNUMERIC | Decimal256    | string |
+| BOOL       | Boolean       | bool |
+| BYTES      | Binary        | byte[] |
+| DATE       | Date32        | DateTime |
+| DATETIME   | Timestamp     | DateTime |
+| FLOAT64    | Double        | double |
+| GEOGRAPHY  | String        | string |
+| INT64      | Int64         | long |
+| NUMERIC    | Decimal128    | SqlDecimal |
+| STRING     | String        | string |
+| STRUCT     | String+       | string |
+| TIME       | Time64        | long |
+| TIMESTAMP  | Timestamp     | DateTimeOffset |
 
 +A JSON string
 
