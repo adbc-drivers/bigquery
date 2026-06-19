@@ -730,7 +730,13 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 			// cannot use the default format, which will cause errors like
 			//   googleapi: Error 400: Unparsable query parameter `` in type `TYPE_TIME`,
 			//   Invalid time string "00:00:00.000000001" value: '00:00:00.000000001', invalid
-			qpv.Value = value.(*array.Time64).Value(i).FormattedString(arrow.Microsecond)
+			unit := value.DataType().(*arrow.Time64Type).Unit
+			v := value.(*array.Time64).Value(i)
+			if unit == arrow.Nanosecond {
+				// BigQuery TIME only supports up to microsecond precision
+				v = v / 1000
+			}
+			qpv.Value = v.FormattedString(arrow.Microsecond)
 		}
 	case arrow.DECIMAL128, arrow.DECIMAL256:
 		if isNull {

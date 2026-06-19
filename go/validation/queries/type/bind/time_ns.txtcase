@@ -15,7 +15,7 @@
 // part: metadata
 
 [tags]
-broken-driver = "https://github.com/adbc-drivers/bigquery/issues/86"
+caveats = ["BigQuery does not support nanoseconds; the driver will truncate to microseconds"]
 
 // part: setup_query
 
@@ -38,7 +38,6 @@ CREATE TABLE test_time (
 }
 
 // part: expected
-
 {"res": 0}
 {"res": null}
 {"res": 49531123456}
