@@ -57,7 +57,8 @@ namespace AdbcDrivers.BigQuery.Tests
 
             foreach (BigQueryTestEnvironment environment in _environments)
             {
-                DirectoryInfo directoryInfo = GetTracesDirectoryInfo();
+                string tracesLocationSubfolder = Guid.NewGuid().ToString("N");
+                DirectoryInfo directoryInfo = GetTracesDirectoryInfo(tracesLocationSubfolder);
                 ResetTraceDirectory(directoryInfo);
 
                 directoryInfo.Refresh();
@@ -68,6 +69,7 @@ namespace AdbcDrivers.BigQuery.Tests
                 try
                 {
                     Dictionary<string, string> parameters = BigQueryTestingUtils.GetBigQueryParameters(environment);
+                    parameters[ListenersOptions.AdbcFile.Location] = directoryInfo.FullName;
                     using (AdbcDatabase database = new BigQueryDriver().Open(parameters))
                     {
                         try
@@ -118,10 +120,11 @@ namespace AdbcDrivers.BigQuery.Tests
             }
         }
 
-        private static DirectoryInfo GetTracesDirectoryInfo() =>
+        private static DirectoryInfo GetTracesDirectoryInfo(string tracesLocationFolder) =>
             new DirectoryInfo(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Apache.Arrow.Adbc",
-                "Traces"));
+                "Traces",
+                tracesLocationFolder));
     }
 }
