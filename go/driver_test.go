@@ -478,7 +478,8 @@ func buildSamplePrimitiveTypeRecord(mem memory.Allocator, schema, bigquery *arro
 	bytesData := [][]byte{[]byte("first"), []byte("second"), []byte("third")}
 	booleans := []bool{true, false, true}
 	date32s := []arrow.Date32{1, 2, 3}
-	arrowTime64s := []arrow.Time64{1, 2, 3}
+	arrowTime64ns := []arrow.Time64{1000, 2000, 3000}
+	arrowTime64us := []arrow.Time64{1, 2, 3}
 	arrowTime32s := []arrow.Time32{1, 2, 3}
 	arrowTimestampNs := []arrow.Timestamp{1000000000, 2000000000, 3000000000}
 	arrowTimestampUs := []arrow.Timestamp{1000000, 2000000, 3000000}
@@ -490,8 +491,8 @@ func buildSamplePrimitiveTypeRecord(mem memory.Allocator, schema, bigquery *arro
 	bldr.Field(3).(*array.BinaryBuilder).AppendValues(bytesData, nil)
 	bldr.Field(4).(*array.BooleanBuilder).AppendValues(booleans, nil)
 	bldr.Field(5).(*array.Date32Builder).AppendValues(date32s, nil)
-	bldr.Field(6).(*array.Time64Builder).AppendValues(arrowTime64s, nil)
-	bldr.Field(7).(*array.Time64Builder).AppendValues(arrowTime64s, nil)
+	bldr.Field(6).(*array.Time64Builder).AppendValues(arrowTime64ns, nil)
+	bldr.Field(7).(*array.Time64Builder).AppendValues(arrowTime64us, nil)
 	bldr.Field(8).(*array.Time32Builder).AppendValues(arrowTime32s, nil)
 	bldr.Field(9).(*array.Time32Builder).AppendValues(arrowTime32s, nil)
 	bldr.Field(10).(*array.TimestampBuilder).AppendValues(arrowTimestampNs, nil)
@@ -507,8 +508,9 @@ func buildSamplePrimitiveTypeRecord(mem memory.Allocator, schema, bigquery *arro
 	bldr2.Field(3).(*array.BinaryBuilder).AppendValues(bytesData, nil)
 	bldr2.Field(4).(*array.BooleanBuilder).AppendValues(booleans, nil)
 	bldr2.Field(5).(*array.Date32Builder).AppendValues(date32s, nil)
-	bldr2.Field(6).(*array.Time64Builder).AppendValues(arrowTime64s, nil)
-	bldr2.Field(7).(*array.Time64Builder).AppendValues(arrowTime64s, nil)
+	// BigQuery only supports microseconds, so nanoseconds come out as microseconds
+	bldr2.Field(6).(*array.Time64Builder).AppendValues(arrowTime64us, nil)
+	bldr2.Field(7).(*array.Time64Builder).AppendValues(arrowTime64us, nil)
 	bldr2.Field(8).(*array.Time64Builder).AppendValues(bigQueryTime32msAsTime64us, nil)
 	bldr2.Field(9).(*array.Time64Builder).AppendValues(bigQueryTime32sAsTime64us, nil)
 	bldr2.Field(10).(*array.TimestampBuilder).AppendValues(bigQueryTimestamps, nil)
