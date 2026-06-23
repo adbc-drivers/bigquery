@@ -220,10 +220,10 @@ Use either the environment variable `OTEL_TRACES_EXPORTER` or the parameter `adb
 supported exporters. The parameter has precedence over the environment variable. The parameter must be set before
 the connection is initialized.
 
-The following exporters are supported:
+The following exporters are supported: `adbcfile`.
 
-| Exporter | Description | Default Value |
-| :---     | :---        | :---          |
+| Tracing Parameters | Description | Default Value |
+| :---               | :---        | :---          |
 | `adbc.traces.exporter` | Exports traces to rotating files in a folder. Supported: `adbcfile` | |
 | `adbc.traces.exporter.adbcfile.location` | The location where ADBC file traces will be stored. | See [File Exporter](#file-exporter) for `adbcflie` |
 | `adbc.traces.exporter.adbcfile.maxtracesizekb` | The maximum size of a single ADBC file trace in kilobytes. | `1024` |
