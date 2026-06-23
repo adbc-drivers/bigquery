@@ -126,21 +126,21 @@ There are some limitations to both C# and the C# Arrow implementation that limit
 
 The following table depicts how the BigQuery ADBC driver converts a BigQuery type to an Arrow type.
 
-|  BigQuery Type   |      Arrow Type   | C# Type
-|----------|:-------------:|
-| BIGNUMERIC |    Decimal256    | string
-| BOOL |    Boolean   | bool
-| BYTES |    Binary   | byte[]
-| DATE |    Date32   | DateTime
-| DATETIME |    Timestamp   | DateTime
-| FLOAT64 |    Double   | double
-| GEOGRAPHY |    String   | string
-| INT64 |    Int64   | long
-| NUMERIC |    Decimal128   | SqlDecimal
-| STRING |    String   | string
-| STRUCT |    String+   | string
-| TIME |Time64   | long
-| TIMESTAMP |    Timestamp   | DateTimeOffset
+| BigQuery Type | Arrow Type | C# Type |
+| ----------    | :--------: | :---    |
+| BIGNUMERIC | Decimal256    | string |
+| BOOL       | Boolean       | bool |
+| BYTES      | Binary        | byte[] |
+| DATE       | Date32        | DateTime |
+| DATETIME   | Timestamp     | DateTime |
+| FLOAT64    | Double        | double |
+| GEOGRAPHY  | String        | string |
+| INT64      | Int64         | long |
+| NUMERIC    | Decimal128    | SqlDecimal |
+| STRING     | String        | string |
+| STRUCT     | String+       | string |
+| TIME       | Time64        | long |
+| TIMESTAMP  | Timestamp     | DateTimeOffset |
 
 +A JSON string
 
@@ -220,24 +220,27 @@ Use either the environment variable `OTEL_TRACES_EXPORTER` or the parameter `adb
 supported exporters. The parameter has precedence over the environment variable. The parameter must be set before
 the connection is initialized.
 
-The following exporters are supported:
+The following exporters are supported: `adbcfile`.
 
-| Exporter | Description |
-| --- | --- |
-| `adbcfile` | Exports traces to rotating files in a folder. |
+| Tracing Parameters | Description | Default Value |
+| :---               | :---        | :---          |
+| `adbc.traces.exporter` | Exports traces to rotating files in a folder. Supported: `adbcfile` | |
+| `adbc.traces.exporter.adbcfile.location` | The location where ADBC file traces will be stored. | See [File Exporter](#file-exporter) for `adbcflie` |
+| `adbc.traces.exporter.adbcfile.maxtracesizekb` | The maximum size of a single ADBC file trace in kilobytes. | `1024` |
+| `adbc.traces.exporter.adbcfile.maxtracefiles` | The maximum number of ADBC file traces to retain. | `999` |
 
-#### File Exporter (adbcfile)
+#### File Exporter
 
-Rotating trace files are written to a folder. The file names are created with the following pattern:
+For the `adbcfile` exporter, rotating trace files are written to a folder. The file names are created with the following pattern:
 `apache.arrow.adbc.drivers.bigquery-<YYYY-MM-DD-HH-mm-ss-fff>-<process-id>.log`.
 
 The folder used depends on the platform.
 
 | Platform | Folder |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%/Apache.Arrow.Adbc/Traces` |
-| macOS   | `$HOME/Library/Application Support/Apache.Arrow.Adbc/Traces` |
-| Linux   | `$HOME/.local/share/Apache.Arrow.Adbc/Traces` |
+| ---      | ---    |
+| Windows  | `%LOCALAPPDATA%/Apache.Arrow.Adbc/Traces` |
+| macOS    | `$HOME/Library/Application Support/Apache.Arrow.Adbc/Traces` |
+| Linux    | `$HOME/.local/share/Apache.Arrow.Adbc/Traces` |
 
 By default, up to 999 files of maximum size 1024 KB are written to
 the trace folder.

@@ -24,6 +24,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -246,9 +247,26 @@ namespace AdbcDrivers.BigQuery
         private bool TryInitTracerProvider(out FileActivityListener? fileActivityListener)
         {
             properties.TryGetValue(ListenersOptions.Exporter, out string? exporterOption);
+            properties.TryGetValue(ListenersOptions.AdbcFile.Location, out string? adbcFileLocation);
+            properties.TryGetValue(ListenersOptions.AdbcFile.MaxTraceFileSizeKb, out string? maxTraceFileSizeKbOption);
+            properties.TryGetValue(ListenersOptions.AdbcFile.MaxTraceFiles, out string? maxTraceFilesOption);
+            long maxTraceFileSizeKb = long.TryParse(maxTraceFileSizeKbOption, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedMaxTraceFileSizeKb) && parsedMaxTraceFileSizeKb > 0
+                ? parsedMaxTraceFileSizeKb
+                : FileActivityListener.MaxFileSizeKbDefault;
+            int maxTraceFiles = int.TryParse(maxTraceFilesOption, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedMaxTraceFiles) && parsedMaxTraceFiles > 0
+                ? parsedMaxTraceFiles
+                : FileActivityListener.MaxTraceFilesDefault;
+
             // This listener will only listen for activity from this specific connection instance.
             bool shouldListenTo(ActivitySource source) => source.Tags?.Any(t => ReferenceEquals(t.Key, _traceInstanceId)) == true;
-            return FileActivityListener.TryActivateFileListener(AssemblyName, exporterOption, out fileActivityListener, shouldListenTo: shouldListenTo);
+            return FileActivityListener.TryActivateFileListener(
+                AssemblyName,
+                exporterOption,
+                out fileActivityListener,
+                shouldListenTo: shouldListenTo,
+                tracesLocation: adbcFileLocation,
+                maxTraceFileSizeKb: maxTraceFileSizeKb,
+                maxTraceFiles: maxTraceFiles);
         }
 
         public override IEnumerable<KeyValuePair<string, object?>>? GetActivitySourceTags(IReadOnlyDictionary<string, string> properties)
