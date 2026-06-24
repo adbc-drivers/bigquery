@@ -13,12 +13,16 @@
 # limitations under the License.
 
 driver = "bigquery"
-environment = "BigQuery CI"
 private = false
 gcloud = true
 
-[lang]
-go = true
+[lang.go.test]
+environment = "BigQuery CI"
+
+[lang.go.validation]
+[[lang.go.validation.configs]]
+environment = "BigQuery CI"
+vendor_version = "latest"
 
 [secrets]
 GOOGLE_CLOUD_PROJECT = { secret = "GOOGLE_CLOUD_PROJECT", contexts = ["test", "validate"] }
