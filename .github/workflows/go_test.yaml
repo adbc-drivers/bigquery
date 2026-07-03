@@ -95,7 +95,7 @@ jobs:
           # https://github.com/actions/runner-images/issues/2840
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -103,7 +103,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
           submodules: 'recursive'
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           cache: true
           cache-dependency-path: go/go.sum
@@ -219,7 +219,7 @@ jobs:
           # https://github.com/actions/runner-images/issues/2840
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -227,7 +227,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -236,7 +236,7 @@ jobs:
           persist-credentials: false
           submodules: 'recursive'
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           cache: true
           cache-dependency-path: go/go.sum
@@ -364,7 +364,7 @@ jobs:
       packages: read
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -372,7 +372,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -381,7 +381,7 @@ jobs:
           persist-credentials: false
           submodules: 'recursive'
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           cache: true
           cache-dependency-path: go/go.sum
@@ -437,7 +437,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -445,7 +445,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -454,7 +454,7 @@ jobs:
           persist-credentials: false
           submodules: 'recursive'
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           cache: true
           check-latest: true
@@ -534,7 +534,7 @@ jobs:
           - { platform: windows, arch: amd64, runner: windows-latest }
     steps:
       # for now, install dbc from main
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           cache: true
           go-version: 'stable'
@@ -559,14 +559,14 @@ jobs:
           echo "Installing ${driver_pkg}"
           ./dbc install --no-verify "${driver_pkg}"
           echo "Installed ${driver_pkg}"
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 1
           persist-credentials: false
           submodules: 'recursive'
       - name: "checkout remote"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
@@ -603,7 +603,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name != 'workflow_dispatch'
         with:
           fetch-depth: 0
@@ -611,7 +611,7 @@ jobs:
           submodules: 'recursive'
 
       - name: "checkout remote"
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: github.event_name == 'workflow_dispatch'
         with:
           repository: ${{ inputs.repository }}
