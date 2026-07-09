@@ -18,8 +18,8 @@ go 1.26.5
 
 require (
 	cloud.google.com/go/auth v0.21.0
-	cloud.google.com/go/bigquery v1.77.0
-	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260708063157-ff75c82f586f
+	cloud.google.com/go/bigquery v1.78.0
+	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260709224448-9f4c81e2d6c0
 	github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20260423045143-148150eea03b
 	github.com/adbc-drivers/driverbase-go/validation v0.0.0-20260423045143-148150eea03b
 	github.com/apache/arrow-adbc/go/adbc v1.11.0
@@ -29,7 +29,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
-	google.golang.org/api v0.287.1
+	google.golang.org/api v0.288.0
 	google.golang.org/grpc v1.82.0
 )
 
@@ -69,13 +69,13 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
+	golang.org/x/exp v0.0.0-20260709172345-9ea1abe57597 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/genproto v0.0.0-20260706201446-f0a921348800 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
