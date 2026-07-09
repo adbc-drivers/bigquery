@@ -162,7 +162,7 @@ git -c core.editor=true rebase --continue
 - **Skip (trivial)** — comment/import/whitespace cleanup with no
   observable behavior change.
 
-## Ported commits (17)
+## Ported commits (18)
 
 Ordered by original author date (oldest first). Every port preserves the
 original author's name/email/date so a `git format-patch` produces a clean
@@ -174,21 +174,22 @@ patch attributable to them.
 | 2 | [#29](https://github.com/dbt-labs/arrow-adbc/pull/29) | `400da64e5` | Mila Page | 2025-06-24 | Preliminary CSV file ingest support (dbt seeds). New file `csv_ingest.go`. Adds `adbc.bigquery.ingest.{csv_filepath,csv_delimiter,csv_schema}` options + `SetOptionBytes` handler for IPC-encoded schema. |
 | 3 | [#34](https://github.com/dbt-labs/arrow-adbc/pull/34) | `13711b856` | Xuliang (Harry) Sun | 2025-06-30 | `adbc.bigquery.table.update_columns_description` — JSON `{col: desc}` map, `Table.Update` on the destination table. New file `table_ops.go`. |
 | 4 | [#37](https://github.com/dbt-labs/arrow-adbc/pull/37) | `e51c22694` | Xuliang (Harry) Sun | 2025-07-10 | Authorized views support — adds view as `AccessEntry` on source datasets; idempotent. |
-| 5 | [#76](https://github.com/dbt-labs/arrow-adbc/pull/76) | `86e382780` | Lucas Valente | 2025-10-03 | `adbc.bigquery.sql.query.labels` — JSON object of BigQuery job labels. Used by fs adapter for invocation-id / model-name propagation. |
-| 6 | [#80](https://github.com/dbt-labs/arrow-adbc/pull/80) | `d8b3f2a8b` | Anna Lee | 2025-10-24 | `adbc.bigquery.sql.query.link_failed_job` — actually wraps `runQuery` errors with a BigQuery web-console URL when set. Threaded through `runPlainQuery`, `queryRecordWithSchemaCallback`, `newRecordReader`. |
-| 7 | [#86](https://github.com/dbt-labs/arrow-adbc/pull/86) | `a0ac7f004` | Anna Lee | 2025-11-12 | Publishes `BIGQUERY:query_id` on the Arrow schema metadata using the executing job's ID. `runQuery` sets `query.JobID = job.ID()`; `metadataFromJobStatistics` gains a `jobID` param; `ipcReaderFromArrowIterator`, `makeDryRunReader`, and `ExecuteSchema` all thread it through. |
-| 8 | [#94](https://github.com/dbt-labs/arrow-adbc/pull/94) | `fad437ac7` | Zoltan Ersek | 2025-11-24 | Python models via Dataproc (serverless batch + cluster job) + GCS write. New file `python_models.go`. Pulls in `cloud.google.com/go/dataproc/v2`, `cloud.google.com/go/storage`, `gopkg.in/yaml.v3`, `google.golang.org/protobuf/encoding/protojson`. |
-| 9 | [#96](https://github.com/dbt-labs/arrow-adbc/pull/96) part 1 | `a79555b0f` | Xuliang (Harry) Sun | 2025-12-08 | `use_storage_api_disabled_client` — full path. `ContextKeyUseStorageApiDisabledClient` propagates the intent into `runQuery`; when set, `runQuery` wraps `bigquery.RowIterator` in a new `RowBasedArrowIterator` (see `row_based_iterator.go`) that batches rows into Arrow record batches so pseudo-columns like `_PARTITIONDATE` return values instead of nulls. |
-| 10 | [#96](https://github.com/dbt-labs/arrow-adbc/pull/96) part 2 | `a79555b0f` | Xuliang (Harry) Sun | 2025-12-08 | `adbc.bigquery.copy_table.{source,destination,write_disposition}` — server-side BigQuery `Copier`. Split into its own commit for reviewability. |
-| 11 | [#97](https://github.com/dbt-labs/arrow-adbc/pull/97) | `9ebc9900f` | Zoltan Ersek | 2025-12-08 | Python models via Vertex AI Notebooks (bigframes). Adds `notebook_execute_job.*` options and Notebook client creation. Pulls in `cloud.google.com/go/aiplatform`. |
-| 12 | [#108](https://github.com/dbt-labs/arrow-adbc/pull/108) | `51466a2dc` | Xuliang (Harry) Sun | 2026-02-11 | `adbc.bigquery.table.update_description` — table-level description update (no schema change). |
-| 13 | [#120](https://github.com/dbt-labs/arrow-adbc/pull/120) | `1850d6103` | Mila Page | 2026-03-30 | Backward-compat alias `adbc.bigquery.sql.api_endpoint` → `adbc.bigquery.sql.endpoint`. Lets fs's `dbt-xdbc/src/bigquery.rs` keep using the legacy name unchanged. |
-| 14 | [#121](https://github.com/dbt-labs/arrow-adbc/pull/121) | `ace9cd8a1` | Mila Page | 2026-03-31 | `bigQueryFieldTypeFromMetadata` + IPC `BIGQUERY:type` override in `arrowFieldToBigQueryField`. Round-trips DATETIME/NUMERIC/BIGNUMERIC/JSON/GEOGRAPHY/INTERVAL through Arrow. Supersedes `#118`. |
-| 15 | [#127](https://github.com/dbt-labs/arrow-adbc/pull/127) | `0c7a2146e` | Lucas Valente | 2026-04-24 | Two-line fix: `BIGQUERY:type` metadata for FloatFieldType emits `FLOAT64` instead of the invalid literal `FLOAT`. |
-| 16 | [#128](https://github.com/dbt-labs/arrow-adbc/pull/128) | `e8c77a4c5` | Ragesh Ganeshkumar | 2026-05-11 | `adbc.bigquery.table.update_columns_policy_tags` — JSON `{col: [tag_id]}` map. RECORD columns skipped (BigQuery restriction). Shares code path with `#34`. |
-| 17 | [#134](https://github.com/dbt-labs/arrow-adbc/pull/134) | `e7a344229` | Ragesh Ganeshkumar | 2026-06-09 | External-account (Workload Identity Federation) auth. Adds `EXTERNAL_ACCOUNT` auth type + 4 options + `idpTokenSupplier` (Google STS token exchange). Pulls in `resty.dev/v3@v3.0.0-beta.6` and `golang.org/x/oauth2/google/externalaccount`. |
+| 5 | [#67](https://github.com/dbt-labs/arrow-adbc/pull/67) | `735f692d7` | Lucas Valente | 2025-09-23 | Extra table-metadata keys on `GetTableSchema`. Adds `ViewQuery`, `UseLegacySQL`, `UseStandardSQL`, `Clustering.Fields`, `ExpirationTime`, the full `ExternalDataConfig.*` family (12 keys), `EncryptionConfig.KMSKeyName`, `StreamingBuffer.{EstimatedBytes,EstimatedRows,OldestEntryTime}`, `TableConstraints.PrimaryKey.Columns`, and `ResourceTags`. Introduces the generic `encodeJson[S,E]` helper and refactors the inline `Labels` JSON encoding to use it. Behavior change: `RequirePartitionFilter` is now emitted unconditionally (previously gated) — downstream consumers depend on the key's presence. |
+| 6 | [#76](https://github.com/dbt-labs/arrow-adbc/pull/76) | `86e382780` | Lucas Valente | 2025-10-03 | `adbc.bigquery.sql.query.labels` — JSON object of BigQuery job labels. Used by fs adapter for invocation-id / model-name propagation. |
+| 7 | [#80](https://github.com/dbt-labs/arrow-adbc/pull/80) | `d8b3f2a8b` | Anna Lee | 2025-10-24 | `adbc.bigquery.sql.query.link_failed_job` — actually wraps `runQuery` errors with a BigQuery web-console URL when set. Threaded through `runPlainQuery`, `queryRecordWithSchemaCallback`, `newRecordReader`. |
+| 8 | [#86](https://github.com/dbt-labs/arrow-adbc/pull/86) | `a0ac7f004` | Anna Lee | 2025-11-12 | Publishes `BIGQUERY:query_id` on the Arrow schema metadata using the executing job's ID. `runQuery` sets `query.JobID = job.ID()`; `metadataFromJobStatistics` gains a `jobID` param; `ipcReaderFromArrowIterator`, `makeDryRunReader`, and `ExecuteSchema` all thread it through. |
+| 9 | [#94](https://github.com/dbt-labs/arrow-adbc/pull/94) | `fad437ac7` | Zoltan Ersek | 2025-11-24 | Python models via Dataproc (serverless batch + cluster job) + GCS write. New file `python_models.go`. Pulls in `cloud.google.com/go/dataproc/v2`, `cloud.google.com/go/storage`, `gopkg.in/yaml.v3`, `google.golang.org/protobuf/encoding/protojson`. |
+| 10 | [#96](https://github.com/dbt-labs/arrow-adbc/pull/96) part 1 | `a79555b0f` | Xuliang (Harry) Sun | 2025-12-08 | `use_storage_api_disabled_client` — full path. `ContextKeyUseStorageApiDisabledClient` propagates the intent into `runQuery`; when set, `runQuery` wraps `bigquery.RowIterator` in a new `RowBasedArrowIterator` (see `row_based_iterator.go`) that batches rows into Arrow record batches so pseudo-columns like `_PARTITIONDATE` return values instead of nulls. |
+| 11 | [#96](https://github.com/dbt-labs/arrow-adbc/pull/96) part 2 | `a79555b0f` | Xuliang (Harry) Sun | 2025-12-08 | `adbc.bigquery.copy_table.{source,destination,write_disposition}` — server-side BigQuery `Copier`. Split into its own commit for reviewability. |
+| 12 | [#97](https://github.com/dbt-labs/arrow-adbc/pull/97) | `9ebc9900f` | Zoltan Ersek | 2025-12-08 | Python models via Vertex AI Notebooks (bigframes). Adds `notebook_execute_job.*` options and Notebook client creation. Pulls in `cloud.google.com/go/aiplatform`. |
+| 13 | [#108](https://github.com/dbt-labs/arrow-adbc/pull/108) | `51466a2dc` | Xuliang (Harry) Sun | 2026-02-11 | `adbc.bigquery.table.update_description` — table-level description update (no schema change). |
+| 14 | [#120](https://github.com/dbt-labs/arrow-adbc/pull/120) | `1850d6103` | Mila Page | 2026-03-30 | Backward-compat alias `adbc.bigquery.sql.api_endpoint` → `adbc.bigquery.sql.endpoint`. Lets fs's `dbt-xdbc/src/bigquery.rs` keep using the legacy name unchanged. |
+| 15 | [#121](https://github.com/dbt-labs/arrow-adbc/pull/121) | `ace9cd8a1` | Mila Page | 2026-03-31 | `bigQueryFieldTypeFromMetadata` + IPC `BIGQUERY:type` override in `arrowFieldToBigQueryField`. Round-trips DATETIME/NUMERIC/BIGNUMERIC/JSON/GEOGRAPHY/INTERVAL through Arrow. Supersedes `#118`. |
+| 16 | [#127](https://github.com/dbt-labs/arrow-adbc/pull/127) | `0c7a2146e` | Lucas Valente | 2026-04-24 | Two-line fix: `BIGQUERY:type` metadata for FloatFieldType emits `FLOAT64` instead of the invalid literal `FLOAT`. |
+| 17 | [#128](https://github.com/dbt-labs/arrow-adbc/pull/128) | `e8c77a4c5` | Ragesh Ganeshkumar | 2026-05-11 | `adbc.bigquery.table.update_columns_policy_tags` — JSON `{col: [tag_id]}` map. RECORD columns skipped (BigQuery restriction). Shares code path with `#34`. |
+| 18 | [#134](https://github.com/dbt-labs/arrow-adbc/pull/134) | `e7a344229` | Ragesh Ganeshkumar | 2026-06-09 | External-account (Workload Identity Federation) auth. Adds `EXTERNAL_ACCOUNT` auth type + 4 options + `idpTokenSupplier` (Google STS token exchange). Pulls in `resty.dev/v3@v3.0.0-beta.6` and `golang.org/x/oauth2/google/externalaccount`. |
 
-## Skipped commits (23)
+## Skipped commits (22)
 
 | Legacy PR | SHA | Author | Reason | Rationale |
 |-----------|-----|--------|--------|-----------|
@@ -201,7 +202,6 @@ patch attributable to them.
 | [#74](https://github.com/dbt-labs/arrow-adbc/pull/74) | `86b355a0c` | Felipe Oliveira Carvalho | Already in new | `buildField` handles `bigquery.IntervalFieldType → arrow.FixedWidthTypes.MonthDayNanoInterval`. |
 | [#73](https://github.com/dbt-labs/arrow-adbc/pull/73) | `36fc1b207` | Zoltan Ersek | Already in new | Earlier version of service-account impersonation, later refined by `#75`. Both superseded upstream. |
 | [#71](https://github.com/dbt-labs/arrow-adbc/pull/71) | `4209f8560` | Jason Lin | Moot | New `buildField` hardcodes NUMERIC `Decimal128{38,9}` and BIGNUMERIC `Decimal256{76,38}`. The bug — "precision 0 meant unset" — can't happen. |
-| [#67](https://github.com/dbt-labs/arrow-adbc/pull/67) | `735f692d7` | Lucas Valente | Already in new (different superset) | The new driver's `getTableSchemaWithFilter` emits a different superset (adds `RangeFieldType`, GeoArrow extension metadata, `arrow.json` extension). Left alone rather than diff-copy every key. |
 | [#62](https://github.com/dbt-labs/arrow-adbc/pull/62) | `857a4c790` | Zoltan Ersek | Moot (baked into `#34` port) | Fixed a bug in the legacy `executeUpdateTableColumnsMetadata`. The port of `#34` copied the fixed form directly. |
 | [#60](https://github.com/dbt-labs/arrow-adbc/pull/60) | `9a58ed830` | Mila Page | Trivial | Removes an orphaned comment. |
 | [#55](https://github.com/dbt-labs/arrow-adbc/pull/55) | `5a0dfcfc7` | Mila Page | Moot / baked into `#29` port | Legacy switched CSV-ingest schema plumbing to `SetOptionBytes` + IPC. The new CSV-ingest port (`#29`) uses the same shape from the start. |
@@ -218,10 +218,11 @@ patch attributable to them.
 | [#2697](https://github.com/dbt-labs/arrow-adbc/pull/2697) | `f1b83eec8` | Felipe Oliveira Carvalho | Already in new | `getTableSchemaWithFilter` already emits `TimePartitioning.*` / `RangePartitioning.*` / `Clustering.Fields` keys. |
 | [#1](https://github.com/dbt-labs/arrow-adbc/pull/1) | `3e7abae5f` | Milos Gligoric | Moot | Legacy fix: use row count not schema for empty iterator. New `runQuery` already uses `iter.TotalRows > 0`. |
 
-Totals: **17 ported, 24 skipped**. All TODOs from the previous
+Totals: **18 ported, 23 skipped**. All TODOs from the previous
 iteration (`link_failed_job` error wrapping, `BIGQUERY:query_id`
-metadata, `use_storage_api_disabled_client` row-based iterator) are now
-part of the ported set.
+metadata, `use_storage_api_disabled_client` row-based iterator, and
+the `#67` extra-metadata keys the fs adapter depends on) are now part
+of the ported set.
 
 ## Known caveats
 
