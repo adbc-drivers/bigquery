@@ -13,4 +13,5 @@
 # limitations under the License.
 
 [tags]
+field-type-name = "STRUCT<`key` STRING, `num` FLOAT, `row` FLOAT, `active` BOOLEAN>"
 sql-type-name = "STRUCT"
