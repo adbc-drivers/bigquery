@@ -185,6 +185,8 @@ namespace AdbcDrivers.BigQuery
 
         internal BigQueryClient? Client { get; private set; }
 
+        internal BigQueryClient? ClientWithoutProject { get; private set; }
+
         /// <summary>
         /// The active BigQuery session ID when autocommit is disabled, or null when in autocommit mode.
         /// Used by <see cref="BigQueryStatement"/> to attach queries to the active session/transaction.
@@ -470,7 +472,42 @@ namespace AdbcDrivers.BigQuery
                     activity?.AddBigQueryTag("client.default_location", null);
                 }
 
+                GoogleCredential? credentialsForWithoutProjectClient = Credential?.CreateWithQuotaProject(null);
+
+                BigQueryClientBuilder bigQueryClientBuilderforWithoutProject = new BigQueryClientBuilder()
+                {
+                    GoogleCredential = credentialsForWithoutProjectClient
+                };
+
+                bigQueryClientBuilderforWithoutProject.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
+
+                if (this.properties.TryGetValue(BigQueryParameters.TestRestEndpoint, out string? testRestEndpoint1) &&
+                    !string.IsNullOrEmpty(testRestEndpoint))
+                {
+                    bigQueryClientBuilderforWithoutProject.BaseUri = $"http://{testRestEndpoint1}/bigquery/v2/";
+                }
+
+                if (!string.IsNullOrEmpty(DefaultClientLocation))
+                {
+                    // If the user selects a public dataset (from a multi-region) but sets this
+                    // value to a specific location like us-east4, then there is an error produced
+                    // that the caller doesn't have permission to call to the public dataset.
+                    // Example:
+                    //    Access Denied: Table bigquery-public-data:blockchain_analytics_ethereum_mainnet_us.accounts:
+                    //    User does not have permission to query table bigquery-public-data:blockchain_analytics_ethereum_mainnet_us.accounts,
+                    //    or perhaps it does not exist.'
+
+                    bigQueryClientBuilderforWithoutProject.DefaultLocation = DefaultClientLocation;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.DefaultClientLocation, DefaultClientLocation);
+                }
+                else
+                {
+                    activity?.AddBigQueryTag("client.default_location", null);
+                }
+
+
                 BigQueryClient client = bigQueryClientBuilder.Build();
+                ClientWithoutProject = bigQueryClientBuilderforWithoutProject.Build();
 
                 if (clientTimeout.HasValue)
                 {
