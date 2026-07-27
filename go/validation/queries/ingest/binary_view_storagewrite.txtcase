@@ -20,8 +20,6 @@
 "bigquery.bulk_ingest.method" = { apply = "storage_write", revert = "load" }
 
 [tags]
-broken-driver = "arrow-go does not support casting binary_view to binary"
-broken-vendor = "BigQuery cannot natively ingest binary_view"
 sql-type-name = "BYTES"
 variant = "Storage Write API"
 
