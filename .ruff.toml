@@ -1,4 +1,4 @@
-# Copyright (c) 2025 ADBC Drivers Contributors
+# Copyright (c) 2025-2026 ADBC Drivers Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,19 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-driver = "bigquery"
-private = false
-gcloud = true
-
-[lang.go.test]
-environment = "BigQuery CI"
-gcloud = true
-
-[[lang.go.validation.configs]]
-environment = "BigQuery CI"
-gcloud = true
-
-[secrets]
-GOOGLE_CLOUD_PROJECT = { secret = "GOOGLE_CLOUD_PROJECT", contexts = ["test", "validate"] }
-BIGQUERY_DATASET_ID = { secret = "BIGQUERY_DATASET_ID", contexts = ["test", "validate"] }
-BIGQUERY_SECONDARY_DATASET_ID = { secret = "BIGQUERY_SECONDARY_DATASET_ID", contexts = ["test", "validate"] }
+[lint]
+# SIM117 merges nested with blocks, which is undesirable with pytest
+ignore = ["SIM117"]
