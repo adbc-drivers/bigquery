@@ -320,6 +320,7 @@ func (q *BigQueryQuirks) SupportsConcurrentStatements() bool          { return f
 func (q *BigQueryQuirks) SupportsCurrentCatalogSchema() bool          { return true }
 func (q *BigQueryQuirks) SupportsExecuteSchema() bool                 { return false }
 func (q *BigQueryQuirks) SupportsGetSetOptions() bool                 { return true }
+func (q *BigQueryQuirks) SupportsGetTableSchema() bool                { return true }
 func (q *BigQueryQuirks) SupportsPartitionedData() bool               { return false }
 func (q *BigQueryQuirks) SupportsStatistics() bool                    { return true }
 func (q *BigQueryQuirks) SupportsTransactions() bool                  { return false }
