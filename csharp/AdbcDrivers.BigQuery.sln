@@ -9,8 +9,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AdbcDrivers.BigQuery.Tests"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Apache.Arrow.Adbc", "arrow-adbc\csharp\src\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj", "{8BFC2CBA-D9B9-C719-0617-59A21A7D7DF9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Apache.Arrow.Adbc.Telemetry.Traces.Listeners", "arrow-adbc\csharp\src\Telemetry\Traces\Listeners\Apache.Arrow.Adbc.Telemetry.Traces.Listeners.csproj", "{CE59B9B8-E2D9-68B5-D25D-6CC418E5BE00}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Apache.Arrow.Adbc.Testing", "arrow-adbc\csharp\test\Apache.Arrow.Adbc.Tests\Apache.Arrow.Adbc.Testing.csproj", "{9C9EDBEB-BAE2-E3C2-BD74-7E34C6AFEE51}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Dependencies", "Dependencies", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
@@ -37,10 +35,6 @@ Global
 		{8BFC2CBA-D9B9-C719-0617-59A21A7D7DF9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8BFC2CBA-D9B9-C719-0617-59A21A7D7DF9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8BFC2CBA-D9B9-C719-0617-59A21A7D7DF9}.Release|Any CPU.Build.0 = Release|Any CPU
-		{CE59B9B8-E2D9-68B5-D25D-6CC418E5BE00}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{CE59B9B8-E2D9-68B5-D25D-6CC418E5BE00}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{CE59B9B8-E2D9-68B5-D25D-6CC418E5BE00}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{CE59B9B8-E2D9-68B5-D25D-6CC418E5BE00}.Release|Any CPU.Build.0 = Release|Any CPU
 		{9C9EDBEB-BAE2-E3C2-BD74-7E34C6AFEE51}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{9C9EDBEB-BAE2-E3C2-BD74-7E34C6AFEE51}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9C9EDBEB-BAE2-E3C2-BD74-7E34C6AFEE51}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -59,7 +53,6 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{8BFC2CBA-D9B9-C719-0617-59A21A7D7DF9} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
-		{CE59B9B8-E2D9-68B5-D25D-6CC418E5BE00} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{9C9EDBEB-BAE2-E3C2-BD74-7E34C6AFEE51} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{80163E19-0794-37AE-1FA0-FFFA6A2DEC62} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection

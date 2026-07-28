@@ -28,7 +28,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Apache.Arrow" Version="22.1.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc" Version="0.24.0" />
     <PackageVersion Include="Apache.Arrow.Adbc.Drivers.BigQuery" Version="0.0.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" Version="0.24.0" />
     <PackageVersion Include="Azure.Identity" Version="1.17.1" />
     <PackageVersion Include="Google.Cloud.BigQuery.Storage.V1" Version="3.17.0" />
     <PackageVersion Include="Google.Cloud.BigQuery.V2" Version="3.11.0" />
