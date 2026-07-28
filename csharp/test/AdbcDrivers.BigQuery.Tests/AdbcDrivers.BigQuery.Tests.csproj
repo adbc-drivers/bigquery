@@ -23,8 +23,16 @@
        <CopyToOutputDirectory>Never</CopyToOutputDirectory>
      </None>
    </ItemGroup>
+   <!--
+     Apache.Arrow.Adbc.Testing is consumed from the arrow-adbc submodule rather
+     than from nuget.org: the published package ships only net8.0/net10.0
+     assets because upstream gates its net472 target on $(IsWindows), and this
+     suite targets net472 on Windows. The rest of the repo consumes ADBC from
+     nuget.org; this is the sole remaining submodule dependency, and it is
+     test-only, so it never reaches the published package's dependencies.
+     Apache.Arrow.Adbc.Client comes along transitively from Testing.
+   -->
    <ItemGroup>
-     <ProjectReference Include="..\..\arrow-adbc\csharp\src\Client\Apache.Arrow.Adbc.Client.csproj" />
      <ProjectReference Include="..\..\arrow-adbc\csharp\test\Apache.Arrow.Adbc.Tests\Apache.Arrow.Adbc.Testing.csproj" />
      <ProjectReference Include="..\..\src\AdbcDrivers.BigQuery\AdbcDrivers.BigQuery.csproj" />
      <ProjectReference Include="..\AdbcDrivers.BigQuery.MockServer\AdbcDrivers.BigQuery.MockServer.csproj" Condition="'$(TargetFramework)' == 'net8.0'" />

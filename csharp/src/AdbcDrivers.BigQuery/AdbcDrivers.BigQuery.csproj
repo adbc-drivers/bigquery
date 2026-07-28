@@ -10,8 +10,8 @@
 		<PackageReference Include="Google.Cloud.BigQuery.V2" />
 	</ItemGroup>
 	<ItemGroup>
-		<ProjectReference Include="..\..\arrow-adbc\csharp\src\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj" />
-		<ProjectReference Include="..\..\arrow-adbc\csharp\src\Telemetry\Traces\Listeners\Apache.Arrow.Adbc.Telemetry.Traces.Listeners.csproj" />
+		<PackageReference Include="Apache.Arrow.Adbc" />
+		<PackageReference Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" />
 	</ItemGroup>
 	<ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net6.0'))">
 		<PackageReference Include="System.Text.Json" />
