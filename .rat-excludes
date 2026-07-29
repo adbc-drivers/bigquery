@@ -18,6 +18,7 @@
 */pixi.lock
 */*.csproj
 */*.sln
+csharp/AdbcDrivers.snk
 csharp/src/AdbcDrivers.BigQuery/Extensions
 csharp/test/AdbcDrivers.BigQuery.Tests/Resources/bigqueryconfig.json
 go/license.tpl
