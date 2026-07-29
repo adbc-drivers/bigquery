@@ -177,6 +177,30 @@ func rowsToArrowRecordBatch(schema bigquery.Schema, rows [][]bigquery.Value, all
 				} else {
 					builder.AppendNull()
 				}
+			case *array.Int8Builder:
+				if v, ok := val.(int8); ok {
+					builder.Append(v)
+				} else {
+					builder.AppendNull()
+				}
+			case *array.Int16Builder:
+				if v, ok := val.(int16); ok {
+					builder.Append(v)
+				} else {
+					builder.AppendNull()
+				}
+			case *array.Int32Builder:
+				if v, ok := val.(int32); ok {
+					builder.Append(v)
+				} else {
+					builder.AppendNull()
+				}
+			case *array.Int64Builder:
+				if v, ok := val.(int64); ok {
+					builder.Append(v)
+				} else {
+					builder.AppendNull()
+				}
 			// TODO: Add support for other types as needed. The Storage-API-
 			// disabled path is intended for pseudo-column queries which are
 			// almost always DATE/TIMESTAMP; extend here if more types come up.
