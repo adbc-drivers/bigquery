@@ -56,6 +56,7 @@ namespace AdbcDrivers.BigQuery
         readonly CancellationRegistry cancellationRegistry;
 
         bool isMetadataCommand = false;
+        bool useClientWithoutProjectForMetadata = false;
         string? catalogName = null;
         string? schemaName = null;
         string? tableName = null;
@@ -106,6 +107,8 @@ namespace AdbcDrivers.BigQuery
         }
 
         private BigQueryClient Client => this.bigQueryConnection.Client ?? throw new AdbcException("Client cannot be null");
+
+        private BigQueryClient ClientWithoutProject => this.bigQueryConnection.ClientWithoutProject ?? throw new AdbcException("ClientWithoutProject cannot be null");
 
         private GoogleCredential Credential => this.bigQueryConnection.Credential ?? throw new AdbcException("Credential cannot be null");
 
@@ -358,6 +361,10 @@ namespace AdbcDrivers.BigQuery
             StringArray.Builder tableTypeBuilder = new StringArray.Builder();
             Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
             {
+                if (useClientWithoutProjectForMetadata)
+                {
+                    return ClientWithoutProject?.ListTables(this.catalogName, this.schemaName);
+                }
                 return Client?.ListTables(this.catalogName, this.schemaName);
             });
             PagedEnumerable<TableList, BigQueryTable>? tables;
@@ -413,6 +420,10 @@ namespace AdbcDrivers.BigQuery
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
+                if (useClientWithoutProjectForMetadata)
+                {
+                    return ClientWithoutProject?.GetTable(this.catalogName, this.schemaName, this.tableName);
+                }
                 return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
             });
 
@@ -514,6 +525,10 @@ namespace AdbcDrivers.BigQuery
 
             Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
             {
+                if (useClientWithoutProjectForMetadata)
+                {
+                    return ClientWithoutProject?.GetTable(this.catalogName, this.schemaName, this.tableName);
+                }
                 return Client?.GetTable(this.catalogName, this.schemaName, this.tableName);
             });
             BigQueryTable? table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
@@ -691,7 +706,12 @@ namespace AdbcDrivers.BigQuery
             Func<Task<PagedEnumerable<DatasetList, BigQueryDataset>?>> func = () => Task.Run(() =>
             {
                 // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
+                if (useClientWithoutProjectForMetadata)
+                {
+                    return ClientWithoutProject?.ListDatasets(this.catalogName);
+                }
                 return Client?.ListDatasets(this.catalogName);
+
             });
             PagedEnumerable<DatasetList, BigQueryDataset>? datasets;
             datasets = ExecuteWithRetriesAsync<PagedEnumerable<DatasetList, BigQueryDataset>?>(func, activity).GetAwaiter().GetResult();
@@ -725,7 +745,12 @@ namespace AdbcDrivers.BigQuery
             Func<Task<PagedEnumerable<ProjectList, CloudProject>?>> func = () => Task.Run(() =>
             {
                 // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
+                if (useClientWithoutProjectForMetadata)
+                {
+                    return ClientWithoutProject?.ListProjects();
+                }
                 return Client?.ListProjects();
+
             });
             PagedEnumerable<ProjectList, CloudProject>? catalogs;
             catalogs = ExecuteWithRetriesAsync<PagedEnumerable<ProjectList, CloudProject>?>(func, activity).GetAwaiter().GetResult();
@@ -1097,6 +1122,10 @@ namespace AdbcDrivers.BigQuery
                     case BigQueryParameters.IsMetadataCommand:
                         isMetadataCommand = keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase);
                         activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, isMetadataCommand);
+                        break;
+                    case BigQueryParameters.UseClientWithoutProjectForMetadata:
+                        useClientWithoutProjectForMetadata = keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                        activity?.AddBigQueryParameterTag(BigQueryParameters.UseClientWithoutProjectForMetadata, useClientWithoutProjectForMetadata);
                         break;
                     case BigQueryParameters.CatalogName:
                         catalogName = keyValuePair.Value;

@@ -61,6 +61,7 @@ namespace AdbcDrivers.BigQuery
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
+        public const string UseClientWithoutProjectForMetadata = "adbc.bigquery.use_client_without_project_for_metadata";
 
         /// <summary>
         /// Overrides the BigQuery REST API endpoint for testing (e.g. "localhost:1234").
