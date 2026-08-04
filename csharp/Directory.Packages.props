@@ -27,7 +27,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Apache.Arrow" Version="22.1.0" />
+    <PackageVersion Include="Apache.Arrow" Version="23.0.0" />
     <PackageVersion Include="Apache.Arrow.Adbc" Version="0.24.0" />
     <PackageVersion Include="Apache.Arrow.Adbc.Drivers.BigQuery" Version="0.0.0" />
     <PackageVersion Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" Version="0.24.0" />
