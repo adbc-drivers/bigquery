@@ -358,7 +358,9 @@ namespace AdbcDrivers.BigQuery
             StringArray.Builder tableTypeBuilder = new StringArray.Builder();
             Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
             {
-                return Client?.ListTables(this.catalogName, this.schemaName);
+                ListTablesOptions tablesOptions = new ListTablesOptions();
+                tablesOptions.PageSize = 100000;
+                return Client?.ListTables(this.catalogName, this.schemaName, tablesOptions);
             });
             PagedEnumerable<TableList, BigQueryTable>? tables;
             tables = ExecuteWithRetriesAsync<PagedEnumerable<TableList, BigQueryTable>?>(func, activity).GetAwaiter().GetResult();
@@ -690,8 +692,10 @@ namespace AdbcDrivers.BigQuery
             List<string> datasetIds = new List<string>();
             Func<Task<PagedEnumerable<DatasetList, BigQueryDataset>?>> func = () => Task.Run(() =>
             {
+                ListDatasetsOptions options = new ListDatasetsOptions();
+                options.PageSize = 100000;
                 // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
-                return Client?.ListDatasets(this.catalogName);
+                return Client?.ListDatasets(this.catalogName, options);
             });
             PagedEnumerable<DatasetList, BigQueryDataset>? datasets;
             datasets = ExecuteWithRetriesAsync<PagedEnumerable<DatasetList, BigQueryDataset>?>(func, activity).GetAwaiter().GetResult();
@@ -724,8 +728,10 @@ namespace AdbcDrivers.BigQuery
             List<string> projectIds = new List<string>();
             Func<Task<PagedEnumerable<ProjectList, CloudProject>?>> func = () => Task.Run(() =>
             {
+                ListProjectsOptions options = new ListProjectsOptions();
+                options.PageSize = 1000000;
                 // stick with this call because PagedAsyncEnumerable has different behaviors for selecting items
-                return Client?.ListProjects();
+                return Client?.ListProjects(options);
             });
             PagedEnumerable<ProjectList, CloudProject>? catalogs;
             catalogs = ExecuteWithRetriesAsync<PagedEnumerable<ProjectList, CloudProject>?>(func, activity).GetAwaiter().GetResult();
@@ -1022,7 +1028,9 @@ namespace AdbcDrivers.BigQuery
                 // to other 'project IDs' (catalogs) with a query.
                 Func<Task<PagedEnumerable<ProjectList, CloudProject>?>> func = () => Task.Run(() =>
                 {
-                    return Client?.ListProjects();
+                    ListProjectsOptions options = new ListProjectsOptions();
+                    options.PageSize = 1000000;
+                    return Client?.ListProjects(options);
                 });
 
                 PagedEnumerable<ProjectList, CloudProject>? projects = ExecuteWithRetriesAsync<PagedEnumerable<ProjectList, CloudProject>?>(func, activity).GetAwaiter().GetResult();
