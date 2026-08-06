@@ -31,6 +31,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
+	"github.com/adbc-drivers/driverbase-go/driverbase/arrowext"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -848,7 +849,8 @@ func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
 		if err != nil {
 			return err
 		}
-		st.params = stream
+		st.params = arrowext.DictDecodeRecordReader(st.alloc, &st.cnxn.ErrorHelper, stream)
+		stream.Release()
 	}
 	return nil
 }
@@ -861,8 +863,7 @@ func (st *statement) Bind(_ context.Context, values arrow.RecordBatch) error {
 func (st *statement) BindStream(_ context.Context, stream array.RecordReader) error {
 	st.clearParameters()
 	if stream != nil {
-		st.params = stream
-		stream.Retain()
+		st.params = arrowext.DictDecodeRecordReader(st.alloc, &st.cnxn.ErrorHelper, stream)
 	}
 	return nil
 }
