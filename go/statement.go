@@ -535,6 +535,10 @@ func arrowDataTypeToTypeKind(field arrow.Field) (bigquery.StandardSQLDataType, e
 	// https://cloud.google.com/bigquery/docs/reference/storage#arrow_schema_details
 	// https://cloud.google.com/bigquery/docs/reference/rest/v2/StandardSqlDataType#typekind
 	switch field.Type.ID() {
+	case arrow.NULL:
+		return bigquery.StandardSQLDataType{
+			TypeKind: "STRING",
+		}, nil
 	case arrow.BOOL:
 		return bigquery.StandardSQLDataType{
 			TypeKind: "BOOL",
@@ -651,6 +655,8 @@ func arrowValueToQueryParameterValue(field arrow.Field, value arrow.Array, i int
 	}
 
 	switch value.DataType().ID() {
+	case arrow.NULL:
+		qpv.Value = bigquery.NullString{}
 	case arrow.BOOL:
 		if isNull {
 			qpv.Value = bigquery.NullBool{}
