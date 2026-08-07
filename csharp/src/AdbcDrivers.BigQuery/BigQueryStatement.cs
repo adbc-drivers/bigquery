@@ -56,7 +56,7 @@ namespace AdbcDrivers.BigQuery
         readonly CancellationRegistry cancellationRegistry;
 
         bool isMetadataCommand = false;
-        bool useClientWithoutProjectForMetadata = false;
+        bool useClientWithoutProjectForMetadata = true;
         string? catalogName = null;
         string? schemaName = null;
         string? tableName = null;
