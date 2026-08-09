@@ -91,7 +91,7 @@ namespace AdbcDrivers.BigQuery
             AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
-            MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, ProxyHost, ProxyPort, RetryDelayMs, StatementIndex,
+            MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
             StatementType, UseLegacySQL
         };
 
