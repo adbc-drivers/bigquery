@@ -1907,10 +1907,10 @@ namespace AdbcDrivers.BigQuery
                 clientSecret,
                 Uri.EscapeDataString(refreshToken));
 
-            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint);
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint);
             request.Headers.Add("Accept", "application/json");
             request.Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded");
-            HttpResponseMessage response = this.httpClient.SendAsync(request).GetAwaiter().GetResult();
+            using HttpResponseMessage response = this.httpClient.SendAsync(request).GetAwaiter().GetResult();
             response.EnsureSuccessStatusCode();
             string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
@@ -1940,9 +1940,9 @@ namespace AdbcDrivers.BigQuery
                 };
 
                 string json = JsonSerializer.Serialize(requestBody);
-                StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
+                using StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                HttpResponseMessage response = this.httpClient.PostAsync(BigQueryConstants.EntraStsTokenEndpoint, content).GetAwaiter().GetResult();
+                using HttpResponseMessage response = this.httpClient.PostAsync(BigQueryConstants.EntraStsTokenEndpoint, content).GetAwaiter().GetResult();
                 response.EnsureSuccessStatusCode();
 
                 string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();

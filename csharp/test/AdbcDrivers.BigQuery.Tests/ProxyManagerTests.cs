@@ -43,7 +43,7 @@ namespace AdbcDrivers.BigQuery.Tests
             using HttpResponseMessage response = await client.GetAsync("http://example.invalid/query");
 
             Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
-            Assert.Equal("GET http://example.invalid/query HTTP/1.1", await proxy.RequestLine);
+            Assert.Equal("GET http://example.invalid/query HTTP/1.1", await proxy.RequestLine.WaitAsync(TimeSpan.FromSeconds(10)));
         }
 
         [Fact]
@@ -56,7 +56,7 @@ namespace AdbcDrivers.BigQuery.Tests
             using HttpResponseMessage response = await client.GetAsync("http://example.invalid/query");
 
             string expected = "Basic " + Convert.ToBase64String(Encoding.ASCII.GetBytes("proxy-user:proxy-pass"));
-            Assert.Equal(expected, await proxy.ProxyAuthorization);
+            Assert.Equal(expected, await proxy.ProxyAuthorization.WaitAsync(TimeSpan.FromSeconds(10)));
         }
 
         [Fact]
