@@ -68,6 +68,18 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.client_secret**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;The OAuth client secret. Required for `user` authentication.
 
+**adbc.bigquery.proxy.host**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the hostname or IP address of an HTTP forward proxy used for authentication, the BigQuery REST API, and the BigQuery Storage Read and Write APIs. When set, all driver traffic is routed through the proxy. Storage API traffic uses native gRPC over an HTTP `CONNECT` tunnel and continues to transfer Arrow data. Equivalent to the ODBC driver's `ProxyHost` property.
+
+**adbc.bigquery.proxy.port**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the port that the proxy server listens on. Used only when `adbc.bigquery.proxy.host` is set. Equivalent to the ODBC driver's `ProxyPort` property.
+
+**adbc.bigquery.proxy.username**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the username for proxy authentication. Used only when `adbc.bigquery.proxy.host` is set. Equivalent to the ODBC driver's `ProxyUid` property.
+
+**adbc.bigquery.proxy.password**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the password for proxy authentication. Used only when `adbc.bigquery.proxy.host` is set. Equivalent to the ODBC driver's `ProxyPwd` property.
+
 **adbc.bigquery.client.timeout**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the timeout (in seconds) for the BigQueryClient. Similar to a ConnectionTimeout.
 

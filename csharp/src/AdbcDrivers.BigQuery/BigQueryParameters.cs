@@ -54,6 +54,11 @@ namespace AdbcDrivers.BigQuery
         public const string MaxFetchConcurrency = "adbc.bigquery.max_fetch_concurrency";
         public const string MaximumRetryAttempts = "adbc.bigquery.maximum_retries";
         public const string ProjectId = "adbc.bigquery.project_id";
+        // ODBC ProxyHost/ProxyPort/ProxyUid/ProxyPwd equivalents.
+        public const string ProxyHost = "adbc.bigquery.proxy.host";
+        public const string ProxyPort = "adbc.bigquery.proxy.port";
+        public const string ProxyUsername = "adbc.bigquery.proxy.username";
+        public const string ProxyPassword = "adbc.bigquery.proxy.password";
         public const string RefreshToken = "adbc.bigquery.refresh_token";
         public const string RetryDelayMs = "adbc.bigquery.retry_delay_ms";
         public const string Scopes = "adbc.bigquery.scopes";
@@ -86,7 +91,7 @@ namespace AdbcDrivers.BigQuery
             AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
-            MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
+            MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, ProxyHost, ProxyPort, RetryDelayMs, StatementIndex,
             StatementType, UseLegacySQL
         };
 

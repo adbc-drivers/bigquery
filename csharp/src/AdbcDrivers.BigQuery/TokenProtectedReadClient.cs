@@ -23,6 +23,7 @@
 
 using System;
 using System.Threading.Tasks;
+using Google.Api.Gax.Grpc;
 using Google.Apis.Auth.OAuth2;
 using Google.Cloud.BigQuery.Storage.V1;
 using Grpc.Core;
@@ -36,10 +37,12 @@ namespace AdbcDrivers.BigQuery
     {
         BigQueryReadClient bigQueryReadClient;
         readonly string? endpoint;
+        readonly ProxyConfiguration? proxyConfiguration;
 
-        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null)
+        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null, ProxyConfiguration? proxyConfiguration = null)
         {
             this.endpoint = testEndpoint;
+            this.proxyConfiguration = proxyConfiguration;
             UpdateCredential(credential);
 
             if (bigQueryReadClient == null)
@@ -58,6 +61,12 @@ namespace AdbcDrivers.BigQuery
             }
 
             BigQueryReadClientBuilder readClientBuilder = new BigQueryReadClientBuilder();
+
+            GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(proxyConfiguration);
+            if (grpcAdapter != null)
+            {
+                readClientBuilder.GrpcAdapter = grpcAdapter;
+            }
 
             if (!string.IsNullOrEmpty(endpoint))
             {

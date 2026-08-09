@@ -54,6 +54,7 @@ namespace AdbcDrivers.BigQuery
     {
         readonly Dictionary<string, string> properties;
         readonly HttpClient httpClient;
+        private readonly ProxyConfiguration? _proxyConfiguration;
         private readonly object _clientTimeoutLock = new object();
         private string? _sessionId;
         const string ClassName = nameof(BigQueryConnection);
@@ -85,7 +86,8 @@ namespace AdbcDrivers.BigQuery
 
             TryInitTracerProvider(out _fileActivityListener);
 
-            this.httpClient = new HttpClient();
+            _proxyConfiguration = ProxyManager.CreateProxyConfiguration(this.properties);
+            this.httpClient = ProxyManager.CreateHttpClient(_proxyConfiguration);
 
             if (this.properties.TryGetValue(AdbcOptions.Telemetry.TraceParent, out string? traceParent) &&
                 !string.IsNullOrWhiteSpace(traceParent))
@@ -214,6 +216,8 @@ namespace AdbcDrivers.BigQuery
         internal bool IncludePublicProjectIds { get; private set; } = false;
 
         internal string? TestStorageEndpoint { get; private set; }
+
+        internal ProxyConfiguration? ProxyConfiguration => _proxyConfiguration;
 
         internal string? ProjectId
         {
@@ -441,7 +445,8 @@ namespace AdbcDrivers.BigQuery
                 BigQueryClientBuilder bigQueryClientBuilder = new BigQueryClientBuilder()
                 {
                     QuotaProject = billingProjectId,
-                    GoogleCredential = modifiedCredential
+                    GoogleCredential = modifiedCredential,
+                    HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration)
                 };
 
                 bigQueryClientBuilder.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
@@ -557,6 +562,12 @@ namespace AdbcDrivers.BigQuery
                 else
                 {
                     throw new ArgumentException($"{authenticationType} is not a valid authenticationType");
+                }
+
+                Google.Apis.Http.HttpClientFactory? proxyHttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration);
+                if (proxyHttpClientFactory != null)
+                {
+                    Credential = Credential.CreateWithHttpClientFactory(proxyHttpClientFactory);
                 }
             }, ClassName + "." + nameof(SetCredential));
         }
@@ -1896,12 +1907,11 @@ namespace AdbcDrivers.BigQuery
                 clientSecret,
                 Uri.EscapeDataString(refreshToken));
 
-            HttpClient httpClient = new HttpClient();
-
             HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint);
             request.Headers.Add("Accept", "application/json");
             request.Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded");
-            HttpResponseMessage response = httpClient.SendAsync(request).GetAwaiter().GetResult();
+            HttpResponseMessage response = this.httpClient.SendAsync(request).GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
             string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
             BigQueryTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryTokenResponse>(responseBody);
