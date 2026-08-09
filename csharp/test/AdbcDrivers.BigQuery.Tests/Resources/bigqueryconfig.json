@@ -18,7 +18,7 @@
                 "expectedColumnCount": 0
             },
             "query": "",
-            "expectedResults": 0
+            "expectedResults": 0,
         },
         "<env2>": {
             "projectId": "",
@@ -35,7 +35,7 @@
             "query": "",
             "expectedResults": 0
         },
-        "<env3>": {
+        "<env3_proxy>": {
             "projectId": "",
             "clientId": "",
             "clientSecret": "",
@@ -48,7 +48,11 @@
                 "expectedColumnCount": 0
             },
             "query": "",
-            "expectedResults": 0
+            "expectedResults": 0,
+            "proxyHost": "",
+            "proxyPort": "",
+            "proxyUsername": "",
+            "proxyPassword": ""
         }
     }
 }
