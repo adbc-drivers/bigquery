@@ -51,7 +51,8 @@
             "expectedResults": 0,
             "proxyHost": "",
             "proxyPort": "",
-            "proxyUsername": "",
+            "proxyProtocol": "",
+            "proxyUser": "",
             "proxyPassword": ""
         }
     }

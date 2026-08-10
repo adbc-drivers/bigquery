@@ -234,9 +234,14 @@ namespace AdbcDrivers.BigQuery.Tests
                     parameters.Add(BigQueryParameters.ProxyPort, testEnvironment.ProxyPort!);
                 }
 
-                if (!string.IsNullOrEmpty(testEnvironment.ProxyUsername))
+                if (!string.IsNullOrEmpty(testEnvironment.ProxyProtocol))
                 {
-                    parameters.Add(BigQueryParameters.ProxyUsername, testEnvironment.ProxyUsername!);
+                    parameters.Add(BigQueryParameters.ProxyProtocol, testEnvironment.ProxyProtocol!);
+                }
+
+                if (!string.IsNullOrEmpty(testEnvironment.ProxyUser))
+                {
+                    parameters.Add(BigQueryParameters.ProxyUser, testEnvironment.ProxyUser!);
                 }
 
                 if (!string.IsNullOrEmpty(testEnvironment.ProxyPassword))

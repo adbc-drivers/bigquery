@@ -33,10 +33,13 @@ namespace AdbcDrivers.BigQuery
                 return null;
             }
 
-            properties.TryGetValue(BigQueryParameters.ProxyUsername, out string? proxyUsername);
+            properties.TryGetValue(BigQueryParameters.ProxyUser, out string? proxyUser);
             properties.TryGetValue(BigQueryParameters.ProxyPassword, out string? proxyPassword);
 
-            string address = proxyHost;
+            string scheme = ResolveProxyScheme(properties);
+            string host = StripScheme(proxyHost.Trim());
+            string address = $"{scheme}://{host}";
+
             if (properties.TryGetValue(BigQueryParameters.ProxyPort, out string? sProxyPort) &&
                 !string.IsNullOrWhiteSpace(sProxyPort))
             {
@@ -45,10 +48,34 @@ namespace AdbcDrivers.BigQuery
                     throw new ArgumentException($"The value '{sProxyPort}' for parameter '{BigQueryParameters.ProxyPort}' is not a valid port number.");
                 }
 
-                address = $"{proxyHost}:{port}";
+                address = $"{scheme}://{host}:{port}";
             }
 
-            return new ProxyConfiguration(address, proxyUsername, proxyPassword);
+            return new ProxyConfiguration(address, proxyUser, proxyPassword);
+        }
+
+        private static string ResolveProxyScheme(IReadOnlyDictionary<string, string> properties)
+        {
+            // Defaults to http: a forward proxy typically listens on plain HTTP and tunnels HTTPS via CONNECT.
+            if (!properties.TryGetValue(BigQueryParameters.ProxyProtocol, out string? protocol) ||
+                string.IsNullOrWhiteSpace(protocol))
+            {
+                return "http";
+            }
+
+            if (protocol.Equals("http", StringComparison.OrdinalIgnoreCase) ||
+                protocol.Equals("https", StringComparison.OrdinalIgnoreCase))
+            {
+                return protocol.ToLowerInvariant();
+            }
+
+            throw new ArgumentException($"The value '{protocol}' for parameter '{BigQueryParameters.ProxyProtocol}' must be 'http' or 'https'.");
+        }
+
+        private static string StripScheme(string host)
+        {
+            int schemeIndex = host.IndexOf("://", StringComparison.Ordinal);
+            return schemeIndex >= 0 ? host.Substring(schemeIndex + 3) : host;
         }
 
         internal static HttpClient CreateHttpClient(ProxyConfiguration? proxy)

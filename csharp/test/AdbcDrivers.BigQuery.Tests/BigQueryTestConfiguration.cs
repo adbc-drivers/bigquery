@@ -154,8 +154,11 @@ namespace AdbcDrivers.BigQuery.Tests
         [JsonPropertyName("proxyPort")]
         public string? ProxyPort { get; set; }
 
-        [JsonPropertyName("proxyUsername")]
-        public string? ProxyUsername { get; set; }
+        [JsonPropertyName("proxyProtocol")]
+        public string? ProxyProtocol { get; set; }
+
+        [JsonPropertyName("proxyUser")]
+        public string? ProxyUser { get; set; }
 
         [JsonPropertyName("proxyPassword")]
         public string? ProxyPassword { get; set; }

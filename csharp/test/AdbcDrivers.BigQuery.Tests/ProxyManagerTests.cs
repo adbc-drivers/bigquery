@@ -91,16 +91,44 @@ namespace AdbcDrivers.BigQuery.Tests
             {
                 [BigQueryParameters.ProxyHost] = "proxy.internal",
                 [BigQueryParameters.ProxyPort] = "8080",
-                [BigQueryParameters.ProxyUsername] = "proxy-user",
+                [BigQueryParameters.ProxyUser] = "proxy-user",
                 [BigQueryParameters.ProxyPassword] = "proxy-pass"
             };
 
             ProxyConfiguration? configuration = ProxyManager.CreateProxyConfiguration(properties);
 
             Assert.NotNull(configuration);
-            Assert.Equal("proxy.internal:8080", configuration!.Address);
+            Assert.Equal("http://proxy.internal:8080", configuration!.Address);
             Assert.Equal("proxy-user", configuration.Username);
             Assert.Equal("proxy-pass", configuration.Password);
+        }
+
+        [Fact]
+        public void CreateProxyConfigurationUsesConfiguredProtocol()
+        {
+            var properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.ProxyHost] = "proxy.internal",
+                [BigQueryParameters.ProxyPort] = "8080",
+                [BigQueryParameters.ProxyProtocol] = "https"
+            };
+
+            ProxyConfiguration? configuration = ProxyManager.CreateProxyConfiguration(properties);
+
+            Assert.NotNull(configuration);
+            Assert.Equal("https://proxy.internal:8080", configuration!.Address);
+        }
+
+        [Fact]
+        public void CreateProxyConfigurationRejectsInvalidProtocol()
+        {
+            var properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.ProxyHost] = "proxy.internal",
+                [BigQueryParameters.ProxyProtocol] = "socks5"
+            };
+
+            Assert.Throws<ArgumentException>(() => ProxyManager.CreateProxyConfiguration(properties));
         }
 
         [Fact]
