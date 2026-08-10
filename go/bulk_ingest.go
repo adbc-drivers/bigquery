@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
@@ -127,6 +128,14 @@ func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.Bul
 		return err
 	}
 	if err := status.Err(); err != nil {
+		if bqErr, ok := errors.AsType[*bigquery.Error](err); ok &&
+			bqErr.Reason == "invalid" &&
+			strings.HasPrefix(bqErr.Message, "Provided Schema does not match Table") {
+			return adbc.Error{
+				Code: adbc.StatusAlreadyExists,
+				Msg:  fmt.Sprintf("[bq] Could not load data: %s: %s (%s)", bqErr.Reason, bqErr.Message, bqErr.Location),
+			}
+		}
 		return errToAdbcErr(adbc.StatusIO, err, "load data")
 	}
 	return nil

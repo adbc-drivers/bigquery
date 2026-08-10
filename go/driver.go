@@ -221,7 +221,7 @@ func NewDriver(alloc memory.Allocator) driverbase.Driver {
 }
 
 func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string]string) (adbc.DatabaseWithContext, error) {
-	dbBase, err := driverbase.NewDatabaseImplBase(ctx, &d.DriverImplBase)
+	dbBase, err := driverbase.NewDatabaseImplBase(ctx, &d.DriverImplBase, driverbase.TracingOptions{})
 	if err != nil {
 		return nil, err
 	}

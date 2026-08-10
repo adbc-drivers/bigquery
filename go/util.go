@@ -151,7 +151,7 @@ func isRetryableError(err error) bool {
 // errToAdbcErr converts an error to an ADBC error, using the metadata from
 // Google API errors if possible and including the supplied context
 func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, contextArgs ...any) error {
-	if errors.Is(err, adbc.Error{}) {
+	if _, ok := errors.AsType[adbc.Error](err); ok {
 		return err
 	} else if errors.Is(err, context.Canceled) {
 		return adbc.Error{

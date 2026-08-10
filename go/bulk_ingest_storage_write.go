@@ -33,7 +33,9 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/googleapis/gax-go/v2/apierror"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type storageWriteBulkIngestImpl struct {
@@ -50,6 +52,20 @@ type storageWriteBulkIngestImpl struct {
 	streamName     string
 	appendStream   storagepb.BigQueryWrite_AppendRowsClient
 	offset         int64
+}
+
+func appendRowsError(rpcStatus *statuspb.Status) error {
+	adbcStatus := adbc.StatusIO
+	for _, detail := range rpcStatus.GetDetails() {
+		var storageError storagepb.StorageError
+		if err := detail.UnmarshalTo(&storageError); err == nil &&
+			storageError.GetCode() == storagepb.StorageError_SCHEMA_MISMATCH_EXTRA_FIELDS {
+			adbcStatus = adbc.StatusAlreadyExists
+			break
+		}
+	}
+
+	return errToAdbcErr(adbcStatus, status.FromProto(rpcStatus).Err(), "append rows")
 }
 
 var _ driverbase.BulkIngestImpl = (*storageWriteBulkIngestImpl)(nil)
@@ -322,9 +338,7 @@ func (impl *storageWriteBulkIngestImpl) Copy(ctx context.Context, chunk driverba
 			}
 
 			if resp.GetError() != nil {
-				return errToAdbcErr(adbc.StatusIO,
-					fmt.Errorf("append failed: %v", resp.GetError()),
-					"append rows")
+				return appendRowsError(resp.GetError())
 			}
 			impl.appendStream = appendStream
 			return nil
