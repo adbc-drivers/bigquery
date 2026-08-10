@@ -100,6 +100,9 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job)
 
 		duration := backoff.Pause()
 		logger.DebugContext(ctx, "job not complete", "id", job.ID(), "backoff", duration)
+		if err := gax.Sleep(ctx, duration); err != nil {
+			return nil, err
+		}
 	}
 	logger.DebugContext(ctx, "job complete", "id", job.ID())
 	return
