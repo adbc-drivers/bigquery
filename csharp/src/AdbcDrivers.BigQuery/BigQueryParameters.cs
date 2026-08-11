@@ -54,7 +54,6 @@ namespace AdbcDrivers.BigQuery
         public const string MaxFetchConcurrency = "adbc.bigquery.max_fetch_concurrency";
         public const string MaximumRetryAttempts = "adbc.bigquery.maximum_retries";
         public const string ProjectId = "adbc.bigquery.project_id";
-        // Aligns with the Snowflake ADBC driver's proxy_host/proxy_port/proxy_protocol/proxy_user/proxy_password options.
         public const string ProxyHost = "adbc.bigquery.proxy_host";
         public const string ProxyPort = "adbc.bigquery.proxy_port";
         public const string ProxyProtocol = "adbc.bigquery.proxy_protocol";
