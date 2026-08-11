@@ -148,6 +148,21 @@ namespace AdbcDrivers.BigQuery.Tests
         [JsonPropertyName("location")]
         public string? ClientLocation { get; set; }
 
+        [JsonPropertyName("proxyHost")]
+        public string? ProxyHost { get; set; }
+
+        [JsonPropertyName("proxyPort")]
+        public string? ProxyPort { get; set; }
+
+        [JsonPropertyName("proxyProtocol")]
+        public string? ProxyProtocol { get; set; }
+
+        [JsonPropertyName("proxyUser")]
+        public string? ProxyUser { get; set; }
+
+        [JsonPropertyName("proxyPassword")]
+        public string? ProxyPassword { get; set; }
+
         /// <summary>
         /// How structs should be handled by the ADO.NET client for this environment.
         /// </summary>

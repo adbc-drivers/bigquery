@@ -54,6 +54,11 @@ namespace AdbcDrivers.BigQuery
         public const string MaxFetchConcurrency = "adbc.bigquery.max_fetch_concurrency";
         public const string MaximumRetryAttempts = "adbc.bigquery.maximum_retries";
         public const string ProjectId = "adbc.bigquery.project_id";
+        public const string ProxyHost = "adbc.bigquery.proxy_host";
+        public const string ProxyPort = "adbc.bigquery.proxy_port";
+        public const string ProxyProtocol = "adbc.bigquery.proxy_protocol";
+        public const string ProxyUser = "adbc.bigquery.proxy_user";
+        public const string ProxyPassword = "adbc.bigquery.proxy_password";
         public const string RefreshToken = "adbc.bigquery.refresh_token";
         public const string RetryDelayMs = "adbc.bigquery.retry_delay_ms";
         public const string Scopes = "adbc.bigquery.scopes";

@@ -222,7 +222,10 @@ namespace AdbcDrivers.BigQuery
 
                 BigQueryResults results = await ExecuteWithRetriesAsync(getJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
 
-                TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(Credential, this.bigQueryConnection.TestStorageEndpoint);
+                TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(
+                    Credential,
+                    this.bigQueryConnection.TestStorageEndpoint,
+                    this.bigQueryConnection.ProxyConfiguration);
                 clientMgr.UpdateToken = () => Task.Run(() =>
                 {
                     this.bigQueryConnection.SetCredential();
@@ -915,6 +918,12 @@ namespace AdbcDrivers.BigQuery
         {
             var builder = new BigQueryWriteClientBuilder();
             string? endpoint = this.bigQueryConnection.TestStorageEndpoint;
+            Google.Api.Gax.Grpc.GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(this.bigQueryConnection.ProxyConfiguration);
+
+            if (grpcAdapter != null)
+            {
+                builder.GrpcAdapter = grpcAdapter;
+            }
 
             if (!string.IsNullOrEmpty(endpoint))
             {

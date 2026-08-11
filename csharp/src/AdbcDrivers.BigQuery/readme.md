@@ -68,6 +68,21 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.client_secret**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;The OAuth client secret. Required for `user` authentication.
 
+**adbc.bigquery.proxy_host**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the hostname or IP address of a forward proxy used for authentication, the BigQuery REST API, and the BigQuery Storage Read and Write APIs. When set, all driver traffic is routed through the proxy. Storage API traffic uses native gRPC over an HTTP `CONNECT` tunnel and continues to transfer Arrow data. These proxy settings mirror the Snowflake ADBC driver's `proxy_host`/`proxy_port`/`proxy_protocol`/`proxy_user`/`proxy_password` options.
+
+**adbc.bigquery.proxy_port**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the port that the proxy server listens on. Used only when `adbc.bigquery.proxy_host` is set.
+
+**adbc.bigquery.proxy_protocol**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. The scheme used for the client-to-proxy connection: `http` (default) or `https`. This is not the scheme used to reach BigQuery; the driver still tunnels HTTPS to Google via `CONNECT`. Used only when `adbc.bigquery.proxy_host` is set.
+
+**adbc.bigquery.proxy_user**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the username for proxy authentication. Used only when `adbc.bigquery.proxy_host` is set.
+
+**adbc.bigquery.proxy_password**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the password for proxy authentication. Used only when `adbc.bigquery.proxy_host` is set.
+
 **adbc.bigquery.client.timeout**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the timeout (in seconds) for the BigQueryClient. Similar to a ConnectionTimeout.
 
