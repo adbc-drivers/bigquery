@@ -165,6 +165,16 @@ namespace AdbcDrivers.BigQuery
             {
                 TestStorageEndpoint = storageEndpoint;
             }
+
+            // With Workload Identity Federation the driver holds the service principal credential,
+            // so it can mint a fresh short-lived Google token itself instead of depending on the
+            // caller to supply one. This is what keeps unattended workloads running past the
+            // lifetime of a single token.
+            if (this.properties.TryGetValue(BigQueryParameters.AuthenticationType, out string? authenticationType) &&
+                BigQueryConstants.EntraServicePrincipalAuthenticationType.Equals(authenticationType, StringComparison.OrdinalIgnoreCase))
+            {
+                UpdateToken = () => Task.Run(() => UpdateClientToken());
+            }
         }
 
         /// <summary>
@@ -513,9 +523,10 @@ namespace AdbcDrivers.BigQuery
                     if (!authenticationType.Equals(BigQueryConstants.UserAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.EntraIdAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
+                        !authenticationType.Equals(BigQueryConstants.EntraServicePrincipalAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.MockAuthenticationType, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new ArgumentException($"The {BigQueryParameters.AuthenticationType} parameter can only be `{BigQueryConstants.UserAuthenticationType}`, `{BigQueryConstants.ServiceAccountAuthenticationType}`, `{BigQueryConstants.EntraIdAuthenticationType}` or `{BigQueryConstants.MockAuthenticationType}`");
+                        throw new ArgumentException($"The {BigQueryParameters.AuthenticationType} parameter can only be `{BigQueryConstants.UserAuthenticationType}`, `{BigQueryConstants.ServiceAccountAuthenticationType}`, `{BigQueryConstants.EntraIdAuthenticationType}`, `{BigQueryConstants.EntraServicePrincipalAuthenticationType}` or `{BigQueryConstants.MockAuthenticationType}`");
                     }
                     else
                     {
@@ -545,6 +556,11 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The {BigQueryParameters.AudienceUri} parameter is not present");
 
                     Credential = ApplyScopes(GoogleCredential.FromAccessToken(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken)));
+                }
+                else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.EntraServicePrincipalAuthenticationType, StringComparison.OrdinalIgnoreCase))
+                {
+                    Credential = ApplyScopes(GoogleCredential.FromAccessToken(
+                        WorkloadIdentityFederation.GetGoogleAccessToken(this.httpClient, CreateWorkloadIdentityFederationOptions(), activity)));
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
@@ -617,6 +633,44 @@ namespace AdbcDrivers.BigQuery
             }
 
             return credential;
+        }
+
+        /// <summary>
+        /// Builds the Workload Identity Federation configuration from the connection properties.
+        /// </summary>
+        private WorkloadIdentityFederationOptions CreateWorkloadIdentityFederationOptions()
+        {
+            this.properties.TryGetValue(BigQueryParameters.ClientId, out string? clientId);
+            this.properties.TryGetValue(BigQueryParameters.ClientSecret, out string? clientSecret);
+            this.properties.TryGetValue(BigQueryParameters.TenantId, out string? tenantId);
+            this.properties.TryGetValue(BigQueryParameters.AudienceUri, out string? audienceUri);
+            this.properties.TryGetValue(BigQueryParameters.EntraResourceUri, out string? entraResourceUri);
+            this.properties.TryGetValue(BigQueryParameters.EntraAuthorityUri, out string? authorityUri);
+            this.properties.TryGetValue(BigQueryParameters.ServiceAccountImpersonationEmail, out string? impersonationEmail);
+            this.properties.TryGetValue(BigQueryParameters.Scopes, out string? scopes);
+
+            // Entra assigns `api://{client_id}` when an application exposes an API without a custom
+            // identifier, which keeps the pool provider's allowed audience aligned by default.
+            if (string.IsNullOrWhiteSpace(entraResourceUri) && !string.IsNullOrWhiteSpace(clientId))
+            {
+                entraResourceUri = "api://" + clientId;
+            }
+
+            string scope = string.IsNullOrWhiteSpace(scopes)
+                ? BigQueryConstants.EntraIdScope
+                : string.Join(" ", scopes!.Split(',').Where(x => x.Length > 0));
+
+            return new WorkloadIdentityFederationOptions
+            {
+                TenantId = tenantId ?? string.Empty,
+                ClientId = clientId ?? string.Empty,
+                ClientSecret = clientSecret ?? string.Empty,
+                AudienceUri = audienceUri ?? string.Empty,
+                EntraResourceUri = entraResourceUri ?? string.Empty,
+                AuthorityUri = string.IsNullOrWhiteSpace(authorityUri) ? BigQueryConstants.DefaultEntraAuthorityUri : authorityUri!,
+                ServiceAccountImpersonationEmail = string.IsNullOrWhiteSpace(impersonationEmail) ? null : impersonationEmail,
+                Scope = scope
+            };
         }
 
         public override IArrowArrayStream GetInfo(IReadOnlyList<AdbcInfoCode> codes)

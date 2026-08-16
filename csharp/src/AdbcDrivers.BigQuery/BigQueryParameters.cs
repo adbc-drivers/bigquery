@@ -39,6 +39,27 @@ namespace AdbcDrivers.BigQuery
         public const string ClientId = "adbc.bigquery.client_id";
         public const string ClientSecret = "adbc.bigquery.client_secret";
         public const string ClientTimeout = "adbc.bigquery.client.timeout";
+
+        /// <summary>
+        /// The Microsoft Entra ID tenant that issues the subject token for Workload Identity Federation.
+        /// </summary>
+        public const string TenantId = "adbc.bigquery.tenant_id";
+
+        /// <summary>
+        /// The Application ID URI of the Entra application registered as an allowed audience on the
+        /// Google workload identity pool provider. Defaults to <c>api://{client_id}</c>.
+        /// </summary>
+        public const string EntraResourceUri = "adbc.bigquery.entra_resource_uri";
+
+        /// <summary>
+        /// The Entra ID authority. Defaults to <c>https://login.microsoftonline.com</c>; override for sovereign clouds.
+        /// </summary>
+        public const string EntraAuthorityUri = "adbc.bigquery.entra_authority_uri";
+
+        /// <summary>
+        /// Optional Google service account to impersonate after the Security Token Service exchange.
+        /// </summary>
+        public const string ServiceAccountImpersonationEmail = "adbc.bigquery.service_account_impersonation_email";
         public const string EvaluationKind = "adbc.bigquery.multiple_statement.evaluation_kind";
         public const string GetQueryResultsOptionsTimeout = "adbc.bigquery.get_query_results_options.timeout";
         public const string IncludeConstraintsWithGetObjects = "adbc.bigquery.include_constraints_getobjects";
@@ -92,7 +113,7 @@ namespace AdbcDrivers.BigQuery
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
-            StatementType, UseLegacySQL
+            StatementType, UseLegacySQL, TenantId, EntraAuthorityUri
         };
 
         public static bool IsSafeToLog(string name)
@@ -111,6 +132,7 @@ namespace AdbcDrivers.BigQuery
     {
         public const string UserAuthenticationType = "user";
         public const string EntraIdAuthenticationType = "aad";
+        public const string EntraServicePrincipalAuthenticationType = "aad_service_principal";
         public const string ServiceAccountAuthenticationType = "service";
         public const string MockAuthenticationType = "mock";
         public const string TokenEndpoint = "https://accounts.google.com/o/oauth2/token";
@@ -122,6 +144,18 @@ namespace AdbcDrivers.BigQuery
         public const string EntraRequestedTokenType = "urn:ietf:params:oauth:token-type:access_token";
         public const string EntraIdScope = "https://www.googleapis.com/auth/cloud-platform";
         public const string EntraStsTokenEndpoint = "https://sts.googleapis.com/v1/token";
+
+        // Workload Identity Federation (service principal) constants
+
+        /// <summary>
+        /// Google requires OIDC/JWT subject tokens from Azure to be presented as a generic JWT.
+        /// See https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds.
+        /// </summary>
+        public const string AzureSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt";
+        public const string DefaultEntraAuthorityUri = "https://login.microsoftonline.com";
+        public const string EntraTokenEndpointFormat = "{0}/{1}/oauth2/v2.0/token";
+        public const string EntraDefaultScopeSuffix = "/.default";
+        public const string ServiceAccountImpersonationUrlFormat = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{0}:generateAccessToken";
 
         // default value per https://pkg.go.dev/cloud.google.com/go/bigquery#section-readme
         public const string DetectProjectId = "*detect-project-id*";

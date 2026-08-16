@@ -115,6 +115,24 @@ namespace AdbcDrivers.BigQuery.Tests
 
                     parameters.Add(BigQueryParameters.AudienceUri, testEnvironment.Audience);
                 }
+                else if (testEnvironment.AuthenticationType.Equals(BigQueryConstants.EntraServicePrincipalAuthenticationType, StringComparison.OrdinalIgnoreCase))
+                {
+                    parameters.Add(BigQueryParameters.AuthenticationType, BigQueryConstants.EntraServicePrincipalAuthenticationType);
+                    parameters.Add(BigQueryParameters.TenantId, testEnvironment.TenantId);
+                    parameters.Add(BigQueryParameters.ClientId, testEnvironment.ClientId);
+                    parameters.Add(BigQueryParameters.ClientSecret, testEnvironment.ClientSecret);
+                    parameters.Add(BigQueryParameters.AudienceUri, testEnvironment.Audience);
+
+                    if (!string.IsNullOrEmpty(testEnvironment.EntraResourceUri))
+                    {
+                        parameters.Add(BigQueryParameters.EntraResourceUri, testEnvironment.EntraResourceUri);
+                    }
+
+                    if (!string.IsNullOrEmpty(testEnvironment.ServiceAccountImpersonationEmail))
+                    {
+                        parameters.Add(BigQueryParameters.ServiceAccountImpersonationEmail, testEnvironment.ServiceAccountImpersonationEmail);
+                    }
+                }
                 else
                 {
                     parameters.Add(BigQueryParameters.AuthenticationType, BigQueryConstants.UserAuthenticationType);

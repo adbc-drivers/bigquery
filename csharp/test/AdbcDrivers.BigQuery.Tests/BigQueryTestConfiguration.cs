@@ -58,6 +58,24 @@ namespace AdbcDrivers.BigQuery.Tests
         [JsonPropertyName("audience")]
         public string Audience { get; set; } = string.Empty;
 
+        /// <summary>
+        /// The Entra tenant used by the Workload Identity Federation authentication type.
+        /// </summary>
+        [JsonPropertyName("tenantId")]
+        public string TenantId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional Application ID URI. Defaults to api://{clientId} when omitted.
+        /// </summary>
+        [JsonPropertyName("entraResourceUri")]
+        public string EntraResourceUri { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional Google service account to impersonate after the token exchange.
+        /// </summary>
+        [JsonPropertyName("serviceAccountImpersonationEmail")]
+        public string ServiceAccountImpersonationEmail { get; set; } = string.Empty;
+
         [JsonPropertyName("billingProjectId")]
         public string? BillingProjectId { get; set; }
 
