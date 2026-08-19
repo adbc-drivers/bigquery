@@ -184,12 +184,14 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             using AdbcDatabase database = driver.Open(parameters);
             using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
             using RecordBatch batch = CreateBatch();
+            var existingStreamNames = mockServer.WriteService.Streams.Keys.ToHashSet();
 
             if (createTableFirst)
             {
                 using AdbcStatement create = connection.BulkIngest(projectId, datasetId, tableId, BulkIngestMode.Create, false);
                 create.Bind(batch, batch.Schema);
                 create.ExecuteUpdate();
+                existingStreamNames = mockServer.WriteService.Streams.Keys.ToHashSet();
             }
 
             using AdbcStatement statement = connection.CreateStatement();
@@ -204,7 +206,8 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
 
             Assert.Equal(3, result.AffectedRows);
             Assert.Empty(mockServer.ExecutedQueries);
-            var writeStream = mockServer.WriteService.Streams.Values.Last();
+            string writeStreamName = Assert.Single(mockServer.WriteService.Streams.Keys.Except(existingStreamNames));
+            var writeStream = mockServer.WriteService.Streams[writeStreamName];
             Assert.True(writeStream.Finalized);
             Assert.Single(writeStream.RecordBatches);
         }
@@ -233,6 +236,54 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
+        public void DisabledTemporaryOptionDoesNotChangeExecutionMode()
+        {
+            using var mockServer = new BigQueryMockServer();
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, "mock-project" },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(AdbcOptions.Ingest.Temporary, AdbcOptions.Disabled);
+            statement.SqlQuery = "UPDATE test_table SET value = 1";
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            Assert.Equal(2, result.AffectedRows);
+        }
+
+        [Fact]
+        public void InvalidIngestModeDoesNotChangeExecutionMode()
+        {
+            using var mockServer = new BigQueryMockServer();
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, "mock-project" },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            Assert.Throws<AdbcException>(() => statement.SetOption(AdbcOptions.Ingest.Mode, "invalid"));
+            statement.SqlQuery = "UPDATE test_table SET value = 1";
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            Assert.Equal(2, result.AffectedRows);
+        }
+
+        [Fact]
         public void DropTableExecuteUpdateDoesNotRequestQueryResults()
         {
             using var mockServer = new BigQueryMockServer();
@@ -255,6 +306,30 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.Equal(-1, result.AffectedRows);
             Assert.Equal(0, mockServer.QueryResultsRequestCount);
             Assert.Single(mockServer.ExecutedQueries);
+        }
+
+        [Fact]
+        public void DmlExecuteUpdateReturnsAffectedRowsWithoutRequestingQueryResults()
+        {
+            using var mockServer = new BigQueryMockServer();
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, "mock-project" },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "UPDATE test_table SET value = 1";
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            Assert.Equal(2, result.AffectedRows);
+            Assert.Equal(0, mockServer.QueryResultsRequestCount);
         }
 
         private static RecordBatch CreateBatch()

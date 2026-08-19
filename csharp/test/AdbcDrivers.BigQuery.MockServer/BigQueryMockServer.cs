@@ -198,6 +198,8 @@ namespace AdbcDrivers.BigQuery.MockServer
                     JobId = jobId,
                     ProjectId = projectId,
                     Status = "DONE",
+                    StatementType = queryText?.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) == true ? "UPDATE" : "SELECT",
+                    NumDmlAffectedRows = queryText?.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) == true ? 2 : null,
                 };
 
                 // If CreateSession is requested, generate a new session ID
@@ -361,7 +363,8 @@ namespace AdbcDrivers.BigQuery.MockServer
                 EndTime = now,
                 Query = new JobStatistics2
                 {
-                    StatementType = "SELECT",
+                    StatementType = mockJob.StatementType,
+                    NumDmlAffectedRows = mockJob.NumDmlAffectedRows,
                     TotalBytesProcessed = 0,
                     TotalBytesBilled = 0,
                 }
@@ -426,6 +429,8 @@ namespace AdbcDrivers.BigQuery.MockServer
             public string ProjectId { get; set; } = string.Empty;
             public string Status { get; set; } = "DONE";
             public string? SessionId { get; set; }
+            public string StatementType { get; set; } = "SELECT";
+            public long? NumDmlAffectedRows { get; set; }
         }
     }
 }
