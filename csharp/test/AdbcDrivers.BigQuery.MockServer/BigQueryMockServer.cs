@@ -46,6 +46,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly ConcurrentDictionary<string, Table> _tables = new();
         private readonly ConcurrentDictionary<string, bool> _sessions = new();
         private readonly ConcurrentQueue<string> _executedQueries = new();
+        private int _queryResultsRequestCount;
 
         /// <summary>
         /// The REST API endpoint as host:port (e.g., "127.0.0.1:12345").
@@ -63,6 +64,11 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// Returns the list of SQL queries that were executed against this mock server, in order.
         /// </summary>
         public IReadOnlyList<string> ExecutedQueries => _executedQueries.ToArray();
+
+        /// <summary>
+        /// The number of requests made to the query-results endpoint.
+        /// </summary>
+        public int QueryResultsRequestCount => _queryResultsRequestCount;
 
         /// <summary>
         /// The mock gRPC service for configuring Storage Read API responses.
@@ -232,6 +238,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             // GET /bigquery/v2/projects/{projectId}/queries/{jobId} - Get query results
             app.MapGet("/bigquery/v2/projects/{projectId}/queries/{jobId}", async (HttpContext ctx, string projectId, string jobId) =>
             {
+                Interlocked.Increment(ref _queryResultsRequestCount);
                 if (!_jobs.TryGetValue(jobId, out var mockJob))
                 {
                     ctx.Response.StatusCode = 404;

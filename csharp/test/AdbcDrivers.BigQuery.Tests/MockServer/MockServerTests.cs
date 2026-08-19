@@ -17,6 +17,7 @@
 #if NET8_0_OR_GREATER
 
 using System.Collections.Generic;
+using System.Linq;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Types;
@@ -157,6 +158,121 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
 
             // Verify the table was created in the REST API
             // (CreateAppend mode should create it since it didn't exist)
+        }
+
+        [Theory]
+        [InlineData(AdbcOptions.IngestMode.Create, false)]
+        [InlineData(AdbcOptions.IngestMode.Append, true)]
+        [InlineData(AdbcOptions.IngestMode.Replace, true)]
+        [InlineData(AdbcOptions.IngestMode.CreateAppend, false)]
+        public void CanBulkIngestThroughStatementOptions(string mode, bool createTableFirst)
+        {
+            using var mockServer = new BigQueryMockServer();
+
+            const string projectId = "mock-project";
+            const string datasetId = "test_dataset";
+            string tableId = $"option_ingest_{mode.Substring(mode.LastIndexOf('.') + 1)}";
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, projectId },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using RecordBatch batch = CreateBatch();
+
+            if (createTableFirst)
+            {
+                using AdbcStatement create = connection.BulkIngest(projectId, datasetId, tableId, BulkIngestMode.Create, false);
+                create.Bind(batch, batch.Schema);
+                create.ExecuteUpdate();
+            }
+
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(AdbcOptions.Ingest.TargetCatalog, projectId);
+            statement.SetOption(AdbcOptions.Ingest.TargetDbSchema, datasetId);
+            statement.SetOption(AdbcOptions.Ingest.TargetTable, tableId);
+            statement.SetOption(AdbcOptions.Ingest.Temporary, AdbcOptions.Disabled);
+            statement.SetOption(AdbcOptions.Ingest.Mode, mode);
+            statement.Bind(batch, batch.Schema);
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            Assert.Equal(3, result.AffectedRows);
+            Assert.Empty(mockServer.ExecutedQueries);
+            var writeStream = mockServer.WriteService.Streams.Values.Last();
+            Assert.True(writeStream.Finalized);
+            Assert.Single(writeStream.RecordBatches);
+        }
+
+        [Fact]
+        public void BulkIngestThroughStatementOptionsRejectsTemporaryTable()
+        {
+            using var mockServer = new BigQueryMockServer();
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, "mock-project" },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+
+            AdbcException exception = Assert.Throws<AdbcException>(
+                () => statement.SetOption(AdbcOptions.Ingest.Temporary, AdbcOptions.Enabled));
+
+            Assert.Equal(AdbcStatusCode.NotImplemented, exception.Status);
+        }
+
+        [Fact]
+        public void DropTableExecuteUpdateDoesNotRequestQueryResults()
+        {
+            using var mockServer = new BigQueryMockServer();
+            var parameters = new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, "mock-project" },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "DROP TABLE IF EXISTS `mock-project.test_dataset.test_table`";
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            Assert.Equal(-1, result.AffectedRows);
+            Assert.Equal(0, mockServer.QueryResultsRequestCount);
+            Assert.Single(mockServer.ExecutedQueries);
+        }
+
+        private static RecordBatch CreateBatch()
+        {
+            var schema = new Schema(new[]
+            {
+                new Field("id", Int64Type.Default, nullable: false),
+                new Field("name", StringType.Default, nullable: true),
+            }, null);
+
+            return new RecordBatch(
+                schema,
+                new IArrowArray[]
+                {
+                    new Int64Array.Builder().Append(1).Append(2).Append(3).Build(),
+                    new StringArray.Builder().Append("Alice").Append("Bob").Append("Charlie").Build(),
+                },
+                3);
         }
     }
 }

@@ -143,6 +143,41 @@ namespace AdbcDrivers.BigQuery
 
             switch (key)
             {
+                case AdbcOptions.Ingest.TargetCatalog:
+                    _isBulkIngest = true;
+                    _ingestTargetCatalog = value;
+                    break;
+                case AdbcOptions.Ingest.TargetDbSchema:
+                    _isBulkIngest = true;
+                    _ingestTargetDbSchema = value;
+                    break;
+                case AdbcOptions.Ingest.TargetTable:
+                    _isBulkIngest = true;
+                    _ingestTargetTable = value;
+                    break;
+                case AdbcOptions.Ingest.Mode:
+                    _isBulkIngest = true;
+                    _ingestMode = value switch
+                    {
+                        AdbcOptions.IngestMode.Create => BulkIngestMode.Create,
+                        AdbcOptions.IngestMode.Append => BulkIngestMode.Append,
+                        AdbcOptions.IngestMode.Replace => BulkIngestMode.Replace,
+                        AdbcOptions.IngestMode.CreateAppend => BulkIngestMode.CreateAppend,
+                        _ => throw new AdbcException($"Unsupported bulk ingest mode: {value}", AdbcStatusCode.InvalidArgument),
+                    };
+                    break;
+                case AdbcOptions.Ingest.Temporary:
+                    _isBulkIngest = true;
+                    switch (value)
+                    {
+                        case AdbcOptions.Enabled:
+                            throw AdbcException.NotImplemented("Temporary table bulk ingest is not supported for BigQuery");
+                        case AdbcOptions.Disabled:
+                            break;
+                        default:
+                            throw new AdbcException($"Unsupported value for {AdbcOptions.Ingest.Temporary}: {value}", AdbcStatusCode.InvalidArgument);
+                    }
+                    break;
                 case AdbcOptions.Telemetry.TraceParent:
                     SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
                     break;
@@ -879,6 +914,25 @@ namespace AdbcDrivers.BigQuery
                             });
                         }
                     };
+                }
+
+                if (SqlQuery?.TrimStart().StartsWith("DROP TABLE", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    Task<BigQueryJob> pollJobAsyncFunc()
+                    {
+                        return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
+                        {
+                            context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, updateQueryOptions, context.CancellationToken).ConfigureAwait(false);
+                            jobActivity?.AddEvent("polluntilcompletedasync_started", [new("job.id", context.Job.Reference.JobId)]);
+                            context.Job = await context.Job.PollUntilCompletedAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                            context.Job.ThrowOnAnyError();
+                            jobActivity?.AddEvent("polluntilcompletedasync_completed", GetJobStatistics(jobActivity, context.Job));
+
+                            return context.Job;
+                        }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryJob.PollUntilCompletedAsync));
+                    }
+                    await ExecuteWithRetriesAsync(pollJobAsyncFunc, activity, context.CancellationToken);
+                    return new UpdateResult(-1L);
                 }
 
                 Task<BigQueryResults> getQueryResultsAsyncFunc()
