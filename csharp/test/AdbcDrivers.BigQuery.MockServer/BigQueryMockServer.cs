@@ -46,6 +46,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly ConcurrentDictionary<string, Table> _tables = new();
         private readonly ConcurrentDictionary<string, bool> _sessions = new();
         private readonly ConcurrentQueue<string> _executedQueries = new();
+        private int _queryResultsRequestCount;
 
         /// <summary>
         /// The REST API endpoint as host:port (e.g., "127.0.0.1:12345").
@@ -63,6 +64,11 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// Returns the list of SQL queries that were executed against this mock server, in order.
         /// </summary>
         public IReadOnlyList<string> ExecutedQueries => _executedQueries.ToArray();
+
+        /// <summary>
+        /// The number of requests made to the query-results endpoint.
+        /// </summary>
+        public int QueryResultsRequestCount => _queryResultsRequestCount;
 
         /// <summary>
         /// The mock gRPC service for configuring Storage Read API responses.
@@ -192,6 +198,8 @@ namespace AdbcDrivers.BigQuery.MockServer
                     JobId = jobId,
                     ProjectId = projectId,
                     Status = "DONE",
+                    StatementType = queryText?.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) == true ? "UPDATE" : "SELECT",
+                    NumDmlAffectedRows = queryText?.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) == true ? 2 : null,
                 };
 
                 // If CreateSession is requested, generate a new session ID
@@ -232,6 +240,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             // GET /bigquery/v2/projects/{projectId}/queries/{jobId} - Get query results
             app.MapGet("/bigquery/v2/projects/{projectId}/queries/{jobId}", async (HttpContext ctx, string projectId, string jobId) =>
             {
+                Interlocked.Increment(ref _queryResultsRequestCount);
                 if (!_jobs.TryGetValue(jobId, out var mockJob))
                 {
                     ctx.Response.StatusCode = 404;
@@ -354,7 +363,8 @@ namespace AdbcDrivers.BigQuery.MockServer
                 EndTime = now,
                 Query = new JobStatistics2
                 {
-                    StatementType = "SELECT",
+                    StatementType = mockJob.StatementType,
+                    NumDmlAffectedRows = mockJob.NumDmlAffectedRows,
                     TotalBytesProcessed = 0,
                     TotalBytesBilled = 0,
                 }
@@ -419,6 +429,8 @@ namespace AdbcDrivers.BigQuery.MockServer
             public string ProjectId { get; set; } = string.Empty;
             public string Status { get; set; } = "DONE";
             public string? SessionId { get; set; }
+            public string StatementType { get; set; } = "SELECT";
+            public long? NumDmlAffectedRows { get; set; }
         }
     }
 }

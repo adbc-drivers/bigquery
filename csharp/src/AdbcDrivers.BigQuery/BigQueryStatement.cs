@@ -143,6 +143,41 @@ namespace AdbcDrivers.BigQuery
 
             switch (key)
             {
+                case AdbcOptions.Ingest.TargetCatalog:
+                    _isBulkIngest = true;
+                    _ingestTargetCatalog = value;
+                    break;
+                case AdbcOptions.Ingest.TargetDbSchema:
+                    _isBulkIngest = true;
+                    _ingestTargetDbSchema = value;
+                    break;
+                case AdbcOptions.Ingest.TargetTable:
+                    _isBulkIngest = true;
+                    _ingestTargetTable = value;
+                    break;
+                case AdbcOptions.Ingest.Mode:
+                    BulkIngestMode ingestMode = value switch
+                    {
+                        AdbcOptions.IngestMode.Create => BulkIngestMode.Create,
+                        AdbcOptions.IngestMode.Append => BulkIngestMode.Append,
+                        AdbcOptions.IngestMode.Replace => BulkIngestMode.Replace,
+                        AdbcOptions.IngestMode.CreateAppend => BulkIngestMode.CreateAppend,
+                        _ => throw new AdbcException($"Unsupported bulk ingest mode: {value}", AdbcStatusCode.InvalidArgument),
+                    };
+                    _isBulkIngest = true;
+                    _ingestMode = ingestMode;
+                    break;
+                case AdbcOptions.Ingest.Temporary:
+                    switch (value)
+                    {
+                        case AdbcOptions.Enabled:
+                            throw AdbcException.NotImplemented("Temporary table bulk ingest is not supported for BigQuery");
+                        case AdbcOptions.Disabled:
+                            break;
+                        default:
+                            throw new AdbcException($"Unsupported value for {AdbcOptions.Ingest.Temporary}: {value}", AdbcStatusCode.InvalidArgument);
+                    }
+                    break;
                 case AdbcOptions.Telemetry.TraceParent:
                     SetTraceParent(string.IsNullOrWhiteSpace(value) ? null : value);
                     break;
@@ -844,12 +879,13 @@ namespace AdbcDrivers.BigQuery
 
             return await this.TraceActivityAsync(async activity =>
             {
-                GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
-
                 TimeSpan? queryResultsTimeout = GetEffectiveQueryResultsTimeout();
+                TimeSpan pollTimeout = queryResultsTimeout ?? TimeSpan.FromSeconds(BigQueryConstants.DefaultQueryResultsTimeoutSeconds);
+                PollSettings pollSettings = new PollSettings(
+                    Expiration.FromTimeout(pollTimeout),
+                    TimeSpan.FromSeconds(1));
                 if (queryResultsTimeout.HasValue)
                 {
-                    getQueryResultsOptions.Timeout = queryResultsTimeout.Value;
                     activity?.AddBigQueryParameterTag(BigQueryParameters.GetQueryResultsOptionsTimeout, (int)queryResultsTimeout.Value.TotalSeconds);
                 }
 
@@ -881,20 +917,35 @@ namespace AdbcDrivers.BigQuery
                     };
                 }
 
-                Task<BigQueryResults> getQueryResultsAsyncFunc()
+                Task<BigQueryJob> createJobAsyncFunc()
                 {
                     return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
                     {
                         context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, updateQueryOptions, context.CancellationToken).ConfigureAwait(false);
-                        jobActivity?.AddEvent("getqueryresultsasync_started", [new("job.id", context.Job.Reference.JobId)]);
-                        BigQueryResults results = await context.Job.GetQueryResultsAsync(getQueryResultsOptions, context.CancellationToken).ConfigureAwait(false);
-                        jobActivity?.AddEvent("getqueryresultsasync_completed", GetJobStatistics(jobActivity, context.Job));
-
-                        return results;
-                    }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
+                        return context.Job;
+                    }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryClient.CreateQueryJobAsync));
                 }
-                BigQueryResults? result = await ExecuteWithRetriesAsync(getQueryResultsAsyncFunc, activity, context.CancellationToken);
-                long updatedRows = result?.NumDmlAffectedRows.HasValue == true ? result.NumDmlAffectedRows.Value : -1L;
+
+                BigQueryJob job = await ExecuteWithRetriesAsync(createJobAsyncFunc, activity, context.CancellationToken).ConfigureAwait(false);
+                context.Job = job;
+
+                Task<BigQueryJob> pollJobAsyncFunc()
+                {
+                    return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
+                    {
+                        context.Job = await Client.GetJobAsync(job.Reference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        jobActivity?.AddEvent("polluntilcompletedasync_started", [new("job.id", context.Job.Reference.JobId)]);
+                        context.Job = await context.Job.PollUntilCompletedAsync(
+                            pollSettings: pollSettings,
+                            cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                        context.Job.ThrowOnFatalError();
+                        jobActivity?.AddEvent("polluntilcompletedasync_completed", GetJobStatistics(jobActivity, context.Job));
+
+                        return context.Job;
+                    }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryJob.PollUntilCompletedAsync));
+                }
+                BigQueryJob completedJob = await ExecuteWithRetriesAsync(pollJobAsyncFunc, activity, context.CancellationToken).ConfigureAwait(false);
+                long updatedRows = completedJob.Resource.Statistics?.Query?.NumDmlAffectedRows ?? -1L;
 
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, updatedRows);
                 return new UpdateResult(updatedRows);
