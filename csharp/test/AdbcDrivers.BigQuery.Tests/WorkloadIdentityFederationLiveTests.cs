@@ -65,6 +65,8 @@ namespace AdbcDrivers.BigQuery.Tests
                 TenantId = environment.TenantId,
                 ClientId = environment.ClientId,
                 ClientSecret = environment.ClientSecret,
+                ClientCertificate = string.IsNullOrEmpty(environment.ClientCertificate) ? null : environment.ClientCertificate,
+                ClientCertificatePassword = string.IsNullOrEmpty(environment.ClientCertificatePassword) ? null : environment.ClientCertificatePassword,
                 AudienceUri = environment.Audience,
                 EntraResourceUri = string.IsNullOrEmpty(environment.EntraResourceUri)
                     ? "api://" + environment.ClientId

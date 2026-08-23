@@ -57,6 +57,17 @@ namespace AdbcDrivers.BigQuery
         public const string EntraAuthorityUri = "adbc.bigquery.entra_authority_uri";
 
         /// <summary>
+        /// Base64-encoded PKCS#12 certificate used to sign the Entra client assertion. Supply this
+        /// instead of <see cref="ClientSecret"/> when the tenant forbids client secrets.
+        /// </summary>
+        public const string ClientCertificate = "adbc.bigquery.client_certificate";
+
+        /// <summary>
+        /// Optional password protecting <see cref="ClientCertificate"/>.
+        /// </summary>
+        public const string ClientCertificatePassword = "adbc.bigquery.client_certificate_password";
+
+        /// <summary>
         /// Optional Google service account to impersonate after the Security Token Service exchange.
         /// </summary>
         public const string ServiceAccountImpersonationEmail = "adbc.bigquery.service_account_impersonation_email";
@@ -156,6 +167,16 @@ namespace AdbcDrivers.BigQuery
         public const string EntraTokenEndpointFormat = "{0}/{1}/oauth2/v2.0/token";
         public const string EntraDefaultScopeSuffix = "/.default";
         public const string ServiceAccountImpersonationUrlFormat = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{0}:generateAccessToken";
+
+        /// <summary>
+        /// RFC 7523 client authentication, used when a certificate is supplied instead of a secret.
+        /// </summary>
+        public const string ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+        /// <summary>
+        /// Lifetime of the generated client assertion. Entra allows up to 10 minutes.
+        /// </summary>
+        public const int ClientAssertionLifetimeSeconds = 300;
 
         // default value per https://pkg.go.dev/cloud.google.com/go/bigquery#section-readme
         public const string DetectProjectId = "*detect-project-id*";

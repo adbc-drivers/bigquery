@@ -71,6 +71,15 @@ namespace AdbcDrivers.BigQuery.Tests
         public string EntraResourceUri { get; set; } = string.Empty;
 
         /// <summary>
+        /// Base64-encoded PKCS#12 certificate, used when the tenant forbids client secrets.
+        /// </summary>
+        [JsonPropertyName("clientCertificate")]
+        public string ClientCertificate { get; set; } = string.Empty;
+
+        [JsonPropertyName("clientCertificatePassword")]
+        public string ClientCertificatePassword { get; set; } = string.Empty;
+
+        /// <summary>
         /// Optional Google service account to impersonate after the token exchange.
         /// </summary>
         [JsonPropertyName("serviceAccountImpersonationEmail")]

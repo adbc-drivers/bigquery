@@ -19,6 +19,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -39,6 +41,16 @@ namespace AdbcDrivers.BigQuery
         public string ClientId { get; set; } = string.Empty;
 
         public string ClientSecret { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Base64-encoded PKCS#12 certificate. When set, the service principal authenticates with a
+        /// signed client assertion rather than a shared secret.
+        /// </summary>
+        public string? ClientCertificate { get; set; }
+
+        public string? ClientCertificatePassword { get; set; }
+
+        public bool UsesCertificate => !string.IsNullOrWhiteSpace(ClientCertificate);
 
         /// <summary>
         /// The Google workload identity pool provider resource, for example
@@ -142,6 +154,7 @@ namespace AdbcDrivers.BigQuery
             activity.AddBigQueryTag(TagPrefix + "audience_uri", options.AudienceUri);
             activity.AddBigQueryTag(TagPrefix + "scope", options.Scope);
             activity.AddBigQueryTag(TagPrefix + "impersonation_enabled", !string.IsNullOrEmpty(options.ServiceAccountImpersonationEmail));
+            activity.AddBigQueryTag(TagPrefix + "client_auth", options.UsesCertificate ? "certificate" : "secret");
 
             if (!string.IsNullOrEmpty(options.ServiceAccountImpersonationEmail))
             {
@@ -202,7 +215,17 @@ namespace AdbcDrivers.BigQuery
         {
             RequireValue(options.TenantId, BigQueryParameters.TenantId);
             RequireValue(options.ClientId, BigQueryParameters.ClientId);
-            RequireValue(options.ClientSecret, BigQueryParameters.ClientSecret);
+
+            if (!options.UsesCertificate)
+            {
+                RequireValue(options.ClientSecret, BigQueryParameters.ClientSecret);
+            }
+            else if (!IsBase64(StripPemArmour(options.ClientCertificate!)))
+            {
+                throw new ArgumentException(
+                    $"The {BigQueryParameters.ClientCertificate} parameter is not valid base64-encoded PKCS#12 data.");
+            }
+
             RequireValue(options.AudienceUri, BigQueryParameters.AudienceUri);
             RequireValue(options.EntraResourceUri, BigQueryParameters.EntraResourceUri);
 
@@ -287,9 +310,18 @@ namespace AdbcDrivers.BigQuery
             {
                 ["grant_type"] = "client_credentials",
                 ["client_id"] = options.ClientId,
-                ["client_secret"] = options.ClientSecret,
                 ["scope"] = options.EntraResourceUri.TrimEnd('/') + BigQueryConstants.EntraDefaultScopeSuffix
             };
+
+            if (options.UsesCertificate)
+            {
+                form["client_assertion_type"] = BigQueryConstants.ClientAssertionType;
+                form["client_assertion"] = CreateClientAssertion(options, tokenEndpoint);
+            }
+            else
+            {
+                form["client_secret"] = options.ClientSecret;
+            }
 
             using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
             {
@@ -393,6 +425,98 @@ namespace AdbcDrivers.BigQuery
             activity?.AddBigQueryTag(TagPrefix + ImpersonationStep + ".expire_time", response!.ExpireTime);
 
             return response!.AccessToken!;
+        }
+
+        /// <summary>
+        /// Builds an RFC 7523 client assertion signed with the supplied certificate. Used when the
+        /// tenant forbids client secrets, which is common under zero-trust policies.
+        /// </summary>
+        internal static string CreateClientAssertion(WorkloadIdentityFederationOptions options, string tokenEndpoint)
+        {
+            byte[] raw;
+            try
+            {
+                raw = Convert.FromBase64String(StripPemArmour(options.ClientCertificate!));
+            }
+            catch (FormatException ex)
+            {
+                throw new ArgumentException(
+                    $"The {BigQueryParameters.ClientCertificate} parameter is not valid base64-encoded PKCS#12 data.", ex);
+            }
+
+            // Exportable keeps loading consistent across net472, netstandard2.0 and net8.0.
+            using X509Certificate2 certificate = new X509Certificate2(
+                raw,
+                options.ClientCertificatePassword ?? string.Empty,
+                X509KeyStorageFlags.Exportable);
+
+            using RSA? key = certificate.GetRSAPrivateKey();
+
+            if (key == null)
+            {
+                throw new ArgumentException(
+                    $"The certificate supplied in {BigQueryParameters.ClientCertificate} has no RSA private key.");
+            }
+
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+            // Entra identifies the signing key by the base64url SHA-1 thumbprint.
+            string header = $"{{\"alg\":\"RS256\",\"typ\":\"JWT\",\"x5t\":\"{Base64Url(certificate.GetCertHash())}\"}}";
+            string payload = string.Format(
+                CultureInfo.InvariantCulture,
+                "{{\"aud\":\"{0}\",\"iss\":\"{1}\",\"sub\":\"{1}\",\"jti\":\"{2}\",\"nbf\":{3},\"exp\":{4}}}",
+                tokenEndpoint,
+                options.ClientId,
+                Guid.NewGuid().ToString("N"),
+                now,
+                now + BigQueryConstants.ClientAssertionLifetimeSeconds);
+
+            string signingInput = Base64Url(Encoding.UTF8.GetBytes(header)) + "." + Base64Url(Encoding.UTF8.GetBytes(payload));
+            byte[] signature = key.SignData(Encoding.UTF8.GetBytes(signingInput), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+            return signingInput + "." + Base64Url(signature);
+        }
+
+        private static string StripPemArmour(string value)
+        {
+            if (value.IndexOf("-----", StringComparison.Ordinal) < 0)
+            {
+                return value.Trim();
+            }
+
+            StringBuilder builder = new StringBuilder(value.Length);
+
+            foreach (string line in value.Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (trimmed.Length > 0 && !trimmed.StartsWith("-----", StringComparison.Ordinal))
+                {
+                    builder.Append(trimmed);
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static string Base64Url(byte[] value) =>
+            Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        private static bool IsBase64(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            try
+            {
+                Convert.FromBase64String(value);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         private static async Task<string> SendAsync(

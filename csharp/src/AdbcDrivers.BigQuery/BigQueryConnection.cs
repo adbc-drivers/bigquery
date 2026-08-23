@@ -642,6 +642,8 @@ namespace AdbcDrivers.BigQuery
         {
             this.properties.TryGetValue(BigQueryParameters.ClientId, out string? clientId);
             this.properties.TryGetValue(BigQueryParameters.ClientSecret, out string? clientSecret);
+            this.properties.TryGetValue(BigQueryParameters.ClientCertificate, out string? clientCertificate);
+            this.properties.TryGetValue(BigQueryParameters.ClientCertificatePassword, out string? clientCertificatePassword);
             this.properties.TryGetValue(BigQueryParameters.TenantId, out string? tenantId);
             this.properties.TryGetValue(BigQueryParameters.AudienceUri, out string? audienceUri);
             this.properties.TryGetValue(BigQueryParameters.EntraResourceUri, out string? entraResourceUri);
@@ -665,6 +667,8 @@ namespace AdbcDrivers.BigQuery
                 TenantId = tenantId ?? string.Empty,
                 ClientId = clientId ?? string.Empty,
                 ClientSecret = clientSecret ?? string.Empty,
+                ClientCertificate = string.IsNullOrWhiteSpace(clientCertificate) ? null : clientCertificate,
+                ClientCertificatePassword = string.IsNullOrWhiteSpace(clientCertificatePassword) ? null : clientCertificatePassword,
                 AudienceUri = audienceUri ?? string.Empty,
                 EntraResourceUri = entraResourceUri ?? string.Empty,
                 AuthorityUri = string.IsNullOrWhiteSpace(authorityUri) ? BigQueryConstants.DefaultEntraAuthorityUri : authorityUri!,

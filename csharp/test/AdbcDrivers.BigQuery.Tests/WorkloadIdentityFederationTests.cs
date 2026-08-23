@@ -20,6 +20,9 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Apache.Arrow.Adbc;
@@ -311,6 +314,161 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.DoesNotContain("client-secret", allTags);
             Assert.DoesNotContain("google-federated-token", allTags);
             Assert.DoesNotContain(CreateJwt(), allTags);
+        }
+
+        [Fact]
+        public async Task AuthenticatesWithSignedAssertionWhenCertificateSupplied()
+        {
+            using X509Certificate2 certificate = CreateTestCertificate();
+
+            RecordingHandler handler = new RecordingHandler();
+            handler.Respond(EntraTokenEndpoint, "{\"access_token\":\"" + CreateJwt() + "\"}");
+            handler.Respond(StsEndpoint, "{\"access_token\":\"google-federated-token\"}");
+
+            using HttpClient httpClient = new HttpClient(handler);
+
+            WorkloadIdentityFederationOptions options = CreateOptions();
+            options.ClientSecret = string.Empty;
+            options.ClientCertificate = Convert.ToBase64String(certificate.Export(X509ContentType.Pfx));
+
+            string token = await WorkloadIdentityFederation.GetGoogleAccessTokenAsync(httpClient, options);
+
+            Assert.Equal("google-federated-token", token);
+
+            Dictionary<string, string> form = handler.Requests[0].Form;
+
+            Assert.False(form.ContainsKey("client_secret"));
+            Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", form["client_assertion_type"]);
+            Assert.Equal("client_credentials", form["grant_type"]);
+
+            string[] parts = form["client_assertion"].Split('.');
+            Assert.Equal(3, parts.Length);
+
+            using JsonDocument header = JsonDocument.Parse(FromBase64Url(parts[0]));
+            Assert.Equal("RS256", header.RootElement.GetProperty("alg").GetString());
+            Assert.Equal("JWT", header.RootElement.GetProperty("typ").GetString());
+
+            // Entra locates the signing key by base64url SHA-1 thumbprint.
+            string expectedThumbprint = Convert.ToBase64String(certificate.GetCertHash())
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            Assert.Equal(expectedThumbprint, header.RootElement.GetProperty("x5t").GetString());
+
+            using JsonDocument payload = JsonDocument.Parse(FromBase64Url(parts[1]));
+            Assert.Equal(EntraTokenEndpoint, payload.RootElement.GetProperty("aud").GetString());
+            Assert.Equal("client-id", payload.RootElement.GetProperty("iss").GetString());
+            Assert.Equal("client-id", payload.RootElement.GetProperty("sub").GetString());
+            Assert.False(string.IsNullOrEmpty(payload.RootElement.GetProperty("jti").GetString()));
+
+            long nbf = payload.RootElement.GetProperty("nbf").GetInt64();
+            long exp = payload.RootElement.GetProperty("exp").GetInt64();
+            Assert.True(exp > nbf, "exp must be later than nbf");
+            Assert.True(exp - nbf <= 600, "Entra rejects assertions living longer than 10 minutes");
+        }
+
+        [Fact]
+        public void ClientAssertionSignatureVerifiesAgainstThePublicKey()
+        {
+            using X509Certificate2 certificate = CreateTestCertificate();
+
+            WorkloadIdentityFederationOptions options = CreateOptions();
+            options.ClientCertificate = Convert.ToBase64String(certificate.Export(X509ContentType.Pfx));
+
+            string assertion = WorkloadIdentityFederation.CreateClientAssertion(options, EntraTokenEndpoint);
+
+            int lastDot = assertion.LastIndexOf('.');
+            byte[] signingInput = System.Text.Encoding.UTF8.GetBytes(assertion.Substring(0, lastDot));
+            byte[] signature = FromBase64Url(assertion.Substring(lastDot + 1));
+
+            using RSA publicKey = certificate.GetRSAPublicKey()!;
+
+            Assert.True(
+                publicKey.VerifyData(signingInput, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1),
+                "The assertion signature did not verify against the certificate public key.");
+        }
+
+        [Fact]
+        public void CertificateRemovesTheClientSecretRequirement()
+        {
+            using X509Certificate2 certificate = CreateTestCertificate();
+
+            WorkloadIdentityFederationOptions options = CreateOptions();
+            options.ClientSecret = string.Empty;
+            options.ClientCertificate = Convert.ToBase64String(certificate.Export(X509ContentType.Pfx));
+
+            Assert.True(options.UsesCertificate);
+
+            // Should not throw for the missing secret.
+            string assertion = WorkloadIdentityFederation.CreateClientAssertion(options, EntraTokenEndpoint);
+            Assert.False(string.IsNullOrEmpty(assertion));
+        }
+
+        [Fact]
+        public async Task RejectsCertificateThatIsNotValidBase64()
+        {
+            WorkloadIdentityFederationOptions options = CreateOptions();
+            options.ClientSecret = string.Empty;
+            options.ClientCertificate = "not-base64!!";
+
+            using HttpClient httpClient = new HttpClient(new RecordingHandler());
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => WorkloadIdentityFederation.GetGoogleAccessTokenAsync(httpClient, options));
+        }
+
+        [Fact]
+        public async Task NeverSendsOrRecordsTheCertificatePayload()
+        {
+            using X509Certificate2 certificate = CreateTestCertificate();
+            string pfx = Convert.ToBase64String(certificate.Export(X509ContentType.Pfx));
+
+            RecordingHandler handler = new RecordingHandler();
+            handler.Respond(EntraTokenEndpoint, "{\"access_token\":\"" + CreateJwt() + "\"}");
+            handler.Respond(StsEndpoint, "{\"access_token\":\"google-federated-token\"}");
+
+            using HttpClient httpClient = new HttpClient(handler);
+            using Activity activity = new Activity("wif-cert").Start();
+
+            WorkloadIdentityFederationOptions options = CreateOptions();
+            options.ClientSecret = string.Empty;
+            options.ClientCertificate = pfx;
+
+            await WorkloadIdentityFederation.GetGoogleAccessTokenAsync(httpClient, options, activity);
+
+            activity.Stop();
+
+            string allTags = string.Join("|", activity.TagObjects.Select(t => t.Key + "=" + t.Value));
+            Assert.DoesNotContain(pfx, allTags);
+            Assert.Equal("certificate", Tag(TagsOf(activity), "wif.client_auth"));
+
+            // The private key must never leave the process.
+            foreach (RecordedRequest request in handler.Requests)
+            {
+                Assert.DoesNotContain(pfx, request.Body);
+            }
+        }
+
+        private static X509Certificate2 CreateTestCertificate()
+        {
+            using RSA rsa = RSA.Create(2048);
+            CertificateRequest request = new CertificateRequest(
+                "CN=wif-test",
+                rsa,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+
+            return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddYears(1));
+        }
+
+        private static byte[] FromBase64Url(string value)
+        {
+            string padded = value.Replace('-', '+').Replace('_', '/');
+            switch (padded.Length % 4)
+            {
+                case 2: padded += "=="; break;
+                case 3: padded += "="; break;
+            }
+
+            return Convert.FromBase64String(padded);
         }
 
         private static string? Tag(Dictionary<string, string?> tags, string key)

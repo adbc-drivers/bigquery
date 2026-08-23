@@ -120,8 +120,21 @@ namespace AdbcDrivers.BigQuery.Tests
                     parameters.Add(BigQueryParameters.AuthenticationType, BigQueryConstants.EntraServicePrincipalAuthenticationType);
                     parameters.Add(BigQueryParameters.TenantId, testEnvironment.TenantId);
                     parameters.Add(BigQueryParameters.ClientId, testEnvironment.ClientId);
-                    parameters.Add(BigQueryParameters.ClientSecret, testEnvironment.ClientSecret);
                     parameters.Add(BigQueryParameters.AudienceUri, testEnvironment.Audience);
+
+                    if (!string.IsNullOrEmpty(testEnvironment.ClientCertificate))
+                    {
+                        parameters.Add(BigQueryParameters.ClientCertificate, testEnvironment.ClientCertificate);
+
+                        if (!string.IsNullOrEmpty(testEnvironment.ClientCertificatePassword))
+                        {
+                            parameters.Add(BigQueryParameters.ClientCertificatePassword, testEnvironment.ClientCertificatePassword);
+                        }
+                    }
+                    else
+                    {
+                        parameters.Add(BigQueryParameters.ClientSecret, testEnvironment.ClientSecret);
+                    }
 
                     if (!string.IsNullOrEmpty(testEnvironment.EntraResourceUri))
                     {
