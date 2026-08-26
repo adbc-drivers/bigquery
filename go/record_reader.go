@@ -136,7 +136,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 				// the first step of using the Storage API.
 				return nil, js, -1, adbc.Error{
 					Code: adbc.StatusUnauthorized,
-					Msg:  fmt.Sprintf("[bq] Could read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
+					Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
 				}
 			} else {
 				return nil, js, -1, errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results")
