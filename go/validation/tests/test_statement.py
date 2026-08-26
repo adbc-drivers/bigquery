@@ -93,3 +93,52 @@ def test_script_results(driver, conn) -> None:
         assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
 
         assert len(table) == 1, repr(table)
+
+
+STORAGE_API_DISABLED = "bigquery.query.use_storage_api_disabled_client"
+
+
+def test_use_storage_api_disabled_client_option_roundtrip(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        statement = cursor.adbc_statement
+        assert statement.get_option(STORAGE_API_DISABLED) == "false"
+        statement.set_options(**{STORAGE_API_DISABLED: "true"})
+        assert statement.get_option(STORAGE_API_DISABLED) == "true"
+
+
+def test_use_storage_api_disabled_client_pseudo_columns(driver, conn) -> None:
+    # Ingestion-time partitioning is what exposes _PARTITIONDATE and
+    # _PARTITIONTIME. Routing through the row-based reader must return their
+    # values rather than nulls.
+    table = f"validation_pseudo_columns_{uuid.uuid4().hex[:10]}"
+    with conn.cursor() as cursor:
+        cursor.execute(f"CREATE TABLE {table} (a INT64) PARTITION BY _PARTITIONDATE")
+        cursor.execute(f"INSERT INTO {table} (a) VALUES (7)")
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.adbc_statement.set_options(**{STORAGE_API_DISABLED: "true"})
+            cursor.execute(
+                f"SELECT a, _PARTITIONDATE AS pd, _PARTITIONTIME AS pt FROM {table}"
+            )
+            rows = cursor.fetch_arrow_table().to_pylist()
+
+        assert len(rows) == 1
+        # INT64 columns need an integer builder on the row-based path.
+        assert rows[0]["a"] == 7
+        assert rows[0]["pd"] is not None
+        assert rows[0]["pt"] is not None
+    finally:
+        with conn.cursor() as cursor:
+            driver.try_drop_table(cursor, table_name=table)
+
+
+@pytest.mark.xfail(
+    reason="the row-based reader emits one IPC stream per 1000-row batch, "
+    "so the consumer stops at end-of-stream and later rows are dropped"
+)
+def test_use_storage_api_disabled_client_row_count(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.adbc_statement.set_options(**{STORAGE_API_DISABLED: "true"})
+        cursor.execute("SELECT x FROM UNNEST(GENERATE_ARRAY(1, 1001)) AS x")
+        assert len(cursor.fetch_arrow_table()) == 1001
