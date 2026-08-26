@@ -91,3 +91,36 @@ def test_script_results(driver, conn) -> None:
         assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
 
         assert len(table) == 1, repr(table)
+
+
+QUERY_ID_KEY = b"BIGQUERY:query_id"
+
+
+def test_query_id_metadata(driver, conn) -> None:
+    # The job ID that produced the result set is published on the result
+    # schema so callers can correlate a result set with a BigQuery job.
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT 1 AS a")
+        first = cursor.fetch_arrow_table().schema.metadata[QUERY_ID_KEY]
+        assert first
+
+        cursor.execute("SELECT 1 AS a")
+        second = cursor.fetch_arrow_table().schema.metadata[QUERY_ID_KEY]
+        assert second
+
+        # Each execution is a distinct job, so it gets a distinct ID.
+        assert first != second
+
+
+def test_query_id_metadata_bound(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT ? AS a", parameters=(1,))
+        assert cursor.fetch_arrow_table().schema.metadata[QUERY_ID_KEY]
+
+
+@pytest.mark.xfail(reason="the dry-run path does not populate the job ID")
+def test_query_id_metadata_dry_run(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.adbc_statement.set_options(**{"bigquery.query.dry_run": "true"})
+        cursor.execute("SELECT 1 AS a")
+        assert cursor.fetch_arrow_table().schema.metadata[QUERY_ID_KEY]
