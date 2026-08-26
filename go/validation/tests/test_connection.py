@@ -15,6 +15,8 @@
 
 import adbc_driver_manager.dbapi
 import adbc_drivers_validation.tests.connection as connection_tests
+
+import uuid
 import pytest
 
 from . import bigquery, utils
@@ -136,3 +138,43 @@ def test_impersonate_empty_value(driver, driver_path, db_kwargs, option) -> None
         # No impersonation was configured, so no lifetime is reported.
         lifetime = conn.adbc_connection.get_option("bigquery.impersonate.lifetime")
         assert lifetime == "", lifetime
+
+def test_get_table_schema_table_metadata(driver, conn) -> None:
+    # Table-level BigQuery metadata published on the Arrow schema.
+    table = f"validation_table_metadata_{uuid.uuid4().hex[:10]}"
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"CREATE TABLE {table} (d DATE, a INT64) PARTITION BY d CLUSTER BY a"
+            " OPTIONS(require_partition_filter=true)"
+        )
+
+    try:
+        metadata = conn.adbc_get_table_schema(table).metadata
+        assert metadata[b"BIGQUERY:Clustering.Fields"] == b'["a"]'
+        assert metadata[b"BIGQUERY:RequirePartitionFilter"] == b"true"
+        assert metadata[b"BIGQUERY:TimePartitioning.Field"] == b"d"
+        # Emitted unconditionally, so consumers can rely on the key existing.
+        assert metadata[b"BIGQUERY:ExpirationTime"]
+        assert b"BIGQUERY:ResourceTags" in metadata
+        assert b"BIGQUERY:ViewQuery" in metadata
+        assert metadata[b"BIGQUERY:UseLegacySQL"] == b"false"
+        assert metadata[b"BIGQUERY:UseStandardSQL"] == b"false"
+    finally:
+        with conn.cursor() as cursor:
+            cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
+def test_get_table_schema_view_metadata(driver, conn) -> None:
+    view = f"validation_view_metadata_{uuid.uuid4().hex[:10]}"
+    with conn.cursor() as cursor:
+        cursor.execute(f"CREATE VIEW {view} AS SELECT 1 AS x")
+
+    try:
+        metadata = conn.adbc_get_table_schema(view).metadata
+        assert metadata[b"BIGQUERY:ViewQuery"] == b"SELECT 1 AS x"
+        assert metadata[b"BIGQUERY:Type"] == b"VIEW"
+        # False rather than absent: a view has no partition filter.
+        assert metadata[b"BIGQUERY:RequirePartitionFilter"] == b"false"
+        assert b"BIGQUERY:Clustering.Fields" not in metadata
+    finally:
+        with conn.cursor() as cursor:
+            cursor.execute(f"DROP VIEW IF EXISTS {view}")
