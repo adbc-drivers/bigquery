@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import uuid
 
 import adbc_drivers_validation.tests.statement as statement_tests
@@ -93,3 +94,79 @@ def test_script_results(driver, conn) -> None:
         assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
 
         assert len(table) == 1, repr(table)
+
+
+def _apply_column_descriptions(conn, table: str, descriptions: dict) -> None:
+    # This path is dispatched from ExecuteQuery instead of running SQL, so it
+    # goes through the raw statement rather than cursor.execute().
+    with conn.cursor() as cursor:
+        cursor.adbc_statement.set_options(
+            **{
+                "bigquery.query.destination_table": table,
+                "bigquery.table.update_columns_description": json.dumps(descriptions),
+            }
+        )
+        cursor.adbc_statement.execute_query()
+
+
+def _column_descriptions(conn, table: str) -> dict:
+    return {
+        field.name: (field.metadata or {}).get(b"Description", b"").decode()
+        for field in conn.adbc_get_table_schema(table)
+    }
+
+
+def test_update_table_columns_description(driver, conn) -> None:
+    table = f"validation_column_desc_{uuid.uuid4().hex[:10]}"
+    with conn.cursor() as cursor:
+        cursor.execute(f"CREATE TABLE {table} (a INT64, b STRING)")
+
+    try:
+        _apply_column_descriptions(
+            conn, table, {"a": "the a column", "b": "the b column"}
+        )
+        assert _column_descriptions(conn, table) == {
+            "a": "the a column",
+            "b": "the b column",
+        }
+    finally:
+        with conn.cursor() as cursor:
+            driver.try_drop_table(cursor, table_name=table)
+
+
+def test_update_table_columns_description_partial(driver, conn) -> None:
+    # Columns absent from the map keep whatever description they had.
+    table = f"validation_column_desc_partial_{uuid.uuid4().hex[:10]}"
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"CREATE TABLE {table} "
+            "(a INT64 OPTIONS(description='original a'), b STRING)"
+        )
+
+    try:
+        _apply_column_descriptions(conn, table, {"b": "only b"})
+        assert _column_descriptions(conn, table) == {
+            "a": "original a",
+            "b": "only b",
+        }
+    finally:
+        with conn.cursor() as cursor:
+            driver.try_drop_table(cursor, table_name=table)
+
+
+def test_update_table_columns_description_after_ddl(driver, conn) -> None:
+    # The update is a blind write (no ETag), so it is not rejected by a stale
+    # ETag after a metadata-changing DDL.
+    table = f"validation_column_desc_ddl_{uuid.uuid4().hex[:10]}"
+    with conn.cursor() as cursor:
+        cursor.execute(f"CREATE TABLE {table} (a INT64)")
+
+    try:
+        _apply_column_descriptions(conn, table, {"a": "first"})
+        with conn.cursor() as cursor:
+            cursor.execute(f"ALTER TABLE {table} SET OPTIONS(description='tbl')")
+        _apply_column_descriptions(conn, table, {"a": "second"})
+        assert _column_descriptions(conn, table) == {"a": "second"}
+    finally:
+        with conn.cursor() as cursor:
+            driver.try_drop_table(cursor, table_name=table)
