@@ -82,4 +82,4 @@ require (
 )
 
 // branch: bigquery/v1.81.0-patch
-replace cloud.google.com/go/bigquery => github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826045242-a56b03650142
+replace cloud.google.com/go/bigquery => github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826060005-3e667042799f
