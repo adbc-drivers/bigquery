@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -563,16 +564,25 @@ func (t *bigQueryConnectionTests) TestMetadataGetObjectsColumnsXdbc() {
 
 func TestValidation(t *testing.T) {
 	withQuirks(t, func(q *BigQueryQuirks) {
-		suite.Run(t, &validation.DatabaseTests{Quirks: q})
-		suite.Run(t, &bigQueryConnectionTests{validation.ConnectionTests{Quirks: q}})
-		suite.Run(t, &validation.StatementTests{Quirks: q})
-
 		suite.Run(t, &BigQueryTests{Quirks: q})
-		suite.Run(t, &ErrorTestSuite{
-			BigQueryTestSuite{
-				project: q.catalogName,
-				dataset: q.schemaName,
-			},
+
+		t.Run("Database", func(t *testing.T) {
+			suite.Run(t, &validation.DatabaseTests{Quirks: q})
+		})
+		t.Run("Connection", func(t *testing.T) {
+			suite.Run(t, &bigQueryConnectionTests{validation.ConnectionTests{Quirks: q}})
+		})
+		t.Run("Statement", func(t *testing.T) {
+			suite.Run(t, &validation.StatementTests{Quirks: q})
+		})
+
+		t.Run("Errors", func(t *testing.T) {
+			suite.Run(t, &ErrorTestSuite{
+				BigQueryTestSuite{
+					project: q.catalogName,
+					dataset: q.schemaName,
+				},
+			})
 		})
 	})
 }
@@ -2264,6 +2274,47 @@ func (suite *BigQueryTests) TestOldOptionNames() {
 			suite.Equal(expected, v)
 		})
 	}
+}
+
+func (suite *BigQueryTests) TestImpersonation() {
+	// Impersonate a service account which doesn't have readSessionUser,
+	// testing both that impersonation works and that we properly catch
+	// this and return a detailed error
+	targetPrincipal, ok := os.LookupEnv("BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL")
+	if !ok || targetPrincipal == "" {
+		suite.T().Skip("BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL not set, skipping impersonation test")
+	}
+
+	ctx := context.Background()
+	options := maps.Clone(suite.Quirks.DatabaseOptions())
+	options["bigquery.auth.credentials_type"] = "impersonated_service_account"
+	options["bigquery.impersonate.target_principal"] = targetPrincipal
+	options["bigquery.impersonate.scopes"] = "https://www.googleapis.com/auth/cloud-platform"
+
+	db, err := suite.driver.NewDatabaseWithContext(ctx, options)
+	suite.Require().NoError(err)
+	defer testutil.CheckedCloseWithContext(suite.T(), db, context.Background())
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	})
+	logger := slog.New(handler)
+	db.(adbc.DatabaseLogging).SetLogger(logger)
+
+	cnxn, err := db.Open(ctx)
+	suite.Require().NoError(err)
+	defer testutil.CheckedCloseWithContext(suite.T(), cnxn, context.Background())
+
+	stmt, err := cnxn.NewStatement(ctx)
+	suite.Require().NoError(err)
+	defer testutil.CheckedCloseWithContext(suite.T(), stmt, context.Background())
+
+	// will fail as this service account doesn't have permissions
+	suite.Require().NoError(stmt.SetSqlQuery(ctx, "SELECT 42"))
+	_, _, err = stmt.ExecuteQuery(ctx)
+	suite.ErrorContains(err, "Could not read Arrow query results: (PermissionDenied) request failed: the user does not have 'bigquery.readsessions.create' permission")
+	suite.ErrorContains(err, "Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282")
 }
 
 func TestOldOptionNamesURI(t *testing.T) {
