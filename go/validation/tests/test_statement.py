@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import uuid
+
 import adbc_drivers_validation.tests.statement as statement_tests
+import pytest
 
 from . import bigquery, utils
 
@@ -44,3 +47,49 @@ def test_dry_run(driver, conn) -> None:
         cursor.execute("SELECT 1 AS a, 'foobar' as b", parameters=[(1,), (2,)])
         schema = cursor.fetchallarrow().schema
         assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SELECT"
+
+
+def test_script_no_results(driver, conn) -> None:
+    # Regression test for https://github.com/dbt-labs/dbt-core/issues/16081
+    # That bug never made it into the Driver Foundry driver, but guard against
+    # it regardless.
+    target_table = f"test_script_no_results_{uuid.uuid4().hex}"
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(f"CREATE TABLE {target_table} (idx INT, val INT)")
+            cursor.execute(f"""
+            CREATE TEMP TABLE staging AS SELECT 1 AS idx, 2 AS val;
+            MERGE INTO {target_table} AS DEST
+            USING (SELECT * FROM staging) AS SOURCE
+            ON DEST.idx = SOURCE.idx
+            WHEN MATCHED THEN
+                UPDATE SET val = SOURCE.val
+            WHEN NOT MATCHED THEN
+                INSERT (idx, val)
+                VALUES (SOURCE.idx, SOURCE.val);
+            DROP TABLE IF EXISTS staging;
+            """)
+            assert not cursor.description
+            schema = cursor.fetch_arrow_table().schema
+            assert (
+                schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
+            )
+
+            cursor.execute(f"SELECT val FROM {target_table} WHERE idx = 1")
+            assert cursor.fetchone() == (2,)
+    finally:
+        with conn.cursor() as cursor:
+            driver.try_drop_table(cursor, table_name=target_table)
+
+
+@pytest.mark.xfail
+def test_script_results(driver, conn) -> None:
+    # This should at least read the first result set, but currently it is not supported.
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT 1; SELECT 'foobar'")
+        table = cursor.fetch_arrow_table()
+        schema = table.schema
+        assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
+
+        assert len(table) == 1, repr(table)
