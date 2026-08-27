@@ -150,9 +150,9 @@ def test_get_table_schema_table_metadata(driver, conn) -> None:
 
     try:
         metadata = conn.adbc_get_table_schema(table).metadata
-        assert metadata[b"BIGQUERY:Clustering.Fields"] == b'["a"]'
+        assert metadata[b"BIGQUERY:Clustering:Fields"] == b'["a"]'
         assert metadata[b"BIGQUERY:RequirePartitionFilter"] == b"true"
-        assert metadata[b"BIGQUERY:TimePartitioning.Field"] == b"d"
+        assert metadata[b"BIGQUERY:TimePartitioning:Field"] == b"d"
         # Emitted unconditionally, so consumers can rely on the key existing.
         assert metadata[b"BIGQUERY:ExpirationTime"]
         assert b"BIGQUERY:ResourceTags" in metadata

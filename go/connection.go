@@ -921,6 +921,38 @@ func encodeJson[S ~[]E | ~map[string]E, E any](v S) string {
 	return ret
 }
 
+var legacySchemaKeys = []string{
+	"Name",
+	"Location",
+	"Description",
+	"MaterializedView.EnableRefresh",
+	"MaterializedView.LastRefreshTime",
+	"MaterializedView.Query",
+	"MaterializedView.RefreshInterval",
+	"MaterializedView.AllowNonIncrementalDefinition",
+	"MaterializedView.MaxStaleness",
+	"TimePartitioning.Type",
+	"TimePartitioning.Expiration",
+	"TimePartitioning.Field",
+	"RangePartitioning.Field",
+	"RangePartitioning.Range.Start",
+	"RangePartitioning.Range.End",
+	"RangePartitioning.Range.Interval",
+	"FullID",
+	"Type",
+	"CreationTime",
+	"LastModifiedTime",
+	"NumBytes",
+	"NumLongTermBytes",
+	"NumRows",
+	"SnapshotDefinition.BaseTableReference",
+	"SnapshotDefinition.SnapshotTime",
+	"CloneDefinition.BaseTableReference",
+	"CloneDefinition.CloneTime",
+	"ETag",
+	"DefaultCollation",
+}
+
 func (c *connectionImpl) getTableSchemaWithFilter(ctx context.Context, catalog *string, dbSchema *string, tableName string, columnName *string) (*arrow.Schema, error) {
 	if catalog == nil {
 		catalog = &c.catalog
@@ -936,103 +968,112 @@ func (c *connectionImpl) getTableSchemaWithFilter(ctx context.Context, catalog *
 	}
 
 	metadata := make(map[string]string)
-	metadata["Name"] = md.Name
-	metadata["Location"] = md.Location
-	metadata["Description"] = md.Description
+	metadata["BIGQUERY:Name"] = md.Name
+	metadata["BIGQUERY:Location"] = md.Location
+	metadata["BIGQUERY:Description"] = md.Description
 	// md.Schema: the table Schema is defined at the bottom using md.Schema
 	if md.MaterializedView != nil {
-		metadata["MaterializedView.EnableRefresh"] = strconv.FormatBool(md.MaterializedView.EnableRefresh)
-		metadata["MaterializedView.LastRefreshTime"] = md.MaterializedView.LastRefreshTime.Format(time.RFC3339Nano)
-		metadata["MaterializedView.Query"] = md.MaterializedView.Query
-		metadata["MaterializedView.RefreshInterval"] = md.MaterializedView.RefreshInterval.String()
-		metadata["MaterializedView.AllowNonIncrementalDefinition"] = strconv.FormatBool(md.MaterializedView.AllowNonIncrementalDefinition)
+		metadata["BIGQUERY:MaterializedView:EnableRefresh"] = strconv.FormatBool(md.MaterializedView.EnableRefresh)
+		metadata["BIGQUERY:MaterializedView:LastRefreshTime"] = md.MaterializedView.LastRefreshTime.Format(time.RFC3339Nano)
+		metadata["BIGQUERY:MaterializedView:Query"] = md.MaterializedView.Query
+		metadata["BIGQUERY:MaterializedView:RefreshInterval"] = md.MaterializedView.RefreshInterval.String()
+		metadata["BIGQUERY:MaterializedView:AllowNonIncrementalDefinition"] = strconv.FormatBool(md.MaterializedView.AllowNonIncrementalDefinition)
 		if md.MaxStaleness != nil {
-			metadata["MaterializedView.MaxStaleness"] = md.MaxStaleness.String()
+			metadata["BIGQUERY:MaterializedView:MaxStaleness"] = md.MaxStaleness.String()
 		}
 	}
-	metadata["ViewQuery"] = md.ViewQuery
-	metadata["UseLegacySQL"] = strconv.FormatBool(md.UseLegacySQL)
-	metadata["UseStandardSQL"] = strconv.FormatBool(md.UseStandardSQL)
+	metadata["BIGQUERY:ViewQuery"] = md.ViewQuery
+	metadata["BIGQUERY:UseLegacySQL"] = strconv.FormatBool(md.UseLegacySQL)
+	metadata["BIGQUERY:UseStandardSQL"] = strconv.FormatBool(md.UseStandardSQL)
 	if md.TimePartitioning != nil {
 		// "DAY", "HOUR", "MONTH", "YEAR"
-		metadata["TimePartitioning.Type"] = string(md.TimePartitioning.Type)
+		metadata["BIGQUERY:TimePartitioning:Type"] = string(md.TimePartitioning.Type)
 		if md.TimePartitioning.Expiration != 0 {
-			metadata["TimePartitioning.Expiration"] = md.TimePartitioning.Expiration.String()
+			metadata["BIGQUERY:TimePartitioning:Expiration"] = md.TimePartitioning.Expiration.String()
 		}
 		if md.TimePartitioning.Field != "" {
-			metadata["TimePartitioning.Field"] = md.TimePartitioning.Field
+			metadata["BIGQUERY:TimePartitioning:Field"] = md.TimePartitioning.Field
 		}
 	}
 	if md.RangePartitioning != nil {
 		if md.RangePartitioning.Field != "" {
-			metadata["RangePartitioning.Field"] = md.RangePartitioning.Field
+			metadata["BIGQUERY:RangePartitioning:Field"] = md.RangePartitioning.Field
 		}
 		if md.RangePartitioning.Range != nil {
-			metadata["RangePartitioning.Range.Start"] = strconv.FormatInt(md.RangePartitioning.Range.Start, 10)
-			metadata["RangePartitioning.Range.End"] = strconv.FormatInt(md.RangePartitioning.Range.End, 10)
-			metadata["RangePartitioning.Range.Interval"] = strconv.FormatInt(md.RangePartitioning.Range.Interval, 10)
+			metadata["BIGQUERY:RangePartitioning:Range:Start"] = strconv.FormatInt(md.RangePartitioning.Range.Start, 10)
+			metadata["BIGQUERY:RangePartitioning:Range:End"] = strconv.FormatInt(md.RangePartitioning.Range.End, 10)
+			metadata["BIGQUERY:RangePartitioning:Range:Interval"] = strconv.FormatInt(md.RangePartitioning.Range.Interval, 10)
 		}
 	}
 	// Downstream consumers expect this key to always be present, so emit
 	// it unconditionally rather than gating on the bool being true.
-	metadata["RequirePartitionFilter"] = strconv.FormatBool(md.RequirePartitionFilter)
+	metadata["BIGQUERY:RequirePartitionFilter"] = strconv.FormatBool(md.RequirePartitionFilter)
 	if md.Clustering != nil {
-		metadata["Clustering.Fields"] = encodeJson[[]string, string](md.Clustering.Fields)
+		metadata["BIGQUERY:Clustering:Fields"] = encodeJson[[]string, string](md.Clustering.Fields)
 	}
-	metadata["ExpirationTime"] = md.ExpirationTime.Format(time.RFC3339Nano)
-	metadata["Labels"] = encodeJson[map[string]string, string](md.Labels)
+	metadata["BIGQUERY:ExpirationTime"] = md.ExpirationTime.Format(time.RFC3339Nano)
+	metadata["BIGQUERY:Labels"] = encodeJson[map[string]string, string](md.Labels)
 	// TODO: ExternalDataConfig
 	if md.ExternalDataConfig != nil {
-		metadata["ExternalDataConfig.SourceFormat"] = string(md.ExternalDataConfig.SourceFormat)
-		metadata["ExternalDataConfig.SourceURIs"] = encodeJson[[]string, string](md.ExternalDataConfig.SourceURIs)
+		metadata["BIGQUERY:ExternalDataConfig:SourceFormat"] = string(md.ExternalDataConfig.SourceFormat)
+		metadata["BIGQUERY:ExternalDataConfig:SourceURIs"] = encodeJson[[]string, string](md.ExternalDataConfig.SourceURIs)
 		// TODO: Schema
-		metadata["ExternalDataConfig.AutoDetect"] = strconv.FormatBool(md.ExternalDataConfig.AutoDetect)
-		metadata["ExternalDataConfig.Compression"] = string(md.ExternalDataConfig.Compression)
-		metadata["ExternalDataConfig.IgnoreUnknownValues"] = strconv.FormatBool(md.ExternalDataConfig.IgnoreUnknownValues)
-		metadata["ExternalDataConfig.MaxBadRecords"] = strconv.FormatInt(md.ExternalDataConfig.MaxBadRecords, 10)
+		metadata["BIGQUERY:ExternalDataConfig:AutoDetect"] = strconv.FormatBool(md.ExternalDataConfig.AutoDetect)
+		metadata["BIGQUERY:ExternalDataConfig:Compression"] = string(md.ExternalDataConfig.Compression)
+		metadata["BIGQUERY:ExternalDataConfig:IgnoreUnknownValues"] = strconv.FormatBool(md.ExternalDataConfig.IgnoreUnknownValues)
+		metadata["BIGQUERY:ExternalDataConfig:MaxBadRecords"] = strconv.FormatInt(md.ExternalDataConfig.MaxBadRecords, 10)
 		// TODO: Options, do we need this? It looks like it contains the same thing as ExternalDataConfig?
 		if md.ExternalDataConfig.HivePartitioningOptions != nil {
-			metadata["ExternalDataConfig.HivePartitioningOptions.Mode"] = string(md.ExternalDataConfig.HivePartitioningOptions.Mode)
-			metadata["ExternalDataConfig.HivePartitioningOptions.SourceURIPrefix"] = md.ExternalDataConfig.HivePartitioningOptions.SourceURIPrefix
-			metadata["ExternalDataConfig.HivePartitioningOptions.RequirePartitionFilter"] = strconv.FormatBool(md.ExternalDataConfig.HivePartitioningOptions.RequirePartitionFilter)
+			metadata["BIGQUERY:ExternalDataConfig:HivePartitioningOptions:Mode"] = string(md.ExternalDataConfig.HivePartitioningOptions.Mode)
+			metadata["BIGQUERY:ExternalDataConfig:HivePartitioningOptions:SourceURIPrefix"] = md.ExternalDataConfig.HivePartitioningOptions.SourceURIPrefix
+			metadata["BIGQUERY:ExternalDataConfig:HivePartitioningOptions:RequirePartitionFilter"] = strconv.FormatBool(md.ExternalDataConfig.HivePartitioningOptions.RequirePartitionFilter)
 		}
-		metadata["ExternalDataConfig.DecimalTargetTypes"] = encodeJson[[]bigquery.DecimalTargetType, bigquery.DecimalTargetType](md.ExternalDataConfig.DecimalTargetTypes)
-		metadata["ExternalDataConfig.ConnectionID"] = md.ExternalDataConfig.ConnectionID
-		metadata["ExternalDataConfig.ReferenceFileSchemaURI"] = md.ExternalDataConfig.ReferenceFileSchemaURI
-		metadata["ExternalDataConfig.MetadataCacheMode"] = string(md.ExternalDataConfig.MetadataCacheMode)
+		metadata["BIGQUERY:ExternalDataConfig:DecimalTargetTypes"] = encodeJson[[]bigquery.DecimalTargetType, bigquery.DecimalTargetType](md.ExternalDataConfig.DecimalTargetTypes)
+		metadata["BIGQUERY:ExternalDataConfig:ConnectionID"] = md.ExternalDataConfig.ConnectionID
+		metadata["BIGQUERY:ExternalDataConfig:ReferenceFileSchemaURI"] = md.ExternalDataConfig.ReferenceFileSchemaURI
+		metadata["BIGQUERY:ExternalDataConfig:MetadataCacheMode"] = string(md.ExternalDataConfig.MetadataCacheMode)
 	}
 	if md.EncryptionConfig != nil {
-		metadata["EncryptionConfig.KMSKeyName"] = md.EncryptionConfig.KMSKeyName
+		metadata["BIGQUERY:EncryptionConfig:KMSKeyName"] = md.EncryptionConfig.KMSKeyName
 	}
-	metadata["FullID"] = md.FullID
-	metadata["Type"] = string(md.Type)
-	metadata["CreationTime"] = md.CreationTime.Format(time.RFC3339Nano)
-	metadata["LastModifiedTime"] = md.LastModifiedTime.Format(time.RFC3339Nano)
-	metadata["NumBytes"] = strconv.FormatInt(md.NumBytes, 10)
-	metadata["NumLongTermBytes"] = strconv.FormatInt(md.NumLongTermBytes, 10)
-	metadata["NumRows"] = strconv.FormatUint(md.NumRows, 10)
+	metadata["BIGQUERY:FullID"] = md.FullID
+	metadata["BIGQUERY:Type"] = string(md.Type)
+	metadata["BIGQUERY:CreationTime"] = md.CreationTime.Format(time.RFC3339Nano)
+	metadata["BIGQUERY:LastModifiedTime"] = md.LastModifiedTime.Format(time.RFC3339Nano)
+	metadata["BIGQUERY:NumBytes"] = strconv.FormatInt(md.NumBytes, 10)
+	metadata["BIGQUERY:NumLongTermBytes"] = strconv.FormatInt(md.NumLongTermBytes, 10)
+	metadata["BIGQUERY:NumRows"] = strconv.FormatUint(md.NumRows, 10)
 	if md.SnapshotDefinition != nil {
-		metadata["SnapshotDefinition.BaseTableReference"] = md.SnapshotDefinition.BaseTableReference.FullyQualifiedName()
-		metadata["SnapshotDefinition.SnapshotTime"] = md.SnapshotDefinition.SnapshotTime.Format(time.RFC3339Nano)
+		metadata["BIGQUERY:SnapshotDefinition:BaseTableReference"] = md.SnapshotDefinition.BaseTableReference.FullyQualifiedName()
+		metadata["BIGQUERY:SnapshotDefinition:SnapshotTime"] = md.SnapshotDefinition.SnapshotTime.Format(time.RFC3339Nano)
 	}
 	if md.CloneDefinition != nil {
-		metadata["CloneDefinition.BaseTableReference"] = md.CloneDefinition.BaseTableReference.FullyQualifiedName()
-		metadata["CloneDefinition.CloneTime"] = md.CloneDefinition.CloneTime.Format(time.RFC3339Nano)
+		metadata["BIGQUERY:CloneDefinition:BaseTableReference"] = md.CloneDefinition.BaseTableReference.FullyQualifiedName()
+		metadata["BIGQUERY:CloneDefinition:CloneTime"] = md.CloneDefinition.CloneTime.Format(time.RFC3339Nano)
 	}
 	if md.StreamingBuffer != nil {
-		metadata["StreamingBuffer.EstimatedBytes"] = strconv.FormatUint(md.StreamingBuffer.EstimatedBytes, 10)
-		metadata["StreamingBuffer.EstimatedRows"] = strconv.FormatUint(md.StreamingBuffer.EstimatedRows, 10)
-		metadata["StreamingBuffer.OldestEntryTime"] = md.StreamingBuffer.OldestEntryTime.Format(time.RFC3339Nano)
+		metadata["BIGQUERY:StreamingBuffer:EstimatedBytes"] = strconv.FormatUint(md.StreamingBuffer.EstimatedBytes, 10)
+		metadata["BIGQUERY:StreamingBuffer:EstimatedRows"] = strconv.FormatUint(md.StreamingBuffer.EstimatedRows, 10)
+		metadata["BIGQUERY:StreamingBuffer:OldestEntryTime"] = md.StreamingBuffer.OldestEntryTime.Format(time.RFC3339Nano)
 	}
-	metadata["ETag"] = md.ETag
-	metadata["DefaultCollation"] = md.DefaultCollation
+	metadata["BIGQUERY:ETag"] = md.ETag
+	metadata["BIGQUERY:DefaultCollation"] = md.DefaultCollation
 	if md.TableConstraints != nil {
 		if md.TableConstraints.PrimaryKey != nil {
-			metadata["TableConstraints.PrimaryKey.Columns"] = encodeJson[[]string, string](md.TableConstraints.PrimaryKey.Columns)
+			metadata["BIGQUERY:TableConstraints:PrimaryKey:Columns"] = encodeJson[[]string, string](md.TableConstraints.PrimaryKey.Columns)
 		}
 		// TODO: TableConstraints.ForeignKeys, how do we represent list of structs?
 	}
-	metadata["ResourceTags"] = encodeJson[map[string]string, string](md.ResourceTags)
+	metadata["BIGQUERY:ResourceTags"] = encodeJson[map[string]string, string](md.ResourceTags)
+
+	// support old format before the BIGQUERY:<key>:<subkey> standard was introduced
+	for _, oldKey := range legacySchemaKeys {
+		newKey := fmt.Sprintf("BIGQUERY:%s", strings.Replace(oldKey, ".", ":", -1))
+		if val, ok := metadata[newKey]; ok {
+			metadata[oldKey] = val
+		}
+	}
+
 	tableMetadata := arrow.MetadataFrom(metadata)
 
 	fields := make([]arrow.Field, len(md.Schema))
@@ -1048,6 +1089,7 @@ func (c *connectionImpl) getTableSchemaWithFilter(ctx context.Context, catalog *
 	return schema, nil
 }
 
+// TODO: migrate field keys to the new "BIGQUERY:<key>" convention
 func buildField(schema *bigquery.FieldSchema, level uint) (arrow.Field, error) {
 	field := arrow.Field{Name: schema.Name}
 	metadata := make(map[string]string)
