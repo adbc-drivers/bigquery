@@ -38,7 +38,7 @@ func TestSafeWaitForJobPollsRunningThenDone(t *testing.T) {
 	job, err := q.Run(ctx)
 	require.NoError(t, err)
 
-	js, err := safeWaitForJob(ctx, slog.Default(), job)
+	js, err := safeWaitForJob(ctx, slog.Default(), job, nil)
 	require.NoError(t, err)
 	require.True(t, js.Done())
 

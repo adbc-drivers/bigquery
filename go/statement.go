@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/bigquery"
@@ -62,7 +63,14 @@ type statement struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	cancelMu   sync.Mutex
+	activeJob  *bigquery.Job
+	cancelOnce *sync.Once
+	execCancel context.CancelFunc
 }
+
+var _ jobTracker = (*statement)(nil)
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
 	return nil, adbc.Error{
@@ -105,8 +113,94 @@ func (st *statement) Close(ctx context.Context) error {
 	}
 
 	st.clearParameters()
+	_ = st.Cancel(ctx)
 	st.cnxn = nil
 	return nil
+}
+
+func (st *statement) beginExec(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	st.cancelMu.Lock()
+	st.execCancel = cancel
+	st.cancelMu.Unlock()
+	return ctx, func() {
+		cancel()
+		st.cancelMu.Lock()
+		if st.execCancel != nil {
+			st.execCancel = nil
+		}
+		st.cancelMu.Unlock()
+	}
+}
+
+func (st *statement) beginJob(job *bigquery.Job) {
+	st.cancelMu.Lock()
+	defer st.cancelMu.Unlock()
+	st.activeJob = job
+	st.cancelOnce = &sync.Once{}
+}
+
+func (st *statement) endJob(job *bigquery.Job) {
+	st.cancelMu.Lock()
+	defer st.cancelMu.Unlock()
+	if st.activeJob == nil || job == nil {
+		return
+	}
+	if st.activeJob.ID() == job.ID() {
+		st.activeJob = nil
+		st.cancelOnce = nil
+	}
+}
+
+func (st *statement) cancelJob(ctx context.Context, job *bigquery.Job) {
+	st.cancelMu.Lock()
+	active := st.activeJob
+	once := st.cancelOnce
+	logger := slog.Default()
+	if st.cnxn != nil && st.cnxn.Logger != nil {
+		logger = st.cnxn.Logger
+	}
+	st.cancelMu.Unlock()
+	if active == nil || once == nil {
+		return
+	}
+	if job != nil && active.ID() != job.ID() {
+		return
+	}
+	st.remoteCancel(ctx, active, once, logger)
+}
+
+// Cancel stops the current statement execution and best-effort cancels the
+// in-flight BigQuery job. It is safe to call concurrently with Execute.
+func (st *statement) Cancel(ctx context.Context) error {
+	st.cancelMu.Lock()
+	execCancel := st.execCancel
+	job := st.activeJob
+	once := st.cancelOnce
+	logger := slog.Default()
+	if st.cnxn != nil && st.cnxn.Logger != nil {
+		logger = st.cnxn.Logger
+	}
+	st.cancelMu.Unlock()
+
+	if execCancel != nil {
+		execCancel()
+	}
+	if job == nil || once == nil {
+		return nil
+	}
+	st.remoteCancel(ctx, job, once, logger)
+	return nil
+}
+
+func (st *statement) remoteCancel(ctx context.Context, job *bigquery.Job, once *sync.Once, logger *slog.Logger) {
+	once.Do(func() {
+		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobCancelTimeout)
+		defer cancel()
+		if err := job.Cancel(cancelCtx); err != nil && logger != nil {
+			logger.DebugContext(cancelCtx, "best-effort BigQuery job cancel failed", "id", job.ID(), "error", err)
+		}
+	})
 }
 
 func (st *statement) GetOption(ctx context.Context, key string) (string, error) {
@@ -378,6 +472,9 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
+	ctx, stop := st.beginExec(ctx)
+	defer stop()
+
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
 		return nil, n, err
@@ -388,7 +485,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
-	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
+	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
 	return rr, totalRows, err
 }
@@ -396,13 +493,16 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 // ExecuteUpdate executes a statement that does not generate a result
 // set. It returns the number of rows affected if known, otherwise -1.
 func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
+	ctx, stop := st.beginExec(ctx)
+	defer stop()
+
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
 		return n, err
 	}
 
 	if st.params == nil {
-		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
 		if err != nil {
 			return -1, err
 		}
@@ -424,7 +524,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
 				if err != nil {
 					return -1, err
 				}
@@ -951,6 +1051,7 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 			options:     st.ingest,
 			queryConfig: st.queryConfig,
 			client:      st.cnxn.client,
+			tracker:     st,
 		}
 	}
 	manager := &driverbase.BulkIngestManager{
