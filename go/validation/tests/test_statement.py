@@ -118,10 +118,8 @@ def test_query_id_metadata_bound(driver, conn) -> None:
         assert cursor.fetch_arrow_table().schema.metadata[QUERY_ID_KEY]
 
 
-@pytest.mark.xfail(reason="BigQuery never creates a job for a dry run, so "
-    "there is no job ID to report")
 def test_query_id_metadata_dry_run(driver, conn) -> None:
     with conn.cursor() as cursor:
         cursor.adbc_statement.set_options(**{"bigquery.query.dry_run": "true"})
         cursor.execute("SELECT 1 AS a")
-        assert cursor.fetch_arrow_table().schema.metadata[QUERY_ID_KEY]
+        assert QUERY_ID_KEY not in cursor.fetch_arrow_table().schema.metadata

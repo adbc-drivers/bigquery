@@ -66,8 +66,7 @@ func metadataFromJobStatistics(stats *bigquery.JobStatistics, jobID string) (*ar
 	metadata := make(map[string]string)
 	addStringMetadata(metadata, MetadataKeyBigqueryQueryID, jobID)
 	if stats == nil {
-		result := arrow.MetadataFrom(metadata)
-		return &result, nil
+		return new(arrow.MetadataFrom(metadata)), nil
 	}
 	addTimeMetadata(metadata, "BIGQUERY:Statistics:CreationTime", stats.CreationTime)
 	addTimeMetadata(metadata, "BIGQUERY:Statistics:StartTime", stats.StartTime)
