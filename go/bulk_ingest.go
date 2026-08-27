@@ -30,6 +30,53 @@ import (
 	"github.com/google/uuid"
 )
 
+// bigQueryFieldTypeFromMetadata maps Arrow types stashed in IPC metadata
+// (BIGQUERY:type) to BigQuery types. These do not align 1:1 with the
+// Standard SQL type names — see google-cloud-go/bigquery/schema.go.
+func bigQueryFieldTypeFromMetadata(v string) (bigquery.FieldType, bool) {
+	// Trim parameter suffixes: e.g. NUMERIC(38,9) or ARRAY<INT64>.
+	t := strings.ToUpper(strings.TrimSpace(v))
+	if idx := strings.IndexAny(t, "<("); idx >= 0 {
+		t = t[:idx]
+	}
+
+	switch t {
+	case "STRING":
+		return bigquery.StringFieldType, true
+	case "BYTES":
+		return bigquery.BytesFieldType, true
+	case "INTEGER", "INT64":
+		return bigquery.IntegerFieldType, true
+	case "FLOAT", "FLOAT64":
+		return bigquery.FloatFieldType, true
+	case "BOOL", "BOOLEAN":
+		return bigquery.BooleanFieldType, true
+	case "TIMESTAMP":
+		return bigquery.TimestampFieldType, true
+	case "DATE":
+		return bigquery.DateFieldType, true
+	case "TIME":
+		return bigquery.TimeFieldType, true
+	case "DATETIME":
+		return bigquery.DateTimeFieldType, true
+	case "NUMERIC", "DECIMAL":
+		return bigquery.NumericFieldType, true
+	case "BIGNUMERIC", "BIGDECIMAL":
+		return bigquery.BigNumericFieldType, true
+	case "GEOGRAPHY":
+		return bigquery.GeographyFieldType, true
+	case "INTERVAL":
+		return bigquery.IntervalFieldType, true
+	case "JSON":
+		return bigquery.JSONFieldType, true
+	case "ARRAY", "RECORD", "STRUCT":
+		// composite; the caller must derive from the Arrow field type.
+		return "", false
+	default:
+		return bigquery.StringFieldType, true
+	}
+}
+
 type bigqueryBulkIngestSink struct {
 	f    *os.File
 	path string
@@ -193,6 +240,16 @@ func arrowFieldToBigQueryField(field arrow.Field) (*bigquery.FieldSchema, error)
 	bqField := &bigquery.FieldSchema{
 		Name:     field.Name,
 		Required: !field.Nullable,
+	}
+
+	// Use IPC metadata to disambiguate BigQuery logical types when Arrow's
+	// physical type alone is not enough (e.g. DATETIME vs TIMESTAMP,
+	// NUMERIC vs BIGNUMERIC precision, JSON strings vs plain STRING).
+	if v, ok := field.Metadata.GetValue("BIGQUERY:type"); ok {
+		if fieldType, ok := bigQueryFieldTypeFromMetadata(v); ok {
+			bqField.Type = fieldType
+			return bqField, nil
+		}
 	}
 
 	switch field.Type.ID() {
