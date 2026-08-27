@@ -118,7 +118,15 @@ func (st *statement) waitForJob(ctx context.Context, logger *slog.Logger, job *b
 		st.beginJob(job)
 		defer st.endJob(job)
 	}
-	return safeWaitForJob(ctx, logger, job)
+	js, err := safeWaitForJob(ctx, logger, job)
+	if ctx.Err() != nil {
+		if st != nil {
+			st.stopExecution(false)
+		} else {
+			go cancelBigQueryJob(job, logger)
+		}
+	}
+	return js, err
 }
 
 func cancelBigQueryJobOnce(flight *inFlight, logger *slog.Logger) {

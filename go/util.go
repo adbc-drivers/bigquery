@@ -81,15 +81,10 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job)
 			// here because job.Status does not behave like job.Wait
 			// and does not put the job's error into the API call's
 			// error.
-			if ctx.Err() != nil {
-				go cancelBigQueryJob(job, logger)
-			} else if isRetryableError(err) {
+			if ctx.Err() == nil && isRetryableError(err) {
 				duration := backoff.Pause()
 				logger.DebugContext(ctx, "retry job", "id", job.ID(), "backoff", duration, "error", err)
 				if err := gax.Sleep(ctx, duration); err != nil {
-					if ctx.Err() != nil {
-						go cancelBigQueryJob(job, logger)
-					}
 					return nil, err
 				}
 

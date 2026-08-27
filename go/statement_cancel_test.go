@@ -76,6 +76,16 @@ func requireCancelled(t *testing.T, err error) {
 	assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
 }
 
+func requireOneCancel(t *testing.T, srv *fakebq.Server, jobID string) fakebq.Request {
+	t.Helper()
+	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
+	require.Never(t, func() bool {
+		return len(srv.RequestsByKind(fakebq.KindCancel)) > 1
+	}, 200*time.Millisecond, 10*time.Millisecond, "expected one jobs.cancel, kinds=%v", srv.KindOrder())
+	assert.Equal(t, jobID, cancels[0].JobID)
+	return cancels[0]
+}
+
 func waitExecErr(t *testing.T, errCh <-chan error) error {
 	t.Helper()
 	select {
@@ -107,11 +117,10 @@ func TestStatementCancelSendsJobsCancelForInFlightJob(t *testing.T) {
 	require.NoError(t, st.Cancel(context.Background()))
 	requireCancelled(t, waitExecErr(t, errCh))
 
-	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
-	assert.Equal(t, jobID, cancels[0].JobID)
-	assert.Equal(t, "US", cancels[0].Location)
-	assert.Equal(t, "test-project", cancels[0].Project)
-	assert.Contains(t, cancels[0].Path, "/jobs/"+jobID+"/cancel")
+	cancel := requireOneCancel(t, srv, jobID)
+	assert.Equal(t, "US", cancel.Location)
+	assert.Equal(t, "test-project", cancel.Project)
+	assert.Contains(t, cancel.Path, "/jobs/"+jobID+"/cancel")
 }
 
 func TestStatementCancelOnCompletedJobIsSafe(t *testing.T) {
@@ -161,10 +170,7 @@ func TestStatementCancelDoesNotCancelPreviousExecution(t *testing.T) {
 	require.NoError(t, st.Cancel(context.Background()))
 	requireCancelled(t, waitExecErr(t, errCh))
 
-	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
-	for _, req := range cancels {
-		assert.Equal(t, secondID, req.JobID, "must not cancel the completed first job")
-	}
+	requireOneCancel(t, srv, secondID)
 }
 
 func TestExecuteContextCancelStillSendsJobsCancel(t *testing.T) {
@@ -184,9 +190,8 @@ func TestExecuteContextCancelStillSendsJobsCancel(t *testing.T) {
 	cancel()
 	requireCancelled(t, waitExecErr(t, errCh))
 
-	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
-	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
-	assert.Equal(t, "US", cancels[0].Location)
+	got := requireOneCancel(t, srv, inserts[0].JobID)
+	assert.Equal(t, "US", got.Location)
 }
 
 func TestStatementCancelSendsJobsCancelForExecuteQuery(t *testing.T) {
@@ -204,8 +209,7 @@ func TestStatementCancelSendsJobsCancelForExecuteQuery(t *testing.T) {
 	require.NoError(t, st.Cancel(context.Background()))
 	requireCancelled(t, waitExecErr(t, errCh))
 
-	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
-	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
+	requireOneCancel(t, srv, inserts[0].JobID)
 }
 
 func TestExecuteQueryErrorIsNotCancelledForCompletedJob(t *testing.T) {
@@ -238,6 +242,5 @@ func TestStatementCloseCancelsInFlightJob(t *testing.T) {
 	require.NoError(t, st.Close(context.Background()))
 	requireCancelled(t, waitExecErr(t, errCh))
 
-	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
-	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
+	requireOneCancel(t, srv, inserts[0].JobID)
 }
