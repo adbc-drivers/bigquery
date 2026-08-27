@@ -126,8 +126,7 @@ func TestStatementCancelOnCompletedJobIsSafe(t *testing.T) {
 	require.NoError(t, st.Cancel(ctx))
 	st.endJob(job)
 
-	cancels := srv.RequestsByKind(fakebq.KindCancel)
-	require.Len(t, cancels, 1)
+	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	assert.Equal(t, "done-job", cancels[0].JobID)
 	assert.Equal(t, "US", cancels[0].Location)
 }
@@ -171,8 +170,7 @@ func TestStatementCancelDoesNotCancelPreviousExecution(t *testing.T) {
 		t.Fatal("second ExecuteUpdate did not return after Cancel")
 	}
 
-	cancels := srv.RequestsByKind(fakebq.KindCancel)
-	require.NotEmpty(t, cancels)
+	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	for _, req := range cancels {
 		assert.Equal(t, secondID, req.JobID, "must not cancel the completed first job")
 	}
@@ -210,4 +208,56 @@ func TestExecuteContextCancelStillSendsJobsCancel(t *testing.T) {
 	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
 	assert.Equal(t, "US", cancels[0].Location)
+}
+
+func TestStatementCancelSendsJobsCancelForExecuteQuery(t *testing.T) {
+	srv := fakebq.New(t)
+	ctx := context.Background()
+	client, err := srv.Client(ctx, "test-project")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	srv.SetDefaultStates("RUNNING")
+	st := newHarnessStatement(t, client, "test-project")
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := st.ExecuteQuery(ctx)
+		errCh <- err
+	}()
+
+	inserts := waitForKind(t, srv, fakebq.KindInsert, 1)
+	require.NoError(t, st.Cancel(context.Background()))
+
+	select {
+	case err := <-errCh:
+		var adbcErr adbc.Error
+		require.True(t, errors.As(err, &adbcErr), "got %T: %v", err, err)
+		assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("ExecuteQuery did not return after Cancel")
+	}
+
+	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
+	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
+}
+
+func TestExecuteQueryErrorIsNotCancelledForCompletedJob(t *testing.T) {
+	srv := fakebq.New(t)
+	ctx := context.Background()
+	client, err := srv.Client(ctx, "test-project")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	srv.SetDefaultStates("DONE")
+	st := newHarnessStatement(t, client, "test-project")
+
+	_, _, err = st.ExecuteQuery(ctx)
+	if err == nil {
+		return
+	}
+	var adbcErr adbc.Error
+	if errors.As(err, &adbcErr) {
+		assert.NotEqual(t, adbc.StatusCancelled, adbcErr.Code, "completed ExecuteQuery must not cancel its own result context: %v", err)
+	}
 }

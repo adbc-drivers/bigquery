@@ -118,19 +118,25 @@ func (st *statement) Close(ctx context.Context) error {
 	return nil
 }
 
-func (st *statement) beginExec(ctx context.Context) (context.Context, func()) {
+func (st *statement) beginExec(ctx context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
 	st.cancelMu.Lock()
+	prev := st.execCancel
 	st.execCancel = cancel
 	st.cancelMu.Unlock()
-	return ctx, func() {
-		cancel()
-		st.cancelMu.Lock()
-		if st.execCancel != nil {
-			st.execCancel = nil
-		}
-		st.cancelMu.Unlock()
+	if prev != nil {
+		prev()
 	}
+	return ctx, cancel
+}
+
+func (st *statement) clearExecCancel(cancel context.CancelFunc) {
+	cancel()
+	st.cancelMu.Lock()
+	if st.execCancel != nil {
+		st.execCancel = nil
+	}
+	st.cancelMu.Unlock()
 }
 
 func (st *statement) beginJob(job *bigquery.Job) {
@@ -189,7 +195,8 @@ func (st *statement) Cancel(ctx context.Context) error {
 	if job == nil || once == nil {
 		return nil
 	}
-	st.remoteCancel(ctx, job, once, logger)
+	// Do not block statement cancel on the Jobs API RPC.
+	go st.remoteCancel(context.Background(), job, once, logger)
 	return nil
 }
 
@@ -472,13 +479,14 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
-	ctx, stop := st.beginExec(ctx)
-	defer stop()
+	ctx, cancel := st.beginExec(ctx)
 
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
+		st.clearExecCancel(cancel)
 		return nil, n, err
 	} else if st.queryConfig.Q == "" {
+		st.clearExecCancel(cancel)
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,
@@ -487,14 +495,19 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 
 	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
-	return rr, totalRows, err
+	if err != nil {
+		st.clearExecCancel(cancel)
+		return nil, totalRows, err
+	}
+	// Leave execCancel registered so AdbcStatementCancel can stop result streaming.
+	return rr, totalRows, nil
 }
 
 // ExecuteUpdate executes a statement that does not generate a result
 // set. It returns the number of rows affected if known, otherwise -1.
 func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
-	ctx, stop := st.beginExec(ctx)
-	defer stop()
+	ctx, cancel := st.beginExec(ctx)
+	defer st.clearExecCancel(cancel)
 
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)

@@ -63,10 +63,11 @@ type HTTPError struct {
 }
 
 type jobRecord struct {
-	project  string
-	jobID    string
-	location string
-	states   []string
+	project     string
+	jobID       string
+	location    string
+	states      []string
+	errorResult map[string]any
 }
 
 // Server is a scripted BigQuery Jobs API endpoint.
@@ -280,7 +281,7 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request, project, l
 		StatusCode: http.StatusOK,
 		Kind:       KindInsert,
 	})
-	writeJSON(w, http.StatusOK, jobResource(project, jobID, location, state))
+	writeJSON(w, http.StatusOK, jobResource(job, state))
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
@@ -316,7 +317,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, project, jobI
 		StatusCode: http.StatusOK,
 		Kind:       KindGet,
 	})
-	writeJSON(w, http.StatusOK, jobResource(project, jobID, location, state))
+	writeJSON(w, http.StatusOK, jobResource(job, state))
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
@@ -339,6 +340,11 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, j
 		return
 	}
 	job := s.ensureJobLocked(project, jobID, location)
+	job.states = []string{"DONE"}
+	job.errorResult = map[string]any{
+		"reason":  "stopped",
+		"message": "Job execution was cancelled",
+	}
 	state := peekState(job)
 	s.mu.Unlock()
 
@@ -354,7 +360,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, j
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind": "bigquery#jobCancelResponse",
-		"job":  jobResource(project, jobID, location, state),
+		"job":  jobResource(job, state),
 	})
 }
 
@@ -438,20 +444,24 @@ func jobReference(project, jobID, location string) map[string]any {
 	return ref
 }
 
-func jobResource(project, jobID, location, state string) map[string]any {
+func jobResource(job *jobRecord, state string) map[string]any {
+	status := map[string]any{
+		"state": state,
+	}
+	if job.errorResult != nil {
+		status["errorResult"] = job.errorResult
+	}
 	return map[string]any{
 		"kind":         "bigquery#job",
-		"id":           project + ":" + jobID,
-		"jobReference": jobReference(project, jobID, location),
+		"id":           job.project + ":" + job.jobID,
+		"jobReference": jobReference(job.project, job.jobID, job.location),
 		"configuration": map[string]any{
 			"query": map[string]any{
 				"query":        "SELECT 1",
 				"useLegacySql": false,
 			},
 		},
-		"status": map[string]any{
-			"state": state,
-		},
+		"status": status,
 		"statistics": map[string]any{
 			"creationTime": "1",
 			"startTime":    "1",
