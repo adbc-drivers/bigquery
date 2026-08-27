@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/option"
 )
@@ -55,7 +56,7 @@ func TestSafeWaitForJobBacksOffBetweenPolls(t *testing.T) {
 		option.WithoutAuthentication(),
 	)
 	require.NoError(t, err)
-	defer client.Close()
+	testutil.CheckedClose(t, client)
 
 	job, err := client.JobFromIDLocation(context.Background(), jobID, location)
 	require.NoError(t, err)
