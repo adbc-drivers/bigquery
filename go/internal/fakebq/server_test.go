@@ -29,9 +29,7 @@ import (
 func TestClientInsertAndGetRecordsJobIDAndLocation(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 	client.Location = "US"
 
 	q := client.Query("SELECT 1")
@@ -52,9 +50,7 @@ func TestClientInsertAndGetRecordsJobIDAndLocation(t *testing.T) {
 func TestGetStatesRunningThenDone(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 
 	srv.ScriptNextJob("RUNNING", "RUNNING", "DONE")
 
@@ -90,9 +86,7 @@ func TestGetStatesRunningThenDone(t *testing.T) {
 func TestJobFromIDLocationNoCredentials(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 
 	srv.SetJobStates("from-id", "DONE")
 	job, err := client.JobFromIDLocation(ctx, "from-id", "US")
@@ -110,9 +104,7 @@ func TestJobFromIDLocationNoCredentials(t *testing.T) {
 func TestInsertConflict409(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 
 	srv.NextInsertHTTPError(http.StatusConflict, "duplicate", "Already Exists: Job adbc-dup")
 
@@ -133,9 +125,7 @@ func TestInsertConflict409(t *testing.T) {
 func TestGetRateLimit429AndServerError5xx(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 
 	srv.SetJobStates("err-job", "DONE")
 	srv.NextGetHTTPError(http.StatusTooManyRequests, "rateLimitExceeded", "Too many requests")
@@ -155,9 +145,7 @@ func TestGetRateLimit429AndServerError5xx(t *testing.T) {
 func TestCancelRecordsProjectLocationAndJobID(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 
 	srv.SetJobStates("cancel-me", "RUNNING")
 	job, err := client.JobFromIDLocation(ctx, "cancel-me", "US")

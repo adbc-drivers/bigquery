@@ -1453,7 +1453,7 @@ func BigQueryStatementCancel(stmt *C.struct_AdbcStatement, err *C.struct_AdbcErr
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	if canceller, ok := st.stmt.(interface{ Cancel(context.Context) error }); ok {
+	if canceller, ok := st.stmt.(statementCanceller); ok {
 		_ = canceller.Cancel(context.Background())
 	}
 	st.cancelContext()

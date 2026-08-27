@@ -64,13 +64,10 @@ type statement struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
-	cancelMu   sync.Mutex
-	activeJob  *bigquery.Job
-	cancelOnce *sync.Once
-	execCancel context.CancelFunc
+	cancelMu sync.Mutex
+	inFlight *inFlight
+	execOp   *execOp
 }
-
-var _ jobTracker = (*statement)(nil)
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
 	return nil, adbc.Error{
@@ -105,109 +102,22 @@ func (st *statement) SetOptionDouble(ctx context.Context, key string, value floa
 //
 // A statement instance should not be used after Close is called.
 func (st *statement) Close(ctx context.Context) error {
+	st.cancelMu.Lock()
 	if st.cnxn == nil {
+		st.cancelMu.Unlock()
 		return adbc.Error{
 			Msg:  "[bq] statement already closed",
 			Code: adbc.StatusInvalidState,
 		}
 	}
+	st.cancelMu.Unlock()
 
 	st.clearParameters()
-	_ = st.Cancel(ctx)
+	st.stopExecution(true)
+	st.cancelMu.Lock()
 	st.cnxn = nil
+	st.cancelMu.Unlock()
 	return nil
-}
-
-func (st *statement) beginExec(ctx context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(ctx)
-	st.cancelMu.Lock()
-	prev := st.execCancel
-	st.execCancel = cancel
-	st.cancelMu.Unlock()
-	if prev != nil {
-		prev()
-	}
-	return ctx, cancel
-}
-
-func (st *statement) clearExecCancel(cancel context.CancelFunc) {
-	cancel()
-	st.cancelMu.Lock()
-	if st.execCancel != nil {
-		st.execCancel = nil
-	}
-	st.cancelMu.Unlock()
-}
-
-func (st *statement) beginJob(job *bigquery.Job) {
-	st.cancelMu.Lock()
-	defer st.cancelMu.Unlock()
-	st.activeJob = job
-	st.cancelOnce = &sync.Once{}
-}
-
-func (st *statement) endJob(job *bigquery.Job) {
-	st.cancelMu.Lock()
-	defer st.cancelMu.Unlock()
-	if st.activeJob == nil || job == nil {
-		return
-	}
-	if st.activeJob.ID() == job.ID() {
-		st.activeJob = nil
-		st.cancelOnce = nil
-	}
-}
-
-func (st *statement) cancelJob(ctx context.Context, job *bigquery.Job) {
-	st.cancelMu.Lock()
-	active := st.activeJob
-	once := st.cancelOnce
-	logger := slog.Default()
-	if st.cnxn != nil && st.cnxn.Logger != nil {
-		logger = st.cnxn.Logger
-	}
-	st.cancelMu.Unlock()
-	if active == nil || once == nil {
-		return
-	}
-	if job != nil && active.ID() != job.ID() {
-		return
-	}
-	st.remoteCancel(ctx, active, once, logger)
-}
-
-// Cancel stops the current statement execution and best-effort cancels the
-// in-flight BigQuery job. It is safe to call concurrently with Execute.
-func (st *statement) Cancel(ctx context.Context) error {
-	st.cancelMu.Lock()
-	execCancel := st.execCancel
-	job := st.activeJob
-	once := st.cancelOnce
-	logger := slog.Default()
-	if st.cnxn != nil && st.cnxn.Logger != nil {
-		logger = st.cnxn.Logger
-	}
-	st.cancelMu.Unlock()
-
-	if execCancel != nil {
-		execCancel()
-	}
-	if job == nil || once == nil {
-		return nil
-	}
-	// Do not block statement cancel on the Jobs API RPC.
-	go st.remoteCancel(context.Background(), job, once, logger)
-	return nil
-}
-
-func (st *statement) remoteCancel(ctx context.Context, job *bigquery.Job, once *sync.Once, logger *slog.Logger) {
-	once.Do(func() {
-		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobCancelTimeout)
-		defer cancel()
-		if err := job.Cancel(cancelCtx); err != nil && logger != nil {
-			logger.DebugContext(cancelCtx, "best-effort BigQuery job cancel failed", "id", job.ID(), "error", err)
-		}
-	})
 }
 
 func (st *statement) GetOption(ctx context.Context, key string) (string, error) {
@@ -479,14 +389,14 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
-	ctx, cancel := st.beginExec(ctx)
+	ctx, op := st.beginExec(ctx)
 
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
-		st.clearExecCancel(cancel)
+		st.releaseExec(op)
 		return nil, n, err
 	} else if st.queryConfig.Q == "" {
-		st.clearExecCancel(cancel)
+		st.releaseExec(op)
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,
@@ -496,18 +406,17 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
 	if err != nil {
-		st.clearExecCancel(cancel)
+		st.releaseExec(op)
 		return nil, totalRows, err
 	}
-	// Leave execCancel registered so AdbcStatementCancel can stop result streaming.
 	return rr, totalRows, nil
 }
 
 // ExecuteUpdate executes a statement that does not generate a result
 // set. It returns the number of rows affected if known, otherwise -1.
 func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
-	ctx, cancel := st.beginExec(ctx)
-	defer st.clearExecCancel(cancel)
+	ctx, op := st.beginExec(ctx)
+	defer st.releaseExec(op)
 
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
@@ -1064,7 +973,7 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 			options:     st.ingest,
 			queryConfig: st.queryConfig,
 			client:      st.cnxn.client,
-			tracker:     st,
+			stmt:        st,
 		}
 	}
 	manager := &driverbase.BulkIngestManager{

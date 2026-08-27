@@ -38,16 +38,6 @@ func quoteIdentifier(ident string) string {
 	return fmt.Sprintf("`%s`", strings.ReplaceAll(ident, "`", "\\`"))
 }
 
-// jobTracker observes in-flight BigQuery jobs so statement cancellation can
-// call jobs.cancel without racing Execute.
-type jobTracker interface {
-	beginJob(job *bigquery.Job)
-	endJob(job *bigquery.Job)
-	cancelJob(ctx context.Context, job *bigquery.Job)
-}
-
-const jobCancelTimeout = 10 * time.Second
-
 // XXX: Google SDK badness.  We can't use Wait here because queries that
 // *fail* with a rateLimitExceeded (e.g. too many metadata operations) will
 // get the *polling* retried infinitely in Google's SDK (I believe the SDK
@@ -58,7 +48,7 @@ const jobCancelTimeout = 10 * time.Second
 // "I got an error that my API request was rate limited" and "I got an error
 // that my job was rate limited" because their internal APIs mix both errors
 // into a single error path.)
-func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job, onCancel func()) (js *bigquery.JobStatus, err error) {
+func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job) (js *bigquery.JobStatus, err error) {
 	logger.DebugContext(ctx, "waiting for job", "id", job.ID())
 	backoff := gax.Backoff{
 		Initial:    50 * time.Millisecond,
@@ -92,15 +82,13 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job,
 			// and does not put the job's error into the API call's
 			// error.
 			if ctx.Err() != nil {
-				if onCancel != nil {
-					onCancel()
-				}
+				go cancelBigQueryJob(job, logger)
 			} else if isRetryableError(err) {
 				duration := backoff.Pause()
 				logger.DebugContext(ctx, "retry job", "id", job.ID(), "backoff", duration, "error", err)
 				if err := gax.Sleep(ctx, duration); err != nil {
-					if onCancel != nil && ctx.Err() != nil {
-						onCancel()
+					if ctx.Err() != nil {
+						go cancelBigQueryJob(job, logger)
 					}
 					return nil, err
 				}

@@ -111,6 +111,17 @@ func (s *Server) Client(ctx context.Context, project string) (*bigquery.Client, 
 	)
 }
 
+// MustClient returns a client pointed at this fake and closes it when tb finishes.
+func (s *Server) MustClient(tb testing.TB, project string) *bigquery.Client {
+	tb.Helper()
+	client, err := s.Client(context.Background(), project)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
 // SetDefaultStates sets the poll script used when a job has no dedicated script.
 // The last state repeats. Defaults to DONE.
 func (s *Server) SetDefaultStates(states ...string) {
@@ -146,21 +157,34 @@ func (s *Server) SetJobStates(jobID string, states ...string) {
 func (s *Server) NextInsertHTTPError(code int, reason, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.insertErrors = append(s.insertErrors, HTTPError{Code: code, Reason: reason, Message: message})
+	enqueueHTTPError(&s.insertErrors, code, reason, message)
 }
 
 // NextGetHTTPError queues an error for the next jobs.get.
 func (s *Server) NextGetHTTPError(code int, reason, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.getErrors = append(s.getErrors, HTTPError{Code: code, Reason: reason, Message: message})
+	enqueueHTTPError(&s.getErrors, code, reason, message)
 }
 
 // NextCancelHTTPError queues an error for the next jobs.cancel.
 func (s *Server) NextCancelHTTPError(code int, reason, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cancelErrors = append(s.cancelErrors, HTTPError{Code: code, Reason: reason, Message: message})
+	enqueueHTTPError(&s.cancelErrors, code, reason, message)
+}
+
+func enqueueHTTPError(queue *[]HTTPError, code int, reason, message string) {
+	*queue = append(*queue, HTTPError{Code: code, Reason: reason, Message: message})
+}
+
+func popHTTPError(queue *[]HTTPError) (HTTPError, bool) {
+	if len(*queue) == 0 {
+		return HTTPError{}, false
+	}
+	err := (*queue)[0]
+	*queue = (*queue)[1:]
+	return err, true
 }
 
 // Requests returns a copy of recorded calls in order.
@@ -212,14 +236,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		m := reQueries.FindStringSubmatch(path)
 		s.handleQueries(w, r, m[1], m[2], location)
 	default:
-		s.record(Request{
-			Method:     r.Method,
-			Path:       path,
-			Location:   location,
-			Time:       time.Now(),
-			StatusCode: http.StatusNotFound,
-			Kind:       KindUnknown,
-		})
+		s.recordCall(r, "", "", location, http.StatusNotFound, KindUnknown)
 		writeAPIError(w, http.StatusNotFound, "notFound", "unknown path "+path)
 	}
 }
@@ -245,20 +262,9 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request, project, l
 	}
 
 	s.mu.Lock()
-	if len(s.insertErrors) > 0 {
-		err := s.insertErrors[0]
-		s.insertErrors = s.insertErrors[1:]
+	if err, ok := popHTTPError(&s.insertErrors); ok {
 		s.mu.Unlock()
-		s.record(Request{
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Project:    project,
-			JobID:      jobID,
-			Location:   location,
-			Time:       time.Now(),
-			StatusCode: err.Code,
-			Kind:       KindInsert,
-		})
+		s.recordCall(r, project, jobID, location, err.Code, KindInsert)
 		writeAPIError(w, err.Code, err.Reason, err.Message)
 		return
 	}
@@ -271,35 +277,15 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request, project, l
 	state := peekState(job)
 	s.mu.Unlock()
 
-	s.record(Request{
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Project:    project,
-		JobID:      jobID,
-		Location:   location,
-		Time:       time.Now(),
-		StatusCode: http.StatusOK,
-		Kind:       KindInsert,
-	})
+	s.recordCall(r, project, jobID, location, http.StatusOK, KindInsert)
 	writeJSON(w, http.StatusOK, jobResource(job, state))
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
 	s.mu.Lock()
-	if len(s.getErrors) > 0 {
-		err := s.getErrors[0]
-		s.getErrors = s.getErrors[1:]
+	if err, ok := popHTTPError(&s.getErrors); ok {
 		s.mu.Unlock()
-		s.record(Request{
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Project:    project,
-			JobID:      jobID,
-			Location:   location,
-			Time:       time.Now(),
-			StatusCode: err.Code,
-			Kind:       KindGet,
-		})
+		s.recordCall(r, project, jobID, location, err.Code, KindGet)
 		writeAPIError(w, err.Code, err.Reason, err.Message)
 		return
 	}
@@ -307,35 +293,15 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, project, jobI
 	state := popState(job)
 	s.mu.Unlock()
 
-	s.record(Request{
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Project:    project,
-		JobID:      jobID,
-		Location:   location,
-		Time:       time.Now(),
-		StatusCode: http.StatusOK,
-		Kind:       KindGet,
-	})
+	s.recordCall(r, project, jobID, location, http.StatusOK, KindGet)
 	writeJSON(w, http.StatusOK, jobResource(job, state))
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
 	s.mu.Lock()
-	if len(s.cancelErrors) > 0 {
-		err := s.cancelErrors[0]
-		s.cancelErrors = s.cancelErrors[1:]
+	if err, ok := popHTTPError(&s.cancelErrors); ok {
 		s.mu.Unlock()
-		s.record(Request{
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Project:    project,
-			JobID:      jobID,
-			Location:   location,
-			Time:       time.Now(),
-			StatusCode: err.Code,
-			Kind:       KindCancel,
-		})
+		s.recordCall(r, project, jobID, location, err.Code, KindCancel)
 		writeAPIError(w, err.Code, err.Reason, err.Message)
 		return
 	}
@@ -348,16 +314,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, j
 	state := peekState(job)
 	s.mu.Unlock()
 
-	s.record(Request{
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Project:    project,
-		JobID:      jobID,
-		Location:   location,
-		Time:       time.Now(),
-		StatusCode: http.StatusOK,
-		Kind:       KindCancel,
-	})
+	s.recordCall(r, project, jobID, location, http.StatusOK, KindCancel)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind": "bigquery#jobCancelResponse",
 		"job":  jobResource(job, state),
@@ -370,16 +327,7 @@ func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request, project, 
 	state := peekState(job)
 	s.mu.Unlock()
 
-	s.record(Request{
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Project:    project,
-		JobID:      jobID,
-		Location:   location,
-		Time:       time.Now(),
-		StatusCode: http.StatusOK,
-		Kind:       KindGetQueryResults,
-	})
+	s.recordCall(r, project, jobID, location, http.StatusOK, KindGetQueryResults)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind":         "bigquery#getQueryResultsResponse",
 		"jobComplete":  strings.EqualFold(state, "DONE"),
@@ -425,6 +373,19 @@ func popState(job *jobRecord) string {
 		job.states = job.states[1:]
 	}
 	return state
+}
+
+func (s *Server) recordCall(r *http.Request, project, jobID, location string, code int, kind Kind) {
+	s.record(Request{
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		Project:    project,
+		JobID:      jobID,
+		Location:   location,
+		Time:       time.Now(),
+		StatusCode: code,
+		Kind:       kind,
+	})
 }
 
 func (s *Server) record(req Request) {

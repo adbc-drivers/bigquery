@@ -26,9 +26,7 @@ import (
 func TestSafeWaitForJobPollsRunningThenDone(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
 
 	srv.ScriptNextJob("RUNNING", "RUNNING", "DONE")
 
@@ -38,7 +36,7 @@ func TestSafeWaitForJobPollsRunningThenDone(t *testing.T) {
 	job, err := q.Run(ctx)
 	require.NoError(t, err)
 
-	js, err := safeWaitForJob(ctx, slog.Default(), job, nil)
+	js, err := safeWaitForJob(ctx, slog.New(slog.DiscardHandler), job)
 	require.NoError(t, err)
 	require.True(t, js.Done())
 

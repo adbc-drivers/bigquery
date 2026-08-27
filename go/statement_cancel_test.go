@@ -69,19 +69,32 @@ func waitForKind(t *testing.T, srv *fakebq.Server, kind fakebq.Kind, n int) []fa
 	return got
 }
 
+func requireCancelled(t *testing.T, err error) {
+	t.Helper()
+	var adbcErr adbc.Error
+	require.True(t, errors.As(err, &adbcErr), "got %T: %v", err, err)
+	assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
+}
+
+func waitExecErr(t *testing.T, errCh <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("execute did not return after cancel")
+		return nil
+	}
+}
+
 func TestStatementCancelSendsJobsCancelForInFlightJob(t *testing.T) {
 	srv := fakebq.New(t)
-	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
 	srv.SetDefaultStates("RUNNING")
-	st := newHarnessStatement(t, client, "test-project")
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := st.ExecuteUpdate(ctx)
+		_, err := st.ExecuteUpdate(context.Background())
 		errCh <- err
 	}()
 
@@ -92,15 +105,7 @@ func TestStatementCancelSendsJobsCancelForInFlightJob(t *testing.T) {
 	assert.Equal(t, "test-project", inserts[0].Project)
 
 	require.NoError(t, st.Cancel(context.Background()))
-
-	select {
-	case err := <-errCh:
-		var adbcErr adbc.Error
-		require.True(t, errors.As(err, &adbcErr), "got %T: %v", err, err)
-		assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
-	case <-time.After(5 * time.Second):
-		t.Fatal("ExecuteUpdate did not return after Cancel")
-	}
+	requireCancelled(t, waitExecErr(t, errCh))
 
 	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	assert.Equal(t, jobID, cancels[0].JobID)
@@ -112,9 +117,8 @@ func TestStatementCancelSendsJobsCancelForInFlightJob(t *testing.T) {
 func TestStatementCancelOnCompletedJobIsSafe(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	client := srv.MustClient(t, "test-project")
+	client.Location = "US"
 
 	srv.SetJobStates("done-job", "DONE")
 	job, err := client.JobFromIDLocation(ctx, "done-job", "US")
@@ -134,14 +138,11 @@ func TestStatementCancelOnCompletedJobIsSafe(t *testing.T) {
 func TestStatementCancelDoesNotCancelPreviousExecution(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
 
 	srv.ScriptNextJob("DONE")
 	srv.ScriptNextJob("RUNNING")
 
-	st := newHarnessStatement(t, client, "test-project")
 	n, err := st.ExecuteUpdate(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
@@ -153,22 +154,12 @@ func TestStatementCancelDoesNotCancelPreviousExecution(t *testing.T) {
 		errCh <- err
 	}()
 
-	require.Eventually(t, func() bool {
-		return len(srv.RequestsByKind(fakebq.KindInsert)) >= 2
-	}, 3*time.Second, 5*time.Millisecond)
-	secondID := srv.RequestsByKind(fakebq.KindInsert)[1].JobID
+	inserts := waitForKind(t, srv, fakebq.KindInsert, 2)
+	secondID := inserts[1].JobID
 	require.NotEqual(t, firstID, secondID)
 
 	require.NoError(t, st.Cancel(context.Background()))
-
-	select {
-	case err := <-errCh:
-		var adbcErr adbc.Error
-		require.True(t, errors.As(err, &adbcErr), "got %T: %v", err, err)
-		assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
-	case <-time.After(5 * time.Second):
-		t.Fatal("second ExecuteUpdate did not return after Cancel")
-	}
+	requireCancelled(t, waitExecErr(t, errCh))
 
 	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	for _, req := range cancels {
@@ -180,12 +171,8 @@ func TestExecuteContextCancelStillSendsJobsCancel(t *testing.T) {
 	srv := fakebq.New(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
 	srv.SetDefaultStates("RUNNING")
-	st := newHarnessStatement(t, client, "test-project")
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -195,15 +182,7 @@ func TestExecuteContextCancelStillSendsJobsCancel(t *testing.T) {
 
 	inserts := waitForKind(t, srv, fakebq.KindInsert, 1)
 	cancel()
-
-	select {
-	case err := <-errCh:
-		var adbcErr adbc.Error
-		require.True(t, errors.As(err, &adbcErr), "got %T: %v", err, err)
-		assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
-	case <-time.After(5 * time.Second):
-		t.Fatal("ExecuteUpdate did not return after context cancel")
-	}
+	requireCancelled(t, waitExecErr(t, errCh))
 
 	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
@@ -212,31 +191,18 @@ func TestExecuteContextCancelStillSendsJobsCancel(t *testing.T) {
 
 func TestStatementCancelSendsJobsCancelForExecuteQuery(t *testing.T) {
 	srv := fakebq.New(t)
-	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
 	srv.SetDefaultStates("RUNNING")
-	st := newHarnessStatement(t, client, "test-project")
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, _, err := st.ExecuteQuery(ctx)
+		_, _, err := st.ExecuteQuery(context.Background())
 		errCh <- err
 	}()
 
 	inserts := waitForKind(t, srv, fakebq.KindInsert, 1)
 	require.NoError(t, st.Cancel(context.Background()))
-
-	select {
-	case err := <-errCh:
-		var adbcErr adbc.Error
-		require.True(t, errors.As(err, &adbcErr), "got %T: %v", err, err)
-		assert.Equal(t, adbc.StatusCancelled, adbcErr.Code)
-	case <-time.After(5 * time.Second):
-		t.Fatal("ExecuteQuery did not return after Cancel")
-	}
+	requireCancelled(t, waitExecErr(t, errCh))
 
 	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
 	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
@@ -244,15 +210,10 @@ func TestStatementCancelSendsJobsCancelForExecuteQuery(t *testing.T) {
 
 func TestExecuteQueryErrorIsNotCancelledForCompletedJob(t *testing.T) {
 	srv := fakebq.New(t)
-	ctx := context.Background()
-	client, err := srv.Client(ctx, "test-project")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
 	srv.SetDefaultStates("DONE")
-	st := newHarnessStatement(t, client, "test-project")
 
-	_, _, err = st.ExecuteQuery(ctx)
+	_, _, err := st.ExecuteQuery(context.Background())
 	if err == nil {
 		return
 	}
@@ -260,4 +221,23 @@ func TestExecuteQueryErrorIsNotCancelledForCompletedJob(t *testing.T) {
 	if errors.As(err, &adbcErr) {
 		assert.NotEqual(t, adbc.StatusCancelled, adbcErr.Code, "completed ExecuteQuery must not cancel its own result context: %v", err)
 	}
+}
+
+func TestStatementCloseCancelsInFlightJob(t *testing.T) {
+	srv := fakebq.New(t)
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
+	srv.SetDefaultStates("RUNNING")
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := st.ExecuteUpdate(context.Background())
+		errCh <- err
+	}()
+
+	inserts := waitForKind(t, srv, fakebq.KindInsert, 1)
+	require.NoError(t, st.Close(context.Background()))
+	requireCancelled(t, waitExecErr(t, errCh))
+
+	cancels := waitForKind(t, srv, fakebq.KindCancel, 1)
+	assert.Equal(t, inserts[0].JobID, cancels[0].JobID)
 }
