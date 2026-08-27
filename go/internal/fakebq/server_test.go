@@ -110,7 +110,7 @@ func TestInsertConflict409(t *testing.T) {
 
 	q := client.Query("SELECT 1")
 	q.JobID = "adbc-dup"
-	_, err = q.Run(ctx)
+	_, err := q.Run(ctx)
 	require.Error(t, err)
 	var apiErr *googleapi.Error
 	require.True(t, errors.As(err, &apiErr), "got %T: %v", err, err)

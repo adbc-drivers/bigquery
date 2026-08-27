@@ -275,10 +275,11 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request, project, l
 		s.nextJobScripts = s.nextJobScripts[1:]
 	}
 	state := peekState(job)
+	resp := jobResource(job, state)
 	s.mu.Unlock()
 
 	s.recordCall(r, project, jobID, location, http.StatusOK, KindInsert)
-	writeJSON(w, http.StatusOK, jobResource(job, state))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
@@ -291,10 +292,11 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, project, jobI
 	}
 	job := s.ensureJobLocked(project, jobID, location)
 	state := popState(job)
+	resp := jobResource(job, state)
 	s.mu.Unlock()
 
 	s.recordCall(r, project, jobID, location, http.StatusOK, KindGet)
-	writeJSON(w, http.StatusOK, jobResource(job, state))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
@@ -312,23 +314,21 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, project, j
 		"message": "Job execution was cancelled",
 	}
 	state := peekState(job)
+	resp := map[string]any{
+		"kind": "bigquery#jobCancelResponse",
+		"job":  jobResource(job, state),
+	}
 	s.mu.Unlock()
 
 	s.recordCall(r, project, jobID, location, http.StatusOK, KindCancel)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"kind": "bigquery#jobCancelResponse",
-		"job":  jobResource(job, state),
-	})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request, project, jobID, location string) {
 	s.mu.Lock()
 	job := s.ensureJobLocked(project, jobID, location)
 	state := peekState(job)
-	s.mu.Unlock()
-
-	s.recordCall(r, project, jobID, location, http.StatusOK, KindGetQueryResults)
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"kind":         "bigquery#getQueryResultsResponse",
 		"jobComplete":  strings.EqualFold(state, "DONE"),
 		"jobReference": jobReference(project, jobID, location),
@@ -339,7 +339,11 @@ func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request, project, 
 		},
 		"rows":      []any{},
 		"totalRows": "0",
-	})
+	}
+	s.mu.Unlock()
+
+	s.recordCall(r, project, jobID, location, http.StatusOK, KindGetQueryResults)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) ensureJobLocked(project, jobID, location string) *jobRecord {
@@ -410,7 +414,11 @@ func jobResource(job *jobRecord, state string) map[string]any {
 		"state": state,
 	}
 	if job.errorResult != nil {
-		status["errorResult"] = job.errorResult
+		copied := make(map[string]any, len(job.errorResult))
+		for k, v := range job.errorResult {
+			copied[k] = v
+		}
+		status["errorResult"] = copied
 	}
 	return map[string]any{
 		"kind":         "bigquery#job",
