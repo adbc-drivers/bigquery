@@ -229,7 +229,7 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, conte
 				adbcErr.Code = adbc.StatusInternal
 				statusCode = http.StatusTooManyRequests
 			case codes.Unauthenticated:
-				adbcErr.Code = adbc.StatusUnauthorized
+				adbcErr.Code = adbc.StatusUnauthenticated
 				statusCode = http.StatusUnauthorized
 			case codes.Unavailable:
 				adbcErr.Code = adbc.StatusIO
