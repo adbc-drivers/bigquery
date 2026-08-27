@@ -82,8 +82,8 @@ github.com/klauspost/compress v1.19.2 h1:hMRETovs/pu/dVWN7zIT1PGG8t509MwT6bO7XSi
 github.com/klauspost/compress v1.19.2/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/klauspost/cpuid/v2 v2.4.0 h1:S6Hrbc7+ywsr0r+RLapfGBHfyefhCTwEh3A0tV913Dw=
 github.com/klauspost/cpuid/v2 v2.4.0/go.mod h1:19jmZ9mjzoF//ddRSUsv0zfBTJWh3QJh9FNxZTMrGxU=
-github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826045242-a56b03650142 h1:vkGgCbn3zxvP9sIqy78M1VdevZuDq31C18lb25/vmbE=
-github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826045242-a56b03650142/go.mod h1:aLLS59ylg6xm22EyiWedUUi8s8/dtlQc2EMmJXx7+tg=
+github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826060005-3e667042799f h1:8SVW815eKxfOxRHxFI6GlWSQKzr6LzwD25KDk0H2UYQ=
+github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826060005-3e667042799f/go.mod h1:aLLS59ylg6xm22EyiWedUUi8s8/dtlQc2EMmJXx7+tg=
 github.com/pierrec/lz4/v4 v4.1.29 h1:CDQY6qZOLI4DW0Nx6R1vRrifrCeQHnNXkMb0hZWXFjg=
 github.com/pierrec/lz4/v4 v4.1.29/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
 github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 h1:GFCKgmp0tecUJ0sJuv4pzYCqS9+RGSn52M3FUwPs+uo=

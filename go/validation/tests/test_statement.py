@@ -15,7 +15,6 @@
 import uuid
 
 import adbc_drivers_validation.tests.statement as statement_tests
-import pytest
 
 from . import bigquery, utils
 
@@ -83,9 +82,8 @@ def test_script_no_results(driver, conn) -> None:
             driver.try_drop_table(cursor, table_name=target_table)
 
 
-@pytest.mark.xfail
 def test_script_results(driver, conn) -> None:
-    # This should at least read the first result set, but currently it is not supported.
+    # This should read the first result set
     with conn.cursor() as cursor:
         cursor.execute("SELECT 1; SELECT 'foobar'")
         table = cursor.fetch_arrow_table()
