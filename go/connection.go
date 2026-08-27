@@ -864,6 +864,17 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	return nil
 }
 
+// table returns a Table handle for the (project, dataset, table) triple,
+// bound to this connection's BigQuery client.
+//
+// Tables must be obtained through the client: bigquery.Table carries an
+// unexported client reference that methods like Metadata and LoaderFrom
+// dereference. A bare &bigquery.Table{...} literal leaves it nil and those
+// methods panic with a nil pointer dereference.
+func (c *connectionImpl) table(project, dataset, table string) *bigquery.Table {
+	return c.client.DatasetInProject(project, dataset).Table(table)
+}
+
 func (c *connectionImpl) hasImpersonationOptions() bool {
 	return c.impersonateTargetPrincipal != "" ||
 		len(c.impersonateDelegates) > 0 ||
