@@ -32,6 +32,7 @@ import (
 	"github.com/googleapis/gax-go/v2"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/grpc/codes"
 )
 
 func quoteIdentifier(ident string) string {
@@ -185,7 +186,70 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, conte
 		// extract or map it onto anything (e.g. there are two types of errors
 		// depending on whether HTTP or gRPC is used, but you can't actually
 		// branch on that because the HTTP error is not exposed to you)
-		msg.WriteString(apiErr.Error())
+		st := apiErr.GRPCStatus()
+		if st != nil {
+			fmt.Fprintf(&msg, "%s: %s", st.Code().String(), st.Message())
+			// use HTTP error codes for consistency
+			// https://github.com/googleapis/googleapis/blob/d10ac9249540add035ce07b6a54028ab643e1532/google/rpc/code.proto#L32
+			switch st.Code() {
+			case codes.Aborted:
+				adbcErr.Code = adbc.StatusCancelled
+				statusCode = http.StatusConflict
+			case codes.AlreadyExists:
+				adbcErr.Code = adbc.StatusAlreadyExists
+				statusCode = http.StatusConflict
+			case codes.Canceled:
+				adbcErr.Code = adbc.StatusCancelled
+				statusCode = 499 // ClientCancelledRequest
+			case codes.DataLoss:
+				adbcErr.Code = adbc.StatusInternal
+				statusCode = http.StatusInternalServerError
+			case codes.DeadlineExceeded:
+				adbcErr.Code = adbc.StatusTimeout
+				statusCode = http.StatusGatewayTimeout
+			case codes.FailedPrecondition:
+				adbcErr.Code = adbc.StatusInvalidArgument
+				statusCode = http.StatusBadRequest
+			case codes.Internal:
+				adbcErr.Code = adbc.StatusInternal
+				statusCode = http.StatusInternalServerError
+			case codes.InvalidArgument:
+				adbcErr.Code = adbc.StatusInvalidArgument
+				statusCode = http.StatusBadRequest
+			case codes.NotFound:
+				adbcErr.Code = adbc.StatusNotFound
+				statusCode = http.StatusNotFound
+			case codes.OK:
+				adbcErr.Code = adbc.StatusUnknown
+				statusCode = http.StatusInternalServerError
+			case codes.OutOfRange:
+				adbcErr.Code = adbc.StatusInvalidArgument
+				statusCode = http.StatusBadRequest
+			case codes.PermissionDenied:
+				adbcErr.Code = adbc.StatusUnauthorized
+				statusCode = http.StatusForbidden
+			case codes.ResourceExhausted:
+				adbcErr.Code = adbc.StatusInternal
+				statusCode = http.StatusTooManyRequests
+			case codes.Unauthenticated:
+				adbcErr.Code = adbc.StatusUnauthenticated
+				statusCode = http.StatusUnauthorized
+			case codes.Unavailable:
+				adbcErr.Code = adbc.StatusIO
+				statusCode = http.StatusServiceUnavailable
+			case codes.Unimplemented:
+				adbcErr.Code = adbc.StatusNotImplemented
+				statusCode = http.StatusNotImplemented
+			case codes.Unknown:
+				adbcErr.Code = adbc.StatusUnknown
+				statusCode = http.StatusInternalServerError
+			default:
+				adbcErr.Code = adbc.StatusUnknown
+				statusCode = http.StatusInternalServerError
+			}
+		} else {
+			msg.WriteString(apiErr.Error())
+		}
 	} else if urlErr, ok := errors.AsType[*url.Error](err); ok {
 		cleanURL := urlErr.URL
 		if url, err := url.Parse(urlErr.URL); err == nil {
