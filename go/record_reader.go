@@ -75,8 +75,16 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	}
 	jobID := job.ID()
 
-	// Poll via safeWaitForJob instead of job.Wait — see util.go for why
-	// (Google SDK conflates API rate-limit errors with job rate-limit errors).
+	// XXX: Google SDK badness.  We can't use Wait here because queries that
+	// *fail* with a rateLimitExceeded (e.g. too many metadata operations)
+	// will get the *polling* retried infinitely in Google's SDK (I believe
+	// the SDK wants to retry "polling for job status" rate limit exceeded but
+	// doesn't differentiate between them because googleapi.CheckResponse
+	// appears to put the API error from the response object as an error of
+	// the API call, from digging around using a debugger.  In other words, it
+	// seems to be confusing "I got an error that my API request was rate
+	// limited" and "I got an error that my job was rate limited" because
+	// their internal APIs mix both errors into a single error path.)
 	js, err := st.waitForJob(ctx, logger, job)
 	if err != nil {
 		return nil, nil, jobID, -1, err
