@@ -409,7 +409,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		st.releaseExec(op)
 		return nil, totalRows, err
 	}
-	return rr, totalRows, nil
+	return bindExecReader(rr, func() { st.releaseExec(op) }), totalRows, nil
 }
 
 // ExecuteUpdate executes a statement that does not generate a result

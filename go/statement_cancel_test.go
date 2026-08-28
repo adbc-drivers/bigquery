@@ -244,3 +244,22 @@ func TestStatementCloseCancelsInFlightJob(t *testing.T) {
 
 	requireOneCancel(t, srv, inserts[0].JobID)
 }
+
+func TestExecuteQueryReleaseClearsExecOp(t *testing.T) {
+	srv := fakebq.New(t)
+	ctx := context.Background()
+	st := newHarnessStatement(t, srv.MustClient(t, "test-project"), "test-project")
+	require.NoError(t, st.SetOption(ctx, OptionQueryDryRun, "true"))
+
+	rr, _, err := st.ExecuteQuery(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, rr)
+	require.NotNil(t, st.execOp)
+
+	rr.Retain()
+	rr.Release()
+	require.NotNil(t, st.execOp, "Retain keeps the execute context alive")
+	rr.Release()
+	require.Nil(t, st.execOp)
+	require.NoError(t, st.Cancel(ctx))
+}

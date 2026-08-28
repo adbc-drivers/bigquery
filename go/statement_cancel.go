@@ -18,9 +18,12 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 )
 
 const jobCancelTimeout = 10 * time.Second
@@ -148,3 +151,41 @@ func cancelBigQueryJob(job *bigquery.Job, logger *slog.Logger) {
 		logger.DebugContext(ctx, "best-effort BigQuery job cancel failed", "id", job.ID(), "error", err)
 	}
 }
+
+// execBoundReader releases the statement's execOp when the result reader is
+// fully released, without cancelling the stream while it is still in use.
+type execBoundReader struct {
+	inner     array.RecordReader
+	refs      atomic.Int64
+	onRelease func()
+}
+
+func bindExecReader(inner array.RecordReader, onRelease func()) array.RecordReader {
+	r := &execBoundReader{inner: inner, onRelease: onRelease}
+	r.refs.Store(1)
+	return r
+}
+
+func (r *execBoundReader) Retain() {
+	r.refs.Add(1)
+	r.inner.Retain()
+}
+
+func (r *execBoundReader) Release() {
+	if r.refs.Add(-1) == 0 {
+		r.inner.Release()
+		if r.onRelease != nil {
+			r.onRelease()
+		}
+		return
+	}
+	r.inner.Release()
+}
+
+func (r *execBoundReader) Schema() *arrow.Schema          { return r.inner.Schema() }
+func (r *execBoundReader) Next() bool                     { return r.inner.Next() }
+func (r *execBoundReader) RecordBatch() arrow.RecordBatch { return r.inner.RecordBatch() }
+func (r *execBoundReader) Record() arrow.RecordBatch      { return r.inner.Record() }
+func (r *execBoundReader) Err() error                     { return r.inner.Err() }
+
+var _ array.RecordReader = (*execBoundReader)(nil)
