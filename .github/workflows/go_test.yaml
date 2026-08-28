@@ -55,6 +55,8 @@ on:
         required: true
       BIGQUERY_SECONDARY_DATASET_ID:
         required: true
+      BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL:
+        required: true
       GCLOUD_SERVICE_ACCOUNT:
         required: true
       GCLOUD_WORKLOAD_IDENTITY_PROVIDER:
@@ -166,6 +168,7 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_DATASET_ID: ${{ secrets.BIGQUERY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_SECONDARY_DATASET_ID: ${{ secrets.BIGQUERY_SECONDARY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
+          BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL: ${{ secrets.BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL }} # zizmor: ignore[secrets-outside-env]
         working-directory: go
         run: |
           set -a
@@ -305,6 +308,7 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_DATASET_ID: ${{ secrets.BIGQUERY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_SECONDARY_DATASET_ID: ${{ secrets.BIGQUERY_SECONDARY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
+          BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL: ${{ secrets.BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL }} # zizmor: ignore[secrets-outside-env]
         working-directory: go
         run: |
           set -a
