@@ -402,7 +402,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 	}
 
 	if st.params == nil {
-		_, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
 		if err != nil {
 			return -1, err
 		}
@@ -424,7 +424,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
 				if err != nil {
 					return -1, err
 				}
@@ -465,7 +465,7 @@ func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
 		fields[i] = f
 	}
 
-	metadata, err := metadataFromJobStatistics(status.Statistics)
+	metadata, err := metadataFromJobStatistics(status.Statistics, job.ID())
 	if err != nil {
 		return nil, err
 	}

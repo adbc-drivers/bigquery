@@ -58,12 +58,16 @@ func metadataFromQueryStatistics(metadata map[string]string, queryStatistics *bi
 	return nil
 }
 
-func metadataFromJobStatistics(stats *bigquery.JobStatistics) (*arrow.Metadata, error) {
-	if stats == nil {
+func metadataFromJobStatistics(stats *bigquery.JobStatistics, jobID string) (*arrow.Metadata, error) {
+	if stats == nil && jobID == "" {
 		return nil, nil
 	}
 
 	metadata := make(map[string]string)
+	addStringMetadata(metadata, MetadataKeyBigqueryQueryID, jobID)
+	if stats == nil {
+		return new(arrow.MetadataFrom(metadata)), nil
+	}
 	addTimeMetadata(metadata, "BIGQUERY:Statistics:CreationTime", stats.CreationTime)
 	addTimeMetadata(metadata, "BIGQUERY:Statistics:StartTime", stats.StartTime)
 	addTimeMetadata(metadata, "BIGQUERY:Statistics:EndTime", stats.EndTime)

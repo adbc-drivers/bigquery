@@ -53,7 +53,7 @@ func TestEmptyArrowIteratorSerializedArrowSchema(t *testing.T) {
 	serializedSchema := iter.SerializedArrowSchema()
 
 	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	rdr, schema, err := ipcReaderFromArrowIterator(iter, nil, alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(iter, nil, "", alloc)
 	require.NoError(t, err)
 	defer rdr.Release()
 	require.Empty(t, schema.Fields(), "serialized schema had %d bytes", len(serializedSchema))
@@ -63,7 +63,7 @@ func TestEmptyArrowIteratorSerializedArrowSchema(t *testing.T) {
 func TestMetadataFromJobStatistics(t *testing.T) {
 	stats := sampleJobStatistics()
 
-	md, err := metadataFromJobStatistics(stats)
+	md, err := metadataFromJobStatistics(stats, "")
 	require.NoError(t, err)
 	metadata := md.ToMap()
 
@@ -110,25 +110,27 @@ func TestIpcReaderFromArrowIteratorAttachesJobStatisticsMetadata(t *testing.T) {
 	iter := emptyArrowIterator{}
 
 	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	rdr, schema, err := ipcReaderFromArrowIterator(iter, sampleJobStatistics(), alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(iter, sampleJobStatistics(), "job-abc", alloc)
 	require.NoError(t, err)
 	defer rdr.Release()
 
 	metadata := schema.Metadata().ToMap()
 	assert.Equal(t, "3", metadata["BIGQUERY:Statistics:Query:BillingTier"])
 	assert.Equal(t, "SELECT", metadata["BIGQUERY:Statistics:Query:StatementType"])
+	assert.Equal(t, "job-abc", metadata[MetadataKeyBigqueryQueryID])
 }
 
 func TestMakeDryRunReaderAttachesJobStatisticsMetadata(t *testing.T) {
 	rdr, err := makeDryRunReader(&bigquery.JobStatus{
 		Statistics: sampleJobStatistics(),
-	})
+	}, "dryrun-job")
 	require.NoError(t, err)
 	defer rdr.Release()
 
 	metadata := rdr.Schema().Metadata().ToMap()
 	assert.Equal(t, "3", metadata["BIGQUERY:Statistics:Query:BillingTier"])
 	assert.Equal(t, "SELECT", metadata["BIGQUERY:Statistics:Query:StatementType"])
+	assert.Equal(t, "dryrun-job", metadata[MetadataKeyBigqueryQueryID])
 }
 
 func sampleJobStatistics() *bigquery.JobStatistics {
