@@ -75,6 +75,8 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	}
 	jobID := job.ID()
 
+	// Poll via safeWaitForJob instead of job.Wait — see util.go for why
+	// (Google SDK conflates API rate-limit errors with job rate-limit errors).
 	js, err := st.waitForJob(ctx, logger, job)
 	if err != nil {
 		return nil, nil, jobID, -1, err

@@ -116,6 +116,7 @@ func (st *statement) stopExecution(wait bool) {
 	}
 }
 
+// Tracks in-flight jobs for cancel; delegates polling to safeWaitForJob (util.go).
 func (st *statement) waitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job) (*bigquery.JobStatus, error) {
 	if st != nil {
 		st.beginJob(job)

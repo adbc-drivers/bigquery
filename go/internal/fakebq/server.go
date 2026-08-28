@@ -14,6 +14,10 @@
 
 // Package fakebq implements a small httptest fake of the BigQuery Jobs REST
 // API so tests can drive a real *bigquery.Client without credentials.
+//
+// Minimal Jobs REST fake for credential-free Go tests. Unlike goccy/bigquery-emulator
+// (full SQL + Storage API) or the C# BigQueryMockServer (no jobs.cancel), fakebq scripts
+// poll states and records RPC order for cancel/rate-limit tests.
 package fakebq
 
 import (
