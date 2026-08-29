@@ -63,8 +63,8 @@ namespace AdbcDrivers.BigQuery.MockServer
         public MockRequestKind Kind { get; }
 
         /// <summary>
-        /// The job the request targeted, or null for requests that are not job-scoped
-        /// (table operations, and the job-insert request that has not been assigned an id yet).
+        /// The job the request targeted, or null for requests that are not job-scoped (table
+        /// operations). A job-insert request carries the id the mock assigned to the new job.
         /// </summary>
         public string? JobId { get; }
 
