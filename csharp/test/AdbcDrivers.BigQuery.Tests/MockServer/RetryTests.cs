@@ -77,16 +77,13 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             using var mockServer = new BigQueryMockServer();
             mockServer.QueueError(MockRequestKind.JobInsert, status, reason);
 
-            using AdbcStatement statement = OpenStatement(mockServer, out IDisposable scope);
-            using (scope)
-            {
-                statement.SqlQuery = "SELECT not_a_column";
+            using StatementScope scope = OpenStatement(mockServer);
+            scope.Statement.SqlQuery = "SELECT not_a_column";
 
-                Assert.ThrowsAny<Exception>(() => statement.ExecuteQuery());
+            Assert.ThrowsAny<Exception>(() => scope.Statement.ExecuteQuery());
 
-                // Neither layer retries these, so failing fast preserves the original error.
-                Assert.Equal(1, mockServer.CountOfKind(MockRequestKind.JobInsert));
-            }
+            // Neither layer retries these, so failing fast preserves the original error.
+            Assert.Equal(1, mockServer.CountOfKind(MockRequestKind.JobInsert));
         }
 
         [Theory]
@@ -95,29 +92,28 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [InlineData(2, 3)]
         public void RetryExhaustionStopsAtTheConfiguredAttemptCount(int maxRetries, int expectedAttempts)
         {
+            const int queuedErrors = 10;
+
             using var mockServer = new BigQueryMockServer();
 
             // More errors than the driver will ever consume, so exhaustion is what ends the run
             // rather than the queue running dry.
-            for (int i = 0; i < 10; i++)
+            for (int i = 0; i < queuedErrors; i++)
             {
                 mockServer.QueueError(MockRequestKind.JobInsert, RetryableStatus, InertReason);
             }
 
-            using AdbcStatement statement = OpenStatement(mockServer, out IDisposable scope, maxRetries);
-            using (scope)
-            {
-                statement.SqlQuery = "SELECT 42 AS value";
+            using StatementScope scope = OpenStatement(mockServer, maxRetries);
+            scope.Statement.SqlQuery = "SELECT 42 AS value";
 
-                AdbcException exception = Assert.Throws<AdbcException>(() => statement.ExecuteQuery());
+            AdbcException exception = Assert.Throws<AdbcException>(() => scope.Statement.ExecuteQuery());
 
-                // Only RetryManager produces this message.
-                Assert.Contains($"{expectedAttempts} attempt(s)", exception.Message);
+            // Only RetryManager produces this message.
+            Assert.Contains($"{expectedAttempts} attempt(s)", exception.Message);
 
-                // One request per driver attempt, since the HTTP layer leaves this error alone.
-                Assert.Equal(expectedAttempts, mockServer.CountOfKind(MockRequestKind.JobInsert));
-                Assert.Equal(10 - expectedAttempts, mockServer.PendingErrorCount(MockRequestKind.JobInsert));
-            }
+            // One request per driver attempt, since the HTTP layer leaves this error alone.
+            Assert.Equal(expectedAttempts, mockServer.CountOfKind(MockRequestKind.JobInsert));
+            Assert.Equal(queuedErrors - expectedAttempts, mockServer.PendingErrorCount(MockRequestKind.JobInsert));
         }
 
         [Fact]
@@ -127,22 +123,19 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             ConfigureSingleRowResults(mockServer);
             mockServer.QueueError(MockRequestKind.JobInsert, RetryableStatus, InertReason);
 
-            using AdbcStatement statement = OpenStatement(mockServer, out IDisposable scope);
-            using (scope)
-            {
-                statement.SqlQuery = "SELECT 42 AS value";
+            using StatementScope scope = OpenStatement(mockServer);
+            scope.Statement.SqlQuery = "SELECT 42 AS value";
 
-                QueryResult result = statement.ExecuteQuery();
+            QueryResult result = scope.Statement.ExecuteQuery();
 
-                await AssertSingleRowAsync(result);
-                Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.JobInsert));
-                Assert.Equal(0, mockServer.PendingErrorCount(MockRequestKind.JobInsert));
+            await AssertSingleRowAsync(result);
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.JobInsert));
+            Assert.Equal(0, mockServer.PendingErrorCount(MockRequestKind.JobInsert));
 
-                // The failed insert created no job, so only the retry carries an id.
-                IReadOnlyList<MockRequest> inserts = mockServer.RequestsOfKind(MockRequestKind.JobInsert);
-                Assert.Null(inserts[0].JobId);
-                Assert.NotNull(inserts[1].JobId);
-            }
+            // The failed insert created no job, so only the retry carries an id.
+            IReadOnlyList<MockRequest> inserts = mockServer.RequestsOfKind(MockRequestKind.JobInsert);
+            Assert.Null(inserts[0].JobId);
+            Assert.NotNull(inserts[1].JobId);
         }
 
         [Fact]
@@ -156,18 +149,15 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             // request could never produce.
             mockServer.QueueError(MockRequestKind.QueryResults, RetryableStatus, InertReason);
 
-            using AdbcStatement statement = OpenStatement(mockServer, out IDisposable scope);
-            using (scope)
-            {
-                statement.SqlQuery = "SELECT 42 AS value";
+            using StatementScope scope = OpenStatement(mockServer);
+            scope.Statement.SqlQuery = "SELECT 42 AS value";
 
-                QueryResult result = statement.ExecuteQuery();
+            QueryResult result = scope.Statement.ExecuteQuery();
 
-                await AssertSingleRowAsync(result);
-                Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.JobGet));
-                Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.QueryResults));
-                Assert.Equal(0, mockServer.PendingErrorCount(MockRequestKind.QueryResults));
-            }
+            await AssertSingleRowAsync(result);
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.JobGet));
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.QueryResults));
+            Assert.Equal(0, mockServer.PendingErrorCount(MockRequestKind.QueryResults));
         }
 
         [Fact]
@@ -272,10 +262,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             return job?.Status?.State;
         }
 
-        private static AdbcStatement OpenStatement(
-            BigQueryMockServer mockServer,
-            out IDisposable scope,
-            int? maxRetries = null)
+        private static StatementScope OpenStatement(BigQueryMockServer mockServer, int? maxRetries = null)
         {
             var parameters = new Dictionary<string, string>
             {
@@ -297,10 +284,8 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             var driver = new BigQueryDriver();
             AdbcDatabase database = driver.Open(parameters);
             AdbcConnection connection = database.Connect(new Dictionary<string, string>());
-            AdbcStatement statement = connection.CreateStatement();
 
-            scope = new DisposableScope(connection, database, driver);
-            return statement;
+            return new StatementScope(driver, database, connection);
         }
 
         private static async Task AssertSingleRowAsync(QueryResult result)
@@ -320,25 +305,41 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
 
             var builder = new Int64Array.Builder();
             builder.Append(42);
-            var batch = new RecordBatch(schema, new IArrowArray[] { builder.Build() }, 1);
+            using var batch = new RecordBatch(schema, new IArrowArray[] { builder.Build() }, 1);
 
             mockServer.ReadService.DefaultArrowSchema = ArrowSerializationHelpers.SerializeSchema(schema);
             mockServer.ReadService.DefaultArrowBatch = ArrowSerializationHelpers.SerializeRecordBatch(batch);
             mockServer.ReadService.DefaultRowCount = 1;
         }
 
-        private sealed class DisposableScope : IDisposable
+        /// <summary>
+        /// Owns a driver, database, connection and statement for one test, and disposes them
+        /// innermost-first. Holding the statement here rather than handing it back alongside a
+        /// separate scope is what keeps that order right: two separate <c>using</c>s at the call
+        /// site are easy to write in the order that tears the connection down first.
+        /// </summary>
+        private sealed class StatementScope : IDisposable
         {
-            private readonly IDisposable[] _disposables;
+            private readonly BigQueryDriver _driver;
+            private readonly AdbcDatabase _database;
+            private readonly AdbcConnection _connection;
 
-            public DisposableScope(params IDisposable[] disposables) => _disposables = disposables;
+            public StatementScope(BigQueryDriver driver, AdbcDatabase database, AdbcConnection connection)
+            {
+                _driver = driver;
+                _database = database;
+                _connection = connection;
+                Statement = connection.CreateStatement();
+            }
+
+            public AdbcStatement Statement { get; }
 
             public void Dispose()
             {
-                foreach (IDisposable disposable in _disposables)
-                {
-                    disposable.Dispose();
-                }
+                Statement.Dispose();
+                _connection.Dispose();
+                _database.Dispose();
+                _driver.Dispose();
             }
         }
     }
