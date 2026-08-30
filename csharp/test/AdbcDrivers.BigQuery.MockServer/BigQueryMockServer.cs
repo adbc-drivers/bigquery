@@ -24,6 +24,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Google.Apis.Bigquery.v2.Data;
 using Google.Apis.Json;
+using Google.Apis.Requests;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -57,6 +58,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly ConcurrentDictionary<string, bool> _sessions = new();
         private readonly ConcurrentQueue<string> _executedQueries = new();
         private readonly ConcurrentQueue<MockRequest> _requests = new();
+        private readonly ConcurrentDictionary<MockRequestKind, ConcurrentQueue<MockError>> _queuedErrors = new();
         private IReadOnlyList<string> _jobStateScript = new[] { JobStateDone };
         private int _queryResultsRequestCount;
         private int _requestSequence;
@@ -171,6 +173,77 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// </summary>
         public int CountOfKind(MockRequestKind kind) => _requests.Count(request => request.Kind == kind);
 
+        /// <summary>
+        /// Queues an HTTP error for the next request of the given kind, in place of its normal
+        /// response. Each queued error is consumed by one matching request, in the order queued, so
+        /// queuing two errors makes the next two requests of that kind fail. Errors are checked
+        /// before any other work in the handler, so a failed request neither advances the job poll
+        /// script nor mutates server state.
+        /// </summary>
+        /// <param name="kind">
+        /// The request kind to fail. Only the job and query-results kinds are supported;
+        /// table operations already model their own 404/409 responses.
+        /// </param>
+        /// <param name="statusCode">The HTTP status to return.</param>
+        /// <param name="reason">
+        /// The BigQuery error reason, which the driver inspects independently of the status code:
+        /// "backendError", "internalError" and "rateLimitExceeded" are retryable whatever the
+        /// status. Real BigQuery pairs "rateLimitExceeded" with a 403, for example.
+        /// </param>
+        /// <param name="message">The error message, defaulting to one derived from the reason.</param>
+        public void QueueError(
+            MockRequestKind kind,
+            HttpStatusCode statusCode,
+            string reason = "backendError",
+            string? message = null)
+        {
+            if (kind is MockRequestKind.TableGet or MockRequestKind.TableInsert or MockRequestKind.TableDelete)
+            {
+                throw new ArgumentException($"Error injection is not supported for {kind}.", nameof(kind));
+            }
+
+            _queuedErrors
+                .GetOrAdd(kind, _ => new ConcurrentQueue<MockError>())
+                .Enqueue(new MockError(statusCode, reason, message ?? $"Mock server injected error: {reason}"));
+        }
+
+        /// <summary>
+        /// The number of queued errors of the given kind that no request has consumed yet. Lets a
+        /// test assert that the driver made every call the test set up an error for.
+        /// </summary>
+        public int PendingErrorCount(MockRequestKind kind) =>
+            _queuedErrors.TryGetValue(kind, out var queue) ? queue.Count : 0;
+
+        private async Task<bool> TryWriteQueuedErrorAsync(HttpContext ctx, MockRequestKind kind, string? jobId)
+        {
+            if (!_queuedErrors.TryGetValue(kind, out var queue) || !queue.TryDequeue(out MockError? error))
+            {
+                return false;
+            }
+
+            Record(kind, jobId);
+
+            // Shaped so that Google.Apis populates GoogleApiException.Error, which is what the
+            // driver reads to decide whether a failure is retryable.
+            var response = new
+            {
+                error = new RequestError
+                {
+                    Code = (int)error.StatusCode,
+                    Message = error.Message,
+                    Errors = new List<SingleError>
+                    {
+                        new SingleError { Domain = "global", Reason = error.Reason, Message = error.Message },
+                    },
+                },
+            };
+
+            ctx.Response.StatusCode = (int)error.StatusCode;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsync(NewtonsoftJsonSerializer.Instance.Serialize(response)).ConfigureAwait(false);
+            return true;
+        }
+
         private MockRequest Record(MockRequestKind kind, string? jobId = null)
         {
             MockRequest request = new(kind, jobId, Interlocked.Increment(ref _requestSequence) - 1);
@@ -226,6 +299,13 @@ namespace AdbcDrivers.BigQuery.MockServer
             // POST /bigquery/v2/projects/{projectId}/jobs - Create a query job
             app.MapPost("/bigquery/v2/projects/{projectId}/jobs", async (HttpContext ctx, string projectId) =>
             {
+                // A failed insert creates no job, so the request is recorded without an id and
+                // the request body is never treated as an executed query.
+                if (await TryWriteQueuedErrorAsync(ctx, MockRequestKind.JobInsert, jobId: null).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 string body = await ReadBodyAsync(ctx).ConfigureAwait(false);
 
                 Job? jobRequest = null;
@@ -296,6 +376,11 @@ namespace AdbcDrivers.BigQuery.MockServer
             // GET /bigquery/v2/projects/{projectId}/jobs/{jobId} - Get job status
             app.MapGet("/bigquery/v2/projects/{projectId}/jobs/{jobId}", async (HttpContext ctx, string projectId, string jobId) =>
             {
+                if (await TryWriteQueuedErrorAsync(ctx, MockRequestKind.JobGet, jobId).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 Record(MockRequestKind.JobGet, jobId);
                 if (!_jobs.TryGetValue(jobId, out var mockJob))
                 {
@@ -312,6 +397,11 @@ namespace AdbcDrivers.BigQuery.MockServer
             // POST /bigquery/v2/projects/{projectId}/jobs/{jobId}/cancel - Request job cancellation
             app.MapPost("/bigquery/v2/projects/{projectId}/jobs/{jobId}/cancel", async (HttpContext ctx, string projectId, string jobId) =>
             {
+                if (await TryWriteQueuedErrorAsync(ctx, MockRequestKind.JobCancel, jobId).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 Record(MockRequestKind.JobCancel, jobId);
                 if (!_jobs.TryGetValue(jobId, out var mockJob))
                 {
@@ -340,6 +430,13 @@ namespace AdbcDrivers.BigQuery.MockServer
             // GET /bigquery/v2/projects/{projectId}/queries/{jobId} - Get query results
             app.MapGet("/bigquery/v2/projects/{projectId}/queries/{jobId}", async (HttpContext ctx, string projectId, string jobId) =>
             {
+                // Checked before the counter and the poll script advance, so an injected error
+                // does not consume a scripted job-state observation.
+                if (await TryWriteQueuedErrorAsync(ctx, MockRequestKind.QueryResults, jobId).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 Interlocked.Increment(ref _queryResultsRequestCount);
                 Record(MockRequestKind.QueryResults, jobId);
                 if (!_jobs.TryGetValue(jobId, out var mockJob))
@@ -591,6 +688,20 @@ namespace AdbcDrivers.BigQuery.MockServer
             (_restApp as IDisposable)?.Dispose();
             (_grpcApp as IDisposable)?.Dispose();
             _cts.Dispose();
+        }
+
+        private sealed class MockError
+        {
+            public MockError(HttpStatusCode statusCode, string reason, string message)
+            {
+                StatusCode = statusCode;
+                Reason = reason;
+                Message = message;
+            }
+
+            public HttpStatusCode StatusCode { get; }
+            public string Reason { get; }
+            public string Message { get; }
         }
 
         private sealed class MockJob
