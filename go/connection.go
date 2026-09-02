@@ -1005,8 +1005,7 @@ func (c *connectionImpl) getTableSchemaWithFilter(ctx context.Context, catalog *
 			metadata["BIGQUERY:RangePartitioning:Range:Interval"] = strconv.FormatInt(md.RangePartitioning.Range.Interval, 10)
 		}
 	}
-	// Downstream consumers expect this key to always be present, so emit
-	// it unconditionally rather than gating on the bool being true.
+
 	metadata["BIGQUERY:RequirePartitionFilter"] = strconv.FormatBool(md.RequirePartitionFilter)
 	if md.Clustering != nil {
 		metadata["BIGQUERY:Clustering:Fields"] = encodeJson[[]string, string](md.Clustering.Fields)
