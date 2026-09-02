@@ -23,6 +23,12 @@ package main
 // #include "adbc.h"
 import "C"
 
+import "context"
+
+type statementCanceler interface {
+	Cancel(context.Context) error
+}
+
 //export AdbcDriverBigqueryInit
 func AdbcDriverBigqueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
 	// The driver manager expects the spelling Bigquery and not BigQuery
