@@ -19,7 +19,7 @@ go 1.27.0
 require (
 	cloud.google.com/go/auth v0.23.2
 	cloud.google.com/go/bigquery v1.81.0
-	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260824021627-455f572670d0
+	github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260903064016-31a68ee93796
 	github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20260803160758-8f4d5c91c894
 	github.com/adbc-drivers/driverbase-go/validation v0.0.0-20260803160758-8f4d5c91c894
 	github.com/apache/arrow-adbc/go/adbc v1.12.0
