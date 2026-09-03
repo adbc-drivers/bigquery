@@ -75,6 +75,26 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	}
 	jobID := job.ID()
 
+	// The project id, location, and job id are all URL-safe:
+	// - Project id and job id can only contain URL-safe characters:
+	//   https://cloud.google.com/bigquery/docs/reference/rest/v2/JobReference
+	// - Locations are also URL-safe, listed here:
+	//   https://cloud.google.com/bigquery/docs/locations
+	jobLink := fmt.Sprintf(
+		"https://console.cloud.google.com/bigquery?project=%s&j=bq:%s:%s&page=queryresults",
+		job.ProjectID(), job.Location(), job.ID(),
+	)
+	wrap := func(err error) error {
+		if err == nil {
+			return err
+		}
+		if adbcErr, ok := errors.AsType[adbc.Error](err); ok {
+			adbcErr.Msg = fmt.Sprintf("%s (Query: %s)", adbcErr.Msg, jobLink)
+			return adbcErr
+		}
+		return fmt.Errorf("%w (Query: %s)", err, jobLink)
+	}
+
 	// XXX: Google SDK badness.  We can't use Wait here because queries that
 	// *fail* with a rateLimitExceeded (e.g. too many metadata operations)
 	// will get the *polling* retried infinitely in Google's SDK (I believe
@@ -87,16 +107,16 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// their internal APIs mix both errors into a single error path.)
 	js, err := safeWaitForJob(ctx, logger, job)
 	if err != nil {
-		return nil, nil, jobID, -1, err
+		return nil, nil, jobID, -1, wrap(err)
 	}
 
 	if err := js.Err(); err != nil {
-		return nil, js, jobID, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
+		return nil, js, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "complete job"))
 	} else if !js.Done() {
-		return nil, js, jobID, -1, adbc.Error{
+		return nil, js, jobID, -1, wrap(adbc.Error{
 			Code: adbc.StatusInternal,
 			Msg:  "[bq] Query job did not complete",
-		}
+		})
 	}
 
 	mayReturnResults := false
@@ -117,7 +137,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// mistake with the retry, so we wait for the job above.
 	iter, err := job.Read(ctx)
 	if err != nil {
-		return nil, js, jobID, -1, errToAdbcErr(adbc.StatusInternal, err, "read query results")
+		return nil, js, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
 	}
 
 	var arrowIterator bigquery.ArrowIterator
@@ -139,12 +159,12 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 				// message. readSessionUser may sound
 				// unrelated but creating a "read session" is
 				// the first step of using the Storage API.
-				return nil, js, jobID, -1, adbc.Error{
+				return nil, js, jobID, -1, wrap(adbc.Error{
 					Code: adbc.StatusUnauthorized,
 					Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
-				}
+				})
 			} else {
-				return nil, js, jobID, -1, errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results")
+				return nil, js, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
 			}
 		}
 	} else {
