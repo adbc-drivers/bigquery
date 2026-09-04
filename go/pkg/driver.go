@@ -63,7 +63,6 @@ import (
 	"runtime"
 	"runtime/cgo"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"unsafe"
 
@@ -287,46 +286,6 @@ func exportBytesOption(val []byte, out *C.uint8_t, length *C.size_t) C.AdbcStatu
 	return C.ADBC_STATUS_OK
 }
 
-type cancellableContext struct {
-	mu     sync.Mutex
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-func (c *cancellableContext) newContext() context.Context {
-	c.mu.Lock()
-	previous := c.cancel
-	ctx, cancel := context.WithCancel(context.Background())
-	c.ctx, c.cancel = ctx, cancel
-	c.mu.Unlock()
-	if previous != nil {
-		previous()
-	}
-	return ctx
-}
-
-func (c *cancellableContext) finishContext(ctx context.Context) {
-	// Do not clear a newer operation's context.
-	c.mu.Lock()
-	if c.ctx == ctx {
-		c.ctx = nil
-		c.cancel = nil
-	}
-	c.mu.Unlock()
-}
-
-func (c *cancellableContext) cancelContext() bool {
-	c.mu.Lock()
-	cancel := c.cancel
-	c.ctx = nil
-	c.cancel = nil
-	c.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	return cancel != nil
-}
-
 func checkDBAlloc(db *C.struct_AdbcDatabase, err *C.struct_AdbcError, fname string) bool {
 	if globalPoison.Load() {
 		setErr(err, "%s: Go panicked, driver is in unknown state", fname)
@@ -495,7 +454,7 @@ func exportRecordReader(rdr array.RecordReader, stream *C.struct_ArrowArrayStrea
 }
 
 type cDatabase struct {
-	cancellableContext
+	driverbase.CancellableContext
 
 	opts map[string]string
 	db   driverbase.Database
@@ -518,7 +477,7 @@ func BigQueryDatabaseGetOption(db *C.struct_AdbcDatabase, key *C.cchar_t, value 
 		setErr(err, "AdbcDatabaseGetOption: options are not supported")
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
-	val, e := opts.GetOption(cdb.newContext(), C.GoString(key))
+	val, e := opts.GetOption(cdb.NewContext(), C.GoString(key))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -543,7 +502,7 @@ func BigQueryDatabaseGetOptionBytes(db *C.struct_AdbcDatabase, key *C.cchar_t, v
 		setErr(err, "AdbcDatabaseGetOptionBytes: options are not supported")
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
-	val, e := opts.GetOptionBytes(cdb.newContext(), C.GoString(key))
+	val, e := opts.GetOptionBytes(cdb.NewContext(), C.GoString(key))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -563,7 +522,7 @@ func BigQueryDatabaseGetOptionDouble(db *C.struct_AdbcDatabase, key *C.cchar_t, 
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	val, e := cdb.db.GetOptionDouble(cdb.newContext(), C.GoString(key))
+	val, e := cdb.db.GetOptionDouble(cdb.NewContext(), C.GoString(key))
 	*value = C.double(val)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
@@ -580,7 +539,7 @@ func BigQueryDatabaseGetOptionInt(db *C.struct_AdbcDatabase, key *C.cchar_t, val
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	val, e := cdb.db.GetOptionInt(cdb.newContext(), C.GoString(key))
+	val, e := cdb.db.GetOptionInt(cdb.NewContext(), C.GoString(key))
 	*value = C.int64_t(val)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
@@ -602,7 +561,7 @@ func BigQueryDatabaseInit(db *C.struct_AdbcDatabase, err *C.struct_AdbcError) (c
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	adb, aerr := drv.NewDatabaseWithContext(cdb.newContext(), cdb.opts)
+	adb, aerr := drv.NewDatabaseWithContext(cdb.NewContext(), cdb.opts)
 	if aerr != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, aerr))
 	}
@@ -647,7 +606,7 @@ func BigQueryDatabaseRelease(db *C.struct_AdbcDatabase, err *C.struct_AdbcError)
 
 	cdb := h.Value().(*cDatabase)
 	if cdb.db != nil {
-		cdb.db.Close(cdb.newContext())
+		cdb.db.Close(cdb.NewContext())
 		cdb.db = nil
 	}
 	cdb.opts = nil
@@ -680,7 +639,7 @@ func BigQueryDatabaseSetOption(db *C.struct_AdbcDatabase, key, value *C.cchar_t,
 
 	k, v := C.GoString(key), C.GoString(value)
 	if cdb.db != nil {
-		e := cdb.db.SetOption(cdb.newContext(), k, v)
+		e := cdb.db.SetOption(cdb.NewContext(), k, v)
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	} else {
 		cdb.opts[k] = v
@@ -701,7 +660,7 @@ func BigQueryDatabaseSetOptionBytes(db *C.struct_AdbcDatabase, key *C.cchar_t, v
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := cdb.db.SetOptionBytes(cdb.newContext(), C.GoString(key), fromCArr[byte](value, int(length)))
+	e := cdb.db.SetOptionBytes(cdb.NewContext(), C.GoString(key), fromCArr[byte](value, int(length)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -717,7 +676,7 @@ func BigQueryDatabaseSetOptionDouble(db *C.struct_AdbcDatabase, key *C.cchar_t, 
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := cdb.db.SetOptionDouble(cdb.newContext(), C.GoString(key), float64(value))
+	e := cdb.db.SetOptionDouble(cdb.NewContext(), C.GoString(key), float64(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -733,12 +692,12 @@ func BigQueryDatabaseSetOptionInt(db *C.struct_AdbcDatabase, key *C.cchar_t, val
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := cdb.db.SetOptionInt(cdb.newContext(), C.GoString(key), int64(value))
+	e := cdb.db.SetOptionInt(cdb.NewContext(), C.GoString(key), int64(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
 type cConn struct {
-	cancellableContext
+	driverbase.CancellableContext
 
 	cnxn     driverbase.Connection
 	initArgs map[string]string
@@ -785,7 +744,7 @@ func BigQueryConnectionGetOption(db *C.struct_AdbcConnection, key *C.cchar_t, va
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	val, e := conn.cnxn.GetOption(conn.newContext(), C.GoString(key))
+	val, e := conn.cnxn.GetOption(conn.NewContext(), C.GoString(key))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -804,7 +763,7 @@ func BigQueryConnectionGetOptionBytes(db *C.struct_AdbcConnection, key *C.cchar_
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	val, e := conn.cnxn.GetOptionBytes(conn.newContext(), C.GoString(key))
+	val, e := conn.cnxn.GetOptionBytes(conn.NewContext(), C.GoString(key))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -823,7 +782,7 @@ func BigQueryConnectionGetOptionDouble(db *C.struct_AdbcConnection, key *C.cchar
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	val, e := conn.cnxn.GetOptionDouble(conn.newContext(), C.GoString(key))
+	val, e := conn.cnxn.GetOptionDouble(conn.NewContext(), C.GoString(key))
 	*value = C.double(val)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
@@ -840,7 +799,7 @@ func BigQueryConnectionGetOptionInt(db *C.struct_AdbcConnection, key *C.cchar_t,
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	val, e := conn.cnxn.GetOptionInt(conn.newContext(), C.GoString(key))
+	val, e := conn.cnxn.GetOptionInt(conn.NewContext(), C.GoString(key))
 	*value = C.int64_t(val)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
@@ -888,7 +847,7 @@ func BigQueryConnectionSetOption(cnxn *C.struct_AdbcConnection, key, val *C.ccha
 		return C.ADBC_STATUS_OK
 	}
 
-	e := conn.cnxn.SetOption(conn.newContext(), C.GoString(key), C.GoString(val))
+	e := conn.cnxn.SetOption(conn.NewContext(), C.GoString(key), C.GoString(val))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -904,7 +863,7 @@ func BigQueryConnectionSetOptionBytes(db *C.struct_AdbcConnection, key *C.cchar_
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := conn.cnxn.SetOptionBytes(conn.newContext(), C.GoString(key), fromCArr[byte](value, int(length)))
+	e := conn.cnxn.SetOptionBytes(conn.NewContext(), C.GoString(key), fromCArr[byte](value, int(length)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -920,7 +879,7 @@ func BigQueryConnectionSetOptionDouble(db *C.struct_AdbcConnection, key *C.cchar
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := conn.cnxn.SetOptionDouble(conn.newContext(), C.GoString(key), float64(value))
+	e := conn.cnxn.SetOptionDouble(conn.NewContext(), C.GoString(key), float64(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -936,7 +895,7 @@ func BigQueryConnectionSetOptionInt(db *C.struct_AdbcConnection, key *C.cchar_t,
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := conn.cnxn.SetOptionInt(conn.newContext(), C.GoString(key), int64(value))
+	e := conn.cnxn.SetOptionInt(conn.NewContext(), C.GoString(key), int64(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -968,7 +927,7 @@ func BigQueryConnectionInit(cnxn *C.struct_AdbcConnection, db *C.struct_AdbcData
 
 	if len(conn.initArgs) > 0 {
 		// C allow SetOption before Init, Go doesn't allow options to Open so set them now
-		ctx := conn.newContext()
+		ctx := conn.NewContext()
 		for k, v := range conn.initArgs {
 			rawCode := errToAdbcErr(err, conn.cnxn.SetOption(ctx, k, v))
 			if rawCode != adbc.StatusOK {
@@ -995,7 +954,7 @@ func BigQueryConnectionRelease(cnxn *C.struct_AdbcConnection, err *C.struct_Adbc
 
 	conn := h.Value().(*cConn)
 	defer func() {
-		conn.cancelContext()
+		conn.CancelContext()
 		conn.cnxn = nil
 		C.free(cnxn.private_data)
 		cnxn.private_data = nil
@@ -1011,7 +970,7 @@ func BigQueryConnectionRelease(cnxn *C.struct_AdbcConnection, err *C.struct_Adbc
 	if conn.cnxn == nil {
 		return C.ADBC_STATUS_OK
 	}
-	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Close(conn.newContext())))
+	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Close(conn.NewContext())))
 }
 
 func fromCArr[T, CType any](ptr *CType, sz int) []T {
@@ -1046,7 +1005,7 @@ func BigQueryConnectionCancel(cnxn *C.struct_AdbcConnection, err *C.struct_AdbcE
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	conn.cancelContext()
+	conn.CancelContext()
 	return C.ADBC_STATUS_OK
 }
 
@@ -1087,7 +1046,7 @@ func BigQueryConnectionGetInfo(cnxn *C.struct_AdbcConnection, codes *C.cuint32_t
 	}
 
 	infoCodes := fromCArr[adbc.InfoCode](codes, int(len))
-	rdr, e := conn.cnxn.GetInfo(conn.newContext(), infoCodes)
+	rdr, e := conn.cnxn.GetInfo(conn.NewContext(), infoCodes)
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1110,7 +1069,7 @@ func BigQueryConnectionGetObjects(cnxn *C.struct_AdbcConnection, depth C.int, ca
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	rdr, e := conn.cnxn.GetObjects(conn.newContext(), adbc.ObjectDepth(depth), toStrPtr(catalog), toStrPtr(dbSchema), toStrPtr(tableName), toStrPtr(columnName), toStrSlice(tableType))
+	rdr, e := conn.cnxn.GetObjects(conn.NewContext(), adbc.ObjectDepth(depth), toStrPtr(catalog), toStrPtr(dbSchema), toStrPtr(tableName), toStrPtr(columnName), toStrSlice(tableType))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1137,7 +1096,7 @@ func BigQueryConnectionGetStatistics(cnxn *C.struct_AdbcConnection, catalog, dbS
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	rdr, e := gs.GetStatistics(conn.newContext(), toStrPtr(catalog), toStrPtr(dbSchema), toStrPtr(tableName), int(approximate) != 0)
+	rdr, e := gs.GetStatistics(conn.NewContext(), toStrPtr(catalog), toStrPtr(dbSchema), toStrPtr(tableName), int(approximate) != 0)
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1165,7 +1124,7 @@ func BigQueryConnectionGetStatisticNames(cnxn *C.struct_AdbcConnection, out *C.s
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	rdr, e := gs.GetStatisticNames(conn.newContext())
+	rdr, e := gs.GetStatisticNames(conn.NewContext())
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1186,7 +1145,7 @@ func BigQueryConnectionGetTableSchema(cnxn *C.struct_AdbcConnection, catalog, db
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	sc, e := conn.cnxn.GetTableSchema(conn.newContext(), toStrPtr(catalog), toStrPtr(dbSchema), C.GoString(tableName))
+	sc, e := conn.cnxn.GetTableSchema(conn.NewContext(), toStrPtr(catalog), toStrPtr(dbSchema), C.GoString(tableName))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1206,7 +1165,7 @@ func BigQueryConnectionGetTableTypes(cnxn *C.struct_AdbcConnection, out *C.struc
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	rdr, e := conn.cnxn.GetTableTypes(conn.newContext())
+	rdr, e := conn.cnxn.GetTableTypes(conn.NewContext())
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1227,7 +1186,7 @@ func BigQueryConnectionReadPartition(cnxn *C.struct_AdbcConnection, serialized *
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	rdr, e := conn.cnxn.ReadPartition(conn.newContext(), fromCArr[byte](serialized, int(serializedLen)))
+	rdr, e := conn.cnxn.ReadPartition(conn.NewContext(), fromCArr[byte](serialized, int(serializedLen)))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1248,7 +1207,7 @@ func BigQueryConnectionCommit(cnxn *C.struct_AdbcConnection, err *C.struct_AdbcE
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Commit(conn.newContext())))
+	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Commit(conn.NewContext())))
 }
 
 //export BigQueryConnectionRollback
@@ -1263,13 +1222,13 @@ func BigQueryConnectionRollback(cnxn *C.struct_AdbcConnection, err *C.struct_Adb
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Rollback(conn.newContext())))
+	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Rollback(conn.NewContext())))
 }
 
 type cStmt struct {
-	cancellableContext
+	driverbase.CancellableContext
 	// Non-execution calls must not make StatementCancel report success.
-	executionContext cancellableContext
+	executionContext driverbase.CancellableContext
 
 	// TODO(lidavidm): assume driverbase.Statement here to avoid casts below
 	stmt adbc.StatementWithContext
@@ -1320,7 +1279,7 @@ func BigQueryStatementGetOption(db *C.struct_AdbcStatement, key *C.cchar_t, valu
 		setErr(err, "AdbcStatementGetOption: options are not supported")
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
-	val, e := opts.GetOption(st.newContext(), C.GoString(key))
+	val, e := opts.GetOption(st.NewContext(), C.GoString(key))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1344,7 +1303,7 @@ func BigQueryStatementGetOptionBytes(db *C.struct_AdbcStatement, key *C.cchar_t,
 		setErr(err, "AdbcStatementGetOptionBytes: options are not supported")
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
-	val, e := opts.GetOptionBytes(st.newContext(), C.GoString(key))
+	val, e := opts.GetOptionBytes(st.NewContext(), C.GoString(key))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1369,7 +1328,7 @@ func BigQueryStatementGetOptionDouble(db *C.struct_AdbcStatement, key *C.cchar_t
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	val, e := opts.GetOptionDouble(st.newContext(), C.GoString(key))
+	val, e := opts.GetOptionDouble(st.NewContext(), C.GoString(key))
 	*value = C.double(val)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
@@ -1392,7 +1351,7 @@ func BigQueryStatementGetOptionInt(db *C.struct_AdbcStatement, key *C.cchar_t, v
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	val, e := opts.GetOptionInt(st.newContext(), C.GoString(key))
+	val, e := opts.GetOptionInt(st.NewContext(), C.GoString(key))
 	*value = C.int64_t(val)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
@@ -1418,7 +1377,7 @@ func BigQueryStatementNew(cnxn *C.struct_AdbcConnection, stmt *C.struct_AdbcStat
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	st, e := conn.cnxn.NewStatement(conn.newContext())
+	st, e := conn.cnxn.NewStatement(conn.NewContext())
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1446,8 +1405,8 @@ func BigQueryStatementRelease(stmt *C.struct_AdbcStatement, err *C.struct_AdbcEr
 
 	st := h.Value().(*cStmt)
 	defer func() {
-		st.cancelContext()
-		st.executionContext.cancelContext()
+		st.CancelContext()
+		st.executionContext.CancelContext()
 		st.stmt = nil
 		C.free(stmt.private_data)
 		stmt.private_data = nil
@@ -1463,7 +1422,7 @@ func BigQueryStatementRelease(stmt *C.struct_AdbcStatement, err *C.struct_AdbcEr
 	if st.stmt == nil {
 		return C.ADBC_STATUS_OK
 	}
-	return C.AdbcStatusCode(errToAdbcErr(err, st.stmt.Close(st.newContext())))
+	return C.AdbcStatusCode(errToAdbcErr(err, st.stmt.Close(st.NewContext())))
 }
 
 //export BigQueryStatementCancel
@@ -1478,8 +1437,8 @@ func BigQueryStatementCancel(stmt *C.struct_AdbcStatement, err *C.struct_AdbcErr
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	active := st.executionContext.cancelContext()
-	canceler, ok := st.stmt.(statementCanceler)
+	active := st.executionContext.CancelContext()
+	canceler, ok := st.stmt.(driverbase.StatementCanceler)
 	if !ok {
 		if active {
 			return C.ADBC_STATUS_OK
@@ -1510,7 +1469,7 @@ func BigQueryStatementPrepare(stmt *C.struct_AdbcStatement, err *C.struct_AdbcEr
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	return C.AdbcStatusCode(errToAdbcErr(err, st.stmt.Prepare(st.newContext())))
+	return C.AdbcStatusCode(errToAdbcErr(err, st.stmt.Prepare(st.NewContext())))
 }
 
 //export BigQueryStatementExecuteQuery
@@ -1525,9 +1484,9 @@ func BigQueryStatementExecuteQuery(stmt *C.struct_AdbcStatement, out *C.struct_A
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
+	ctx := st.executionContext.NewContext()
+	defer st.executionContext.FinishContext(ctx)
 	if out == nil {
-		ctx := st.executionContext.newContext()
-		defer st.executionContext.finishContext(ctx)
 		n, e := st.stmt.ExecuteUpdate(ctx)
 		if e != nil {
 			return C.AdbcStatusCode(errToAdbcErr(err, e))
@@ -1537,8 +1496,6 @@ func BigQueryStatementExecuteQuery(stmt *C.struct_AdbcStatement, out *C.struct_A
 			*affected = C.int64_t(n)
 		}
 	} else {
-		ctx := st.executionContext.newContext()
-		defer st.executionContext.finishContext(ctx)
 		rdr, n, e := st.stmt.ExecuteQuery(ctx)
 		if e != nil {
 			return C.AdbcStatusCode(errToAdbcErr(err, e))
@@ -1572,8 +1529,8 @@ func BigQueryStatementExecuteSchema(stmt *C.struct_AdbcStatement, schema *C.stru
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	ctx := st.executionContext.newContext()
-	defer st.executionContext.finishContext(ctx)
+	ctx := st.executionContext.NewContext()
+	defer st.executionContext.FinishContext(ctx)
 	sc, e := es.ExecuteSchema(ctx)
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
@@ -1595,7 +1552,7 @@ func BigQueryStatementSetSqlQuery(stmt *C.struct_AdbcStatement, query *C.cchar_t
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := st.stmt.SetSqlQuery(st.newContext(), C.GoString(query))
+	e := st.stmt.SetSqlQuery(st.NewContext(), C.GoString(query))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1611,7 +1568,7 @@ func BigQueryStatementSetSubstraitPlan(stmt *C.struct_AdbcStatement, plan *C.cui
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := st.stmt.SetSubstraitPlan(st.newContext(), fromCArr[byte](plan, int(length)))
+	e := st.stmt.SetSubstraitPlan(st.NewContext(), fromCArr[byte](plan, int(length)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1634,7 +1591,7 @@ func BigQueryStatementBind(stmt *C.struct_AdbcStatement, values *C.struct_ArrowA
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
 	defer rec.Release()
-	e = st.stmt.Bind(st.newContext(), rec)
+	e = st.stmt.Bind(st.NewContext(), rec)
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1654,7 +1611,7 @@ func BigQueryStatementBindStream(stmt *C.struct_AdbcStatement, stream *C.struct_
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
-	e = st.stmt.BindStream(st.newContext(), rdr.(array.RecordReader))
+	e = st.stmt.BindStream(st.NewContext(), rdr.(array.RecordReader))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1670,7 +1627,7 @@ func BigQueryStatementGetParameterSchema(stmt *C.struct_AdbcStatement, schema *C
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	sc, e := st.stmt.GetParameterSchema(st.newContext())
+	sc, e := st.stmt.GetParameterSchema(st.NewContext())
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1690,7 +1647,7 @@ func BigQueryStatementSetOption(stmt *C.struct_AdbcStatement, key, value *C.ccha
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := st.stmt.SetOption(st.newContext(), C.GoString(key), C.GoString(value))
+	e := st.stmt.SetOption(st.NewContext(), C.GoString(key), C.GoString(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1712,7 +1669,7 @@ func BigQueryStatementSetOptionBytes(db *C.struct_AdbcStatement, key *C.cchar_t,
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	e := opts.SetOptionBytes(st.newContext(), C.GoString(key), fromCArr[byte](value, int(length)))
+	e := opts.SetOptionBytes(st.NewContext(), C.GoString(key), fromCArr[byte](value, int(length)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1734,7 +1691,7 @@ func BigQueryStatementSetOptionDouble(db *C.struct_AdbcStatement, key *C.cchar_t
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	e := opts.SetOptionDouble(st.newContext(), C.GoString(key), float64(value))
+	e := opts.SetOptionDouble(st.NewContext(), C.GoString(key), float64(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1756,7 +1713,7 @@ func BigQueryStatementSetOptionInt(db *C.struct_AdbcStatement, key *C.cchar_t, v
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	e := opts.SetOptionInt(st.newContext(), C.GoString(key), int64(value))
+	e := opts.SetOptionInt(st.NewContext(), C.GoString(key), int64(value))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1786,7 +1743,9 @@ func BigQueryStatementExecutePartitions(stmt *C.struct_AdbcStatement, schema *C.
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	sc, part, n, e := st.stmt.ExecutePartitions(st.newContext())
+	ctx := st.executionContext.NewContext()
+	defer st.executionContext.FinishContext(ctx)
+	sc, part, n, e := st.stmt.ExecutePartitions(ctx)
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}

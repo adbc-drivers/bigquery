@@ -14,7 +14,9 @@
 
 import uuid
 
+import adbc_driver_manager.dbapi
 import adbc_drivers_validation.tests.statement as statement_tests
+import pytest
 
 from . import bigquery, utils
 
@@ -123,3 +125,17 @@ def test_query_id_metadata_dry_run(driver, conn) -> None:
         cursor.adbc_statement.set_options(**{"bigquery.query.dry_run": "true"})
         cursor.execute("SELECT 1 AS a")
         assert QUERY_ID_KEY not in cursor.fetch_arrow_table().schema.metadata
+
+
+def test_link_failed_job(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.adbc_statement.set_options()
+        with pytest.raises(adbc_driver_manager.dbapi.Error) as excinfo:
+            cursor.execute("SELECT 1/0")
+        message = str(excinfo.value)
+
+    assert "https://console.cloud.google.com/bigquery?project=" in message
+    assert "&j=bq:" in message
+    assert "&page=queryresults" in message
+    # The underlying BigQuery error is preserved, not replaced by the link.
+    assert "division by zero" in message
