@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -123,6 +124,8 @@ func isJobNotFound(err error) bool {
 	return ok && apiErr.Code == 404
 }
 
+// statementExecution tracks the cancellable lifetime of one statement call.
+// beginExecution installs it and endExecution removes it.
 type statementExecution struct {
 	cancel context.CancelFunc
 }
@@ -171,6 +174,7 @@ func (st *statement) beginJob(client *bigquery.Client, config *bigquery.JobIDCon
 		return client.JobFromProject(ctx, projectID, jobID, location)
 	})
 	st.cancelMu.Lock()
+	driverbase.DebugAssert(st.activeJob == nil, "another BigQuery job is already active")
 	st.activeJob = job
 	st.cancelMu.Unlock()
 	return job
