@@ -64,6 +64,7 @@ type bigqueryBulkIngestImpl struct {
 	options     driverbase.BulkIngestOptions
 	queryConfig bigquery.QueryConfig
 	client      *bigquery.Client
+	stmt        *statement
 
 	tmpdir string
 }
@@ -123,7 +124,7 @@ func (bi *bigqueryBulkIngestImpl) Copy(ctx context.Context, chunk driverbase.Bul
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "run loader")
 	}
-	status, err := safeWaitForJob(ctx, bi.logger, job)
+	status, err := bi.stmt.waitForJob(ctx, bi.logger, job)
 	if err != nil {
 		return err
 	}

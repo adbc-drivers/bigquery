@@ -23,6 +23,14 @@ package main
 // #include "adbc.h"
 import "C"
 
+import "context"
+
+// statementCanceller is the optional Go Cancel method invoked from
+// AdbcStatementCancel in addition to cancelling the CGO request context.
+type statementCanceller interface {
+	Cancel(context.Context) error
+}
+
 //export AdbcDriverBigqueryInit
 func AdbcDriverBigqueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
 	// The driver manager expects the spelling Bigquery and not BigQuery

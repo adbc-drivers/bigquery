@@ -340,6 +340,9 @@ func (c *connectionImpl) exec(ctx context.Context, stmt string, config func(*big
 		return nil, err
 	}
 	status, err := safeWaitForJob(ctx, c.Logger, job)
+	if ctx.Err() != nil {
+		go cancelBigQueryJob(job, c.Logger)
+	}
 	if err != nil {
 		return nil, err
 	} else if err := status.Err(); err != nil {
