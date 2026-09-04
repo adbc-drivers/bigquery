@@ -24,8 +24,8 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0/go.mod h1:IA1C1U7jO/ENqm/vhi7V9YYpBsp+IMyqNrEN94N7tVc=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0 h1:0s6TxfCu2KHkkZPnBfsQ2y5qia0jl3MMrmBhu3nCOYk=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0/go.mod h1:Mf6O40IAyB9zR/1J8nGDDPirZQQPbYJni8Yisy7NTMc=
-github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260824021627-455f572670d0 h1:PsX2fHQ++mROkrNZ7jL8zaAmtjQapVuOoay0MSvaFXQ=
-github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260824021627-455f572670d0/go.mod h1:2UUwZqV/NVOJwESLh6ajN2GuzVK9MQg5LI7EPKXkoEg=
+github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260903064016-31a68ee93796 h1:0SFQvAtWDOGI8OS67jYfyN+NZRmgA95KFHPLLf7k76M=
+github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20260903064016-31a68ee93796/go.mod h1:2UUwZqV/NVOJwESLh6ajN2GuzVK9MQg5LI7EPKXkoEg=
 github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20260803160758-8f4d5c91c894 h1:ytSDLPGv8gMSyvDsu8Ohol0Dh+hK0sx6n01K4+0MCuc=
 github.com/adbc-drivers/driverbase-go/testutil v0.0.0-20260803160758-8f4d5c91c894/go.mod h1:958w1J4jByMlVKfyrv1Uil06T1hkPEeZ/jE3JdKGvnk=
 github.com/adbc-drivers/driverbase-go/validation v0.0.0-20260803160758-8f4d5c91c894 h1:K8/I0Z4Lzj+Atpkrk2FdTeIgnwpEtOkZQDZ7c5NTnkw=
