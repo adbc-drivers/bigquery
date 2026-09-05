@@ -136,3 +136,20 @@ def test_impersonate_empty_value(driver, driver_path, db_kwargs, option) -> None
         # No impersonation was configured, so no lifetime is reported.
         lifetime = conn.adbc_connection.get_option("bigquery.impersonate.lifetime")
         assert lifetime == "", lifetime
+
+
+def test_get_objects_hidden_dataset(driver, conn) -> None:
+    # BigQuery hides datasets whose name starts with an underscore from
+    # dataset listings by default. GetObjects opts into listing them, so
+    # callers see anonymous/hidden datasets like everything else.
+    name = "_adbc_validation_hidden"
+    with conn.cursor() as cursor:
+        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS `{name}`")
+
+    objects = conn.adbc_get_objects(depth="db_schemas").read_all().to_pylist()
+    schemas = [
+        schema["db_schema_name"]
+        for catalog in objects
+        for schema in (catalog["catalog_db_schemas"] or [])
+    ]
+    assert name in schemas, f"{name} missing from {len(schemas)} listed schemas"
