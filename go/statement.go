@@ -24,9 +24,11 @@ package bigquery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/bigquery"
@@ -62,6 +64,11 @@ type statement struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	cancelMu  sync.Mutex
+	execution *statementExecution
+	// Query and bulk-ingest paths wait for each job before submitting the next.
+	activeJob *jobCancellation
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -104,9 +111,16 @@ func (st *statement) Close(ctx context.Context) error {
 		}
 	}
 
+	cancelErr := st.Cancel(ctx)
+	if cancelErr != nil {
+		var adbcErr adbc.Error
+		if errors.As(cancelErr, &adbcErr) && adbcErr.Code == adbc.StatusInvalidState {
+			cancelErr = nil
+		}
+	}
 	st.clearParameters()
 	st.cnxn = nil
-	return nil
+	return cancelErr
 }
 
 func (st *statement) GetOption(ctx context.Context, key string) (string, error) {
@@ -378,31 +392,42 @@ func (st *statement) SetSqlQuery(ctx context.Context, query string) error {
 //
 // This invalidates any prior result sets on this statement.
 func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int64, error) {
+	ctx, execution := st.beginExecution(ctx)
+
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
+		st.endExecution(execution)
 		return nil, n, err
 	} else if st.queryConfig.Q == "" {
+		st.endExecution(execution)
 		return nil, -1, adbc.Error{
 			Msg:  "[bq] cannot execute without a query",
 			Code: adbc.StatusInvalidState,
 		}
 	}
 
-	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency)
+	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
-	return rr, totalRows, err
+	if err != nil {
+		st.endExecution(execution)
+		return nil, totalRows, err
+	}
+	return bindExecutionReader(rr, func() { st.endExecution(execution) }), totalRows, nil
 }
 
 // ExecuteUpdate executes a statement that does not generate a result
 // set. It returns the number of rows affected if known, otherwise -1.
 func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
+	ctx, execution := st.beginExecution(ctx)
+	defer st.endExecution(execution)
+
 	if st.ingest.TableName != "" {
 		n, err := st.executeIngest(ctx)
 		return n, err
 	}
 
 	if st.params == nil {
-		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
 		if err != nil {
 			return -1, err
 		}
@@ -424,7 +449,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true)
+				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
 				if err != nil {
 					return -1, err
 				}
@@ -437,6 +462,9 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 
 // ExecuteSchema gets the schema of the result set of a query without executing it.
 func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
+	ctx, execution := st.beginExecution(ctx)
+	defer st.endExecution(execution)
+
 	job, err := st.dryRun(ctx)
 	if err != nil {
 		return nil, err
@@ -951,6 +979,7 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 			options:     st.ingest,
 			queryConfig: st.queryConfig,
 			client:      st.cnxn.client,
+			statement:   st,
 		}
 	}
 	manager := &driverbase.BulkIngestManager{
