@@ -2129,6 +2129,30 @@ func (suite *BigQueryTests) TestGetStatistics() {
 	// ensuring consistent results despite INFORMATION_SCHEMA caching
 }
 
+func (suite *BigQueryTests) TestGetStatisticsHiddenDataset() {
+	// INFORMATION_SCHEMA is not supported for hidden datasets; return an empty result but do not blow up
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, `
+		CREATE SCHEMA IF NOT EXISTS _hidden_test;
+	`))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, `
+		CREATE TABLE IF NOT EXISTS _hidden_test.statistics_test (
+			id INT64
+		);
+	`))
+	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	rdr, err := suite.cnxn.(adbc.ConnectionGetStatisticsWithContext).GetStatistics(suite.ctx, new(suite.Quirks.Catalog()), new("_hidden_test"), new("statistics_test"), false)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+	for rdr.Next() {
+	}
+	suite.NoError(rdr.Err())
+}
+
 func (suite *BigQueryTests) TestGetStatisticNames() {
 	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
 	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
