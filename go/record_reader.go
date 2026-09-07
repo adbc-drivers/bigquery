@@ -441,7 +441,7 @@ func (r *reader) Err() error {
 
 func (r *reader) setError(err error) {
 	r.errMu.Lock()
-	r.err = err
+	r.err = errors.Join(r.err, err)
 	r.errMu.Unlock()
 }
 

@@ -22,13 +22,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"uuid"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/google/uuid"
 	"github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/googleapi"
 )
@@ -155,9 +155,9 @@ func (st *statement) endExecution(op *statementExecution) {
 
 func (st *statement) beginJob(client *bigquery.Client, config *bigquery.JobIDConfig) *jobCancellation {
 	if config.JobID == "" {
-		config.JobID = uuid.NewString()
+		config.JobID = uuid.NewV7().String()
 	} else if config.AddJobIDSuffix {
-		config.JobID += "-" + uuid.NewString()
+		config.JobID += "-" + uuid.NewV7().String()
 	}
 	config.AddJobIDSuffix = false
 	projectID := config.ProjectID
