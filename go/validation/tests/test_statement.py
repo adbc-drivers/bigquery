@@ -47,7 +47,7 @@ def test_dry_run(driver, conn) -> None:
 
         cursor.execute("SELECT 1 AS a, 'foobar' as b", parameters=[(1,), (2,)])
         schema = cursor.fetchallarrow().schema
-        assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SELECT"
+        assert schema.metadata[b"BIGQUERY:statistics:query:statement_type"] == b"SELECT"
 
 
 def test_script_no_results(driver, conn) -> None:
@@ -74,7 +74,8 @@ def test_script_no_results(driver, conn) -> None:
             assert not cursor.description
             schema = cursor.fetch_arrow_table().schema
             assert (
-                schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
+                schema.metadata[b"BIGQUERY:statistics:query:statement_type"]
+                == b"SCRIPT"
             )
 
             cursor.execute(f"SELECT val FROM {target_table} WHERE idx = 1")
@@ -90,7 +91,7 @@ def test_script_results(driver, conn) -> None:
         cursor.execute("SELECT 1; SELECT 'foobar'")
         table = cursor.fetch_arrow_table()
         schema = table.schema
-        assert schema.metadata[b"BIGQUERY:Statistics:Query:StatementType"] == b"SCRIPT"
+        assert schema.metadata[b"BIGQUERY:statistics:query:statement_type"] == b"SCRIPT"
 
         assert len(table) == 1, repr(table)
 
