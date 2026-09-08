@@ -13,10 +13,10 @@
 # limitations under the License.
 
 
+import uuid
+
 import adbc_driver_manager.dbapi
 import adbc_drivers_validation.tests.connection as connection_tests
-
-import uuid
 import pytest
 
 from . import bigquery, utils
@@ -139,6 +139,7 @@ def test_impersonate_empty_value(driver, driver_path, db_kwargs, option) -> None
         lifetime = conn.adbc_connection.get_option("bigquery.impersonate.lifetime")
         assert lifetime == "", lifetime
 
+
 def test_get_table_schema_table_metadata(driver, conn) -> None:
     # Table-level BigQuery metadata published on the Arrow schema.
     table = f"validation_table_metadata_{uuid.uuid4().hex[:10]}"
@@ -150,18 +151,35 @@ def test_get_table_schema_table_metadata(driver, conn) -> None:
 
     try:
         metadata = conn.adbc_get_table_schema(table).metadata
-        assert metadata[b"BIGQUERY:Clustering:Fields"] == b'["a"]'
-        assert metadata[b"BIGQUERY:RequirePartitionFilter"] == b"true"
-        assert metadata[b"BIGQUERY:TimePartitioning:Field"] == b"d"
-        # Emitted unconditionally, so consumers can rely on the key existing.
-        assert metadata[b"BIGQUERY:ExpirationTime"]
-        assert b"BIGQUERY:ResourceTags" in metadata
-        assert b"BIGQUERY:ViewQuery" in metadata
-        assert metadata[b"BIGQUERY:UseLegacySQL"] == b"false"
-        assert metadata[b"BIGQUERY:UseStandardSQL"] == b"false"
+
+        # Preserve legacy keys
+        assert b"CreationTime" in metadata
+        assert b"DefaultCollation" in metadata
+        assert b"Description" in metadata
+        assert b"ETag" in metadata
+        assert b"FullID" in metadata
+        assert b"LastModifiedTime" in metadata
+        assert b"Location" in metadata
+        assert b"Name" in metadata
+        assert b"NumBytes" in metadata
+        assert b"NumLongTermBytes" in metadata
+        assert b"NumRows" in metadata
+        assert metadata[b"TimePartitioning.Type"] == b"DAY"
+        assert metadata[b"TimePartitioning.Field"] == b"d"
+
+        # New keys
+        assert metadata[b"BIGQUERY:clustering:fields"] == b'["a"]'
+        assert metadata[b"BIGQUERY:require_partition_filter"] == b"true"
+        assert metadata[b"BIGQUERY:time_partitioning:field"] == b"d"
+        assert metadata[b"BIGQUERY:expiration_time"]
+        assert b"BIGQUERY:resource_tags" in metadata
+        assert b"BIGQUERY:view_query" in metadata
+        assert metadata[b"BIGQUERY:use_legacy_sql"] == b"false"
+        assert metadata[b"BIGQUERY:use_standard_sql"] == b"false"
     finally:
         with conn.cursor() as cursor:
             cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
 
 def test_get_table_schema_view_metadata(driver, conn) -> None:
     view = f"validation_view_metadata_{uuid.uuid4().hex[:10]}"
@@ -170,11 +188,25 @@ def test_get_table_schema_view_metadata(driver, conn) -> None:
 
     try:
         metadata = conn.adbc_get_table_schema(view).metadata
-        assert metadata[b"BIGQUERY:ViewQuery"] == b"SELECT 1 AS x"
-        assert metadata[b"BIGQUERY:Type"] == b"VIEW"
-        # False rather than absent: a view has no partition filter.
-        assert metadata[b"BIGQUERY:RequirePartitionFilter"] == b"false"
-        assert b"BIGQUERY:Clustering.Fields" not in metadata
+
+        # Preserve legacy keys
+        assert b"CreationTime" in metadata
+        assert b"DefaultCollation" in metadata
+        assert b"Description" in metadata
+        assert b"ETag" in metadata
+        assert b"FullID" in metadata
+        assert b"LastModifiedTime" in metadata
+        assert b"Location" in metadata
+        assert b"Name" in metadata
+        assert b"NumBytes" in metadata
+        assert b"NumLongTermBytes" in metadata
+        assert b"NumRows" in metadata
+
+        # New keys
+        assert metadata[b"BIGQUERY:view_query"] == b"SELECT 1 AS x"
+        assert metadata[b"BIGQUERY:type"] == b"VIEW"
+        assert metadata[b"BIGQUERY:require_partition_filter"] == b"false"
+        assert b"BIGQUERY:clustering:fields" not in metadata
     finally:
         with conn.cursor() as cursor:
             cursor.execute(f"DROP VIEW IF EXISTS {view}")
