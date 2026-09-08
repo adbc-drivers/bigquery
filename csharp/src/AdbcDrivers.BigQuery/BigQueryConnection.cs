@@ -1951,7 +1951,10 @@ namespace AdbcDrivers.BigQuery
 
             if (!s_identifierRegex.IsMatch(input))
             {
-                throw new AdbcException($"{input} is invalid", AdbcStatusCode.InvalidArgument);
+                // The rejected value is deliberately omitted: it failed validation precisely
+                // because it may contain characters - newlines and other control characters
+                // among them - that would let it forge or split log/error output if embedded.
+                throw new AdbcException("catalog or dataset identifier is invalid", AdbcStatusCode.InvalidArgument);
             }
 
             return input!;

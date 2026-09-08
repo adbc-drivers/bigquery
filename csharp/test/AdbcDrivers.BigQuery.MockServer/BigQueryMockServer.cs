@@ -56,11 +56,10 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly ConcurrentDictionary<string, MockJob> _jobs = new();
         private readonly ConcurrentDictionary<string, Table> _tables = new();
         private readonly ConcurrentDictionary<string, bool> _sessions = new();
-        private readonly ConcurrentQueue<string> _executedQueries = new();
+        private readonly ConcurrentQueue<(string Query, IReadOnlyList<QueryParameter> Parameters)> _executedQueries = new();
         private readonly List<string> _projects = new() { "mock-project" };
         private readonly Dictionary<string, List<string>> _datasets =
             new() { ["mock-project"] = new List<string> { "mock_dataset" } };
-        private readonly ConcurrentQueue<IReadOnlyList<QueryParameter>> _executedQueryParameters = new();
         private readonly ConcurrentQueue<MockRequest> _requests = new();
         private readonly ConcurrentDictionary<MockRequestKind, ConcurrentQueue<MockError>> _queuedErrors = new();
         private IReadOnlyList<string> _jobStateScript = new[] { JobStateDone };
@@ -82,15 +81,21 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// <summary>
         /// Returns the list of SQL queries that were executed against this mock server, in order.
         /// </summary>
-        public IReadOnlyList<string> ExecutedQueries => _executedQueries.ToArray();
+        public IReadOnlyList<string> ExecutedQueries => _executedQueries.Select(e => e.Query).ToArray();
 
         /// <summary>
         /// The query parameters bound to each executed query, positionally aligned with
         /// <see cref="ExecutedQueries"/>. A query that carried no parameters contributes an
         /// empty list, so the two collections always have the same length.
         /// </summary>
+        /// <remarks>
+        /// Both collections are projected from a single queue of (query, parameters) pairs, so a
+        /// query and its parameters are always recorded and read back together; recording them
+        /// via separate queues let concurrent requests interleave the two enqueues and desync
+        /// the pairing.
+        /// </remarks>
         public IReadOnlyList<IReadOnlyList<QueryParameter>> ExecutedQueryParameters =>
-            _executedQueryParameters.ToArray();
+            _executedQueries.Select(e => e.Parameters).ToArray();
 
         /// <summary>
         /// The number of requests made to the query-results endpoint.
@@ -361,10 +366,10 @@ namespace AdbcDrivers.BigQuery.MockServer
 
                 if (queryText != null)
                 {
-                    _executedQueries.Enqueue(queryText);
-                    _executedQueryParameters.Enqueue(
+                    _executedQueries.Enqueue((
+                        queryText,
                         (IReadOnlyList<QueryParameter>?)jobRequest?.Configuration?.Query?.QueryParameters
-                        ?? Array.Empty<QueryParameter>());
+                            ?? Array.Empty<QueryParameter>()));
                 }
 
                 var mockJob = new MockJob
