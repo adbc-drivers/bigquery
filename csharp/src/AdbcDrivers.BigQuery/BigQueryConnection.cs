@@ -367,11 +367,30 @@ namespace AdbcDrivers.BigQuery
         {
             return this.TraceActivity(activity =>
             {
-                string? billingProjectId = null;
-                TimeSpan? clientTimeout = null;
+                Stopwatch totalStopwatch = Stopwatch.StartNew();
+                long lastElapsedMs = 0;
 
-                if (string.IsNullOrEmpty(projectId))
+                void RecordStep(string stepName)
                 {
+                    long totalMs = totalStopwatch.ElapsedMilliseconds;
+                    long stepMs = totalMs - lastElapsedMs;
+                    lastElapsedMs = totalMs;
+
+                    activity?.AddBigQueryTag($"timing.{stepName}.ms", stepMs);
+                    activity?.AddEvent("timing_step_completed", [
+                        new("step", stepName),
+                        new("step.duration_ms", stepMs),
+                        new("total.elapsed_ms", totalMs),
+                    ]);
+                }
+
+                try
+                {
+                    string? billingProjectId = null;
+                    TimeSpan? clientTimeout = null;
+
+                    if (string.IsNullOrEmpty(projectId))
+                    {
                     // if the caller doesn't specify a projectId, use the default
                     if (!this.properties.TryGetValue(BigQueryParameters.ProjectId, out projectId))
                     {
@@ -392,13 +411,13 @@ namespace AdbcDrivers.BigQuery
                         projectId = BigQueryConstants.DetectProjectId;
                         activity?.AddBigQueryTag("change_public_projectId_to_detect_project_id", projectId);
                     }
-                }
+                    }
 
-                // the billing project can be null if it's not specified
-                if (this.properties.TryGetValue(BigQueryParameters.BillingProjectId, out billingProjectId))
-                {
-                    activity?.AddBigQueryParameterTag((BigQueryParameters.BillingProjectId), billingProjectId);
-                }
+                    // the billing project can be null if it's not specified
+                    if (this.properties.TryGetValue(BigQueryParameters.BillingProjectId, out billingProjectId))
+                    {
+                        activity?.AddBigQueryParameterTag((BigQueryParameters.BillingProjectId), billingProjectId);
+                    }
 
                 if (this.properties.TryGetValue(BigQueryParameters.IncludePublicProjectId, out string? result))
                 {
@@ -432,7 +451,9 @@ namespace AdbcDrivers.BigQuery
                     }
                 }
 
-                SetCredential();
+                    RecordStep("configure_connection");
+                    SetCredential();
+                    RecordStep("set_credential");
 
                 // When a billing/quota project is supplied explicitly, clear any quota project that may
                 // already be embedded on the credential (e.g. from a service account JSON's
@@ -442,12 +463,12 @@ namespace AdbcDrivers.BigQuery
                 // because both the credential and the builder would emit that header.
                 GoogleCredential? modifiedCredential = string.IsNullOrEmpty(billingProjectId) ? Credential : Credential?.CreateWithQuotaProject(null);
 
-                BigQueryClientBuilder bigQueryClientBuilder = new BigQueryClientBuilder()
-                {
-                    QuotaProject = billingProjectId,
-                    GoogleCredential = modifiedCredential,
-                    HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration)
-                };
+                    BigQueryClientBuilder bigQueryClientBuilder = new BigQueryClientBuilder()
+                    {
+                        QuotaProject = billingProjectId,
+                        GoogleCredential = modifiedCredential,
+                        HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration)
+                    };
 
                 bigQueryClientBuilder.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
 
@@ -475,15 +496,23 @@ namespace AdbcDrivers.BigQuery
                     activity?.AddBigQueryTag("client.default_location", null);
                 }
 
-                BigQueryClient client = bigQueryClientBuilder.Build();
+                    RecordStep("configure_client_builder");
+                    BigQueryClient client = bigQueryClientBuilder.Build();
+                    RecordStep("build_client");
 
-                if (clientTimeout.HasValue)
-                {
-                    client.Service.HttpClient.Timeout = clientTimeout.Value;
+                    if (clientTimeout.HasValue)
+                    {
+                        client.Service.HttpClient.Timeout = clientTimeout.Value;
+                    }
+
+                    Client = client;
+                    RecordStep("finalize_client");
+                    return client;
                 }
-
-                Client = client;
-                return client;
+                finally
+                {
+                    activity?.AddBigQueryTag("timing.total.ms", totalStopwatch.ElapsedMilliseconds);
+                }
             }, ClassName + "." + nameof(Open));
         }
 

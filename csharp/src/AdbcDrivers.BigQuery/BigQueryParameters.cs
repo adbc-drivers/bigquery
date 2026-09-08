@@ -66,6 +66,7 @@ namespace AdbcDrivers.BigQuery
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
+        public const string UseJobCreationMode = "adbc.bigquery.statement.use_job_creation_required_mode";
 
         /// <summary>
         /// Overrides the BigQuery REST API endpoint for testing (e.g. "localhost:1234").
@@ -91,7 +92,7 @@ namespace AdbcDrivers.BigQuery
             AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
-            MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
+            MaxFetchConcurrency, MaximumRetryAttempts,UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,
             StatementType, UseLegacySQL
         };
 
@@ -129,6 +130,8 @@ namespace AdbcDrivers.BigQuery
         // BigQuery's server-side default for GetQueryResultsOptions.Timeout when not set (null) is 5 minutes.
         // See: https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs/getQueryResults
         public const int DefaultQueryResultsTimeoutSeconds = 300;
+        public const int DefaultRestResultMaxRows = 1000;
+        public const string JobCreationRequired = "JOB_CREATION_REQUIRED";
 
         // matches the pattern for odbc, but for adbc
         public const string DefaultLargeDatasetId = "_bqadbc_temp_tables";

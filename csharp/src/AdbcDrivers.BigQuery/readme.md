@@ -125,6 +125,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.refresh_token**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;The refresh token used for when the generated OAuth token expires. Required for `user` authentication.
 
+**adbc.bigquery.rest_result_max_rows**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. Converts query results with at most this many rows directly from the REST response to Arrow, avoiding Storage Read API setup latency. Defaults to 1000. Unsupported schemas automatically use the Storage Read API. Set to `0` to always use the Storage Read API.
+
 **adbc.bigquery.retry_delay_ms**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional The delay between retries. Defaults to 200ms. The retries could take up to `adbc.bigquery.maximum_retries` x `adbc.bigquery.retry_delay_ms` to complete.
 

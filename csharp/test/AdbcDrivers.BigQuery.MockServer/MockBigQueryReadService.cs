@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
+using System.Threading;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Protobuf;
 using Grpc.Core;
@@ -32,6 +33,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly ConcurrentDictionary<string, ReadSession> _sessions = new();
         private readonly ConcurrentDictionary<string, ReadSession> _streamToSession = new();
         private readonly ConcurrentDictionary<string, (byte[] batch, long rowCount)> _streamData = new();
+        private int _createReadSessionCallCount;
+
+        public int CreateReadSessionCallCount => Volatile.Read(ref _createReadSessionCallCount);
 
         /// <summary>
         /// Default Arrow schema bytes returned when no table-specific config is found.
@@ -77,6 +81,7 @@ namespace AdbcDrivers.BigQuery.MockServer
 
         public override Task<ReadSession> CreateReadSession(CreateReadSessionRequest request, ServerCallContext context)
         {
+            Interlocked.Increment(ref _createReadSessionCallCount);
             string tableName = request.ReadSession.Table;
 
             if (_sessions.TryGetValue(tableName, out var session))
