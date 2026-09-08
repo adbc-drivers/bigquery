@@ -57,6 +57,10 @@ namespace AdbcDrivers.BigQuery.MockServer
         private readonly ConcurrentDictionary<string, Table> _tables = new();
         private readonly ConcurrentDictionary<string, bool> _sessions = new();
         private readonly ConcurrentQueue<string> _executedQueries = new();
+        private readonly List<string> _projects = new() { "mock-project" };
+        private readonly Dictionary<string, List<string>> _datasets =
+            new() { ["mock-project"] = new List<string> { "mock_dataset" } };
+        private readonly ConcurrentQueue<IReadOnlyList<QueryParameter>> _executedQueryParameters = new();
         private readonly ConcurrentQueue<MockRequest> _requests = new();
         private readonly ConcurrentDictionary<MockRequestKind, ConcurrentQueue<MockError>> _queuedErrors = new();
         private IReadOnlyList<string> _jobStateScript = new[] { JobStateDone };
@@ -81,9 +85,28 @@ namespace AdbcDrivers.BigQuery.MockServer
         public IReadOnlyList<string> ExecutedQueries => _executedQueries.ToArray();
 
         /// <summary>
+        /// The query parameters bound to each executed query, positionally aligned with
+        /// <see cref="ExecutedQueries"/>. A query that carried no parameters contributes an
+        /// empty list, so the two collections always have the same length.
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<QueryParameter>> ExecutedQueryParameters =>
+            _executedQueryParameters.ToArray();
+
+        /// <summary>
         /// The number of requests made to the query-results endpoint.
         /// </summary>
         public int QueryResultsRequestCount => _queryResultsRequestCount;
+
+        /// <summary>
+        /// The project ids returned by projects.list. Pre-populated with "mock-project".
+        /// </summary>
+        public IList<string> Projects => _projects;
+
+        /// <summary>
+        /// The dataset ids returned by datasets.list, keyed by project id. Pre-populated with
+        /// "mock_dataset" under "mock-project".
+        /// </summary>
+        public IDictionary<string, List<string>> Datasets => _datasets;
 
         /// <summary>
         /// Every REST request the server has handled, in arrival order.
@@ -339,6 +362,9 @@ namespace AdbcDrivers.BigQuery.MockServer
                 if (queryText != null)
                 {
                     _executedQueries.Enqueue(queryText);
+                    _executedQueryParameters.Enqueue(
+                        (IReadOnlyList<QueryParameter>?)jobRequest?.Configuration?.Query?.QueryParameters
+                        ?? Array.Empty<QueryParameter>());
                 }
 
                 var mockJob = new MockJob
@@ -483,6 +509,49 @@ namespace AdbcDrivers.BigQuery.MockServer
                 {
                     response.Errors = new List<ErrorProto> { CreateStoppedError() };
                 }
+
+                string json = NewtonsoftJsonSerializer.Instance.Serialize(response);
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(json);
+            });
+
+            // GET /bigquery/v2/projects - List projects
+            app.MapGet("/bigquery/v2/projects", async (HttpContext ctx) =>
+            {
+                Record(MockRequestKind.ProjectsList);
+
+                var response = new ProjectList
+                {
+                    Projects = _projects.Select(id => new ProjectList.ProjectsData
+                    {
+                        Id = id,
+                        ProjectReference = new ProjectReference { ProjectId = id },
+                    }).ToList(),
+                };
+
+                string json = NewtonsoftJsonSerializer.Instance.Serialize(response);
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(json);
+            });
+
+            // GET /bigquery/v2/projects/{projectId}/datasets - List datasets
+            app.MapGet("/bigquery/v2/projects/{projectId}/datasets", async (HttpContext ctx, string projectId) =>
+            {
+                Record(MockRequestKind.DatasetsList);
+
+                if (!_datasets.TryGetValue(projectId, out List<string>? ids))
+                {
+                    ids = new List<string>();
+                }
+
+                var response = new DatasetList
+                {
+                    Datasets = ids.Select(id => new DatasetList.DatasetsData
+                    {
+                        Id = $"{projectId}:{id}",
+                        DatasetReference = new DatasetReference { ProjectId = projectId, DatasetId = id },
+                    }).ToList(),
+                };
 
                 string json = NewtonsoftJsonSerializer.Instance.Serialize(response);
                 ctx.Response.ContentType = "application/json";
