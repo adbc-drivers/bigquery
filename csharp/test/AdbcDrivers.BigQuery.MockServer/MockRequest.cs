@@ -43,6 +43,12 @@ namespace AdbcDrivers.BigQuery.MockServer
 
         /// <summary>DELETE projects/{projectId}/datasets/{datasetId}/tables/{tableId}</summary>
         TableDelete,
+
+        /// <summary>GET projects</summary>
+        ProjectsList,
+
+        /// <summary>GET projects/{projectId}/datasets</summary>
+        DatasetsList,
     }
 
     /// <summary>
