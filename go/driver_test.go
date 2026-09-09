@@ -1884,14 +1884,14 @@ func TestBigQueryURIParsing(t *testing.T) {
 			uri:               "bigquery:///my-project-123?OAuthType=0&JobCreationMode=optional",
 			expectedProjectID: "my-project-123",
 			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			
+
 		},
 		{
       name:              "job creation mode required",
 			uri:               "bigquery:///my-project-123?OAuthType=0&JobCreationMode=required",
 			expectedProjectID: "my-project-123",
 			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			
+
 		},
 		{
 			name:          "missing project id",

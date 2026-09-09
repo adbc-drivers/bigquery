@@ -137,6 +137,7 @@ def test_impersonate_empty_value(driver, driver_path, db_kwargs, option) -> None
         lifetime = conn.adbc_connection.get_option("bigquery.impersonate.lifetime")
         assert lifetime == "", lifetime
 
+
 def test_job_creation_mode_optional(driver, driver_path, db_kwargs) -> None:
     project_id = db_kwargs["adbc.bigquery.sql.project_id"]
     dataset_id = db_kwargs["adbc.bigquery.sql.dataset_id"]
