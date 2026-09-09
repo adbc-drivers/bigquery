@@ -136,3 +136,15 @@ def test_impersonate_empty_value(driver, driver_path, db_kwargs, option) -> None
         # No impersonation was configured, so no lifetime is reported.
         lifetime = conn.adbc_connection.get_option("bigquery.impersonate.lifetime")
         assert lifetime == "", lifetime
+
+def test_job_creation_mode_optional(driver, driver_path, db_kwargs) -> None:
+    project_id = db_kwargs["adbc.bigquery.sql.project_id"]
+    dataset_id = db_kwargs["adbc.bigquery.sql.dataset_id"]
+    uri = f"bigquery:///{project_id}?DatasetId={dataset_id}&JobCreationMode=optional"
+
+    with adbc_driver_manager.dbapi.connect(
+        driver=driver_path, db_kwargs={"uri": uri}, autocommit=True
+    ) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1 AS a")
+            assert cursor.fetchone() == (1,)

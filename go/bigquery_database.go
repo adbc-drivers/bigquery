@@ -466,6 +466,8 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 		"ImpersonateDelegates":       OptionImpersonateDelegates,
 		"ImpersonateScopes":          OptionImpersonateScopes,
 		"ImpersonateLifetime":        OptionImpersonateLifetime,
+
+		"JobCreationMode": OptionJobCreationMode,
 	}
 
 	// Process all query parameters to convert URI params to option constants

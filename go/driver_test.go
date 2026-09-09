@@ -1710,6 +1710,7 @@ func TestBigQueryURIParsing(t *testing.T) {
 		expectedImpersonateLifetime  string
 		expectedImpersonateDelegates string
 		expectedImpersonateScopes    string
+		expectedJobCreationMode      string
 		shouldError                  bool
 		errorContains                string
 	}{
@@ -1879,6 +1880,20 @@ func TestBigQueryURIParsing(t *testing.T) {
 			expectedImpersonateTarget: "svc@example.com",
 		},
 		{
+      name:              "job creation mode optional",
+			uri:               "bigquery:///my-project-123?OAuthType=0&JobCreationMode=optional",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			
+		},
+		{
+      name:              "job creation mode required",
+			uri:               "bigquery:///my-project-123?OAuthType=0&JobCreationMode=required",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			
+		},
+		{
 			name:          "missing project id",
 			uri:           "bigquery:///?OAuthType=0",
 			shouldError:   true,
@@ -1993,6 +2008,9 @@ func TestBigQueryURIParsing(t *testing.T) {
 			}
 			if tt.expectedImpersonateScopes != "" {
 				assert.Equal(t, tt.expectedImpersonateScopes, params[driver.OptionImpersonateScopes], "impersonate scopes mismatch")
+			}
+			if tt.expectedJobCreationMode != "" {
+				assert.Equal(t, tt.expectedJobCreationMode, params[driver.OptionJobCreationMode], "job creation mode mismatch")
 			}
 		})
 	}

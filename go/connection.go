@@ -855,7 +855,6 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		bigQueryAuthOptions = append(bigQueryAuthOptions, bigquery.WithDefaultJobCreationMode(c.jobCreationMode))
 	}
 
-
 	client, err := bigquery.NewClient(ctx, c.catalog, bigQueryAuthOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create client")
