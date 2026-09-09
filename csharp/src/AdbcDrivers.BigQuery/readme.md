@@ -128,6 +128,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.rest_result_max_rows**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. Converts query results with at most this many rows directly from the REST response to Arrow, avoiding Storage Read API setup latency. Defaults to 1000. Unsupported schemas automatically use the Storage Read API. Set to `0` to always use the Storage Read API.
 
+**adbc.bigquery.statement.use_job_creation_required_mode**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. When set to `true`, executes queries through the BigQuery `jobs.query` endpoint with `jobCreationMode` set to `JOB_CREATION_REQUIRED`. Complete eligible results returned inline are converted directly to Arrow; paged, incomplete, unsupported, or larger results fall back to the standard job-results and Storage Read API path. Defaults to `false`.
+
 **adbc.bigquery.retry_delay_ms**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional The delay between retries. Defaults to 200ms. The retries could take up to `adbc.bigquery.maximum_retries` x `adbc.bigquery.retry_delay_ms` to complete.
 

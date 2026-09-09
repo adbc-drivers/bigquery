@@ -216,34 +216,13 @@ namespace AdbcDrivers.BigQuery
         {
             return await this.TraceActivityAsync(async activity =>
             {
-                Stopwatch totalStopwatch = Stopwatch.StartNew();
-                long lastElapsedMs = 0;
-
-                void RecordStep(string stepName)
-                {
-                    long totalMs = totalStopwatch.ElapsedMilliseconds;
-                    long stepMs = totalMs - lastElapsedMs;
-                    lastElapsedMs = totalMs;
-
-                    activity?.AddBigQueryTag($"timing.{stepName}.ms", stepMs);
-                    activity?.AddEvent("timing_step_completed", [
-                        new("step", stepName),
-                        new("step.duration_ms", stepMs),
-                        new("total.elapsed_ms", totalMs),
-                    ]);
-                }
-
                 QueryOptions queryOptions = ValidateOptions(activity);
-                RecordStep("validate_options");
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
 
                 if (isMetadataCommand)
                 {
-                    QueryResult metadataResult = await ExecuteMetadataCommandQuery(activity);
-                    RecordStep("metadata_command");
-                    activity?.AddBigQueryTag("timing.total.ms", totalStopwatch.ElapsedMilliseconds);
-                    return metadataResult;
+                    return await ExecuteMetadataCommandQuery(activity);
                 }
 
                 GetQueryResultsOptions getQueryResultsOptions = new GetQueryResultsOptions();
@@ -259,7 +238,6 @@ namespace AdbcDrivers.BigQuery
                 // which may have been overridden at the statement level.
                 this.bigQueryConnection.EnsureClientTimeoutSufficient(queryResultsTimeout, activity);
                 activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.TotalSeconds);
-                RecordStep("prepare_result_options");
 
                 BigQueryJob? job = null;
                 JobReference jobReference;
@@ -275,17 +253,13 @@ namespace AdbcDrivers.BigQuery
                             activity,
                             queryContext.CancellationToken).ConfigureAwait(false);
                     }
-                    RecordStep("query_with_synchronous_rest_api");
 
                     if (TryCreateRestQueryResult(
                         queryResponse,
                         getQueryResultsOptions,
-                        activity,
                         out QueryResult? inlineQueryResult,
                         out Exception? conversionException))
                     {
-                        RecordStep("create_inline_arrow_result");
-                        activity?.AddBigQueryTag("timing.total.ms", totalStopwatch.ElapsedMilliseconds);
                         return inlineQueryResult!;
                     }
 
@@ -297,13 +271,11 @@ namespace AdbcDrivers.BigQuery
 
                     jobReference = queryResponse.JobReference ??
                         throw new AdbcException("BigQuery returned an incomplete inline result without a job reference.", AdbcStatusCode.InternalError);
-                    activity?.AddBigQueryTag("job.creation_reason", queryResponse.JobCreationReason?.Code);
                 }
                 else
                 {
                     job = await ExecuteWithRetriesAsync(
                         () => Client.CreateQueryJobAsync(SqlQuery, null, queryOptions), activity).ConfigureAwait(false);
-                    RecordStep("create_query_job");
                     jobReference = job.Reference;
                 }
 
@@ -321,9 +293,7 @@ namespace AdbcDrivers.BigQuery
                         BigQueryJob currentJob = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
                         context.Job = currentJob;
                         job = currentJob;
-                        jobActivity?.AddEvent("getqueryresults_started", [new("job.id", currentJob.Reference.JobId)]);
                         BigQueryResults results = await currentJob.GetQueryResultsAsync(getQueryResultsOptions, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-                        jobActivity?.AddEvent("getqueryresults_completed", GetJobStatistics(jobActivity, currentJob));
 
                         return results;
                     }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryJob.GetQueryResultsAsync));
@@ -334,7 +304,6 @@ namespace AdbcDrivers.BigQuery
                 {
                     throw new AdbcException("Unable to obtain the BigQuery job.", AdbcStatusCode.InternalError);
                 }
-                RecordStep("get_query_results");
 
                 TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(
                     Credential,
@@ -345,7 +314,6 @@ namespace AdbcDrivers.BigQuery
                     this.bigQueryConnection.SetCredential();
                     clientMgr.UpdateCredential(Credential);
                 });
-                RecordStep("create_read_client_manager");
 
                 // For multi-statement queries, StatementType == "SCRIPT"
                 if (results.TableReference == null || job.Statistics.Query.StatementType.Equals("SCRIPT", StringComparison.OrdinalIgnoreCase))
@@ -403,7 +371,6 @@ namespace AdbcDrivers.BigQuery
                     }
 
                     results = await ExecuteWithRetriesAsync(getMultiJobResults, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
-                    RecordStep("get_multi_statement_results");
                 }
 
                 if (results?.TableReference == null)
@@ -448,13 +415,10 @@ namespace AdbcDrivers.BigQuery
                     }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(GetArrowReaders));
                 }
                 IEnumerable<IArrowReader> readers = await ExecuteWithRetriesAsync(getArrowReadersFunc, activity, readerCancellationContext.CancellationToken).ConfigureAwait(false);
-                RecordStep("create_arrow_readers");
 
                 // Note: MultiArrowReader must dispose the readerCancellationContext.
                 IArrowArrayStream stream = new MultiArrowReader(this, TranslateSchema(results.Schema), readers, readerCancellationContext, maxStreamCount);
-                RecordStep("create_multi_arrow_reader");
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
-                activity?.AddBigQueryTag("timing.total.ms", totalStopwatch.ElapsedMilliseconds);
                 return new QueryResult(totalRows, stream);
             }, ClassName + "." + nameof(ExecuteQueryInternalAsync));
         }
@@ -496,7 +460,6 @@ namespace AdbcDrivers.BigQuery
         private bool TryCreateRestQueryResult(
             QueryResponse response,
             GetQueryResultsOptions options,
-            Activity? activity,
             out QueryResult? queryResult,
             out Exception? conversionException)
         {
@@ -506,19 +469,16 @@ namespace AdbcDrivers.BigQuery
 
             if (response.JobComplete != true ||
                 !response.TotalRows.HasValue ||
-                response.TotalRows.Value >= BigQueryConstants.DefaultRestResultMaxRows ||
+                response.TotalRows.Value > BigQueryConstants.DefaultRestResultMaxRows ||
                 response.TotalRows.Value != pageRowCount ||
                 response.Schema?.Fields?.Count <= 0 ||
                 !string.IsNullOrEmpty(response.PageToken))
             {
-                activity?.AddBigQueryTag("rest_result.selected", false);
-                activity?.AddBigQueryTag("rest_result.fallback_reason", "ineligible_query_response");
                 return false;
             }
 
             return TryCreateRestQueryResult(
                 CreateInlineQueryResults(response, options),
-                activity,
                 out queryResult,
                 out conversionException);
         }
@@ -542,15 +502,13 @@ namespace AdbcDrivers.BigQuery
             }
         }
 
-        private bool TryCreateRestQueryResult(BigQueryResults results, Activity? activity, out QueryResult? queryResult, out Exception? conversionException)
+        private bool TryCreateRestQueryResult(BigQueryResults results, out QueryResult? queryResult, out Exception? conversionException)
         {
             queryResult = null;
             conversionException = null;
 
             if (results.Schema.Fields.Any(field => !IsRestFieldSupported(field)))
             {
-                activity?.AddBigQueryTag("rest_result.selected", false);
-                activity?.AddBigQueryTag("rest_result.fallback_reason", "unsupported_schema");
                 return false;
             }
 
@@ -563,18 +521,12 @@ namespace AdbcDrivers.BigQuery
                     .ToArray();
                 schema.Validate(arrays);
 
-                activity?.AddBigQueryTag("rest_result.selected", true);
-                activity?.AddBigQueryTag("rest_result.row_count", rows.Count);
                 queryResult = new QueryResult(rows.Count, new BigQueryInfoArrowStream(schema, arrays));
                 return true;
             }
             catch (Exception ex)
             {
                 conversionException = ex;
-                activity?.AddEvent("rest_result_conversion_fallback", [
-                    new("exception.type", ex.GetType().FullName),
-                    new("exception.message", ex.Message),
-                ]);
                 return false;
             }
         }
