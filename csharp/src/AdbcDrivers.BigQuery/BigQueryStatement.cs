@@ -265,7 +265,7 @@ namespace AdbcDrivers.BigQuery
 
                     if (conversionException != null && queryResponse.JobReference == null)
                     {
-                        const string message = "BigQuery returned an inline result that cannot be converted to Arrow. Use JOB_CREATION_REQUIRED for this query.";
+                        const string message = "BigQuery returned an inline result that could not be converted to Arrow, and no job reference was returned for fallback. Disable adbc.bigquery.statement.use_job_creation_required_mode for this query.";
                         throw new AdbcException(message, AdbcStatusCode.NotImplemented, conversionException);
                     }
 
