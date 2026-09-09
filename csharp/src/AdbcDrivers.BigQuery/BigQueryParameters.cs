@@ -41,32 +41,6 @@ namespace AdbcDrivers.BigQuery
         public const string ClientTimeout = "adbc.bigquery.client.timeout";
 
         /// <summary>
-        /// The Microsoft Entra ID tenant that issues the subject token for Workload Identity Federation.
-        /// </summary>
-        public const string TenantId = "adbc.bigquery.tenant_id";
-
-        /// <summary>
-        /// The Application ID URI of the Entra application registered as an allowed audience on the
-        /// Google workload identity pool provider. Defaults to <c>api://{client_id}</c>.
-        /// </summary>
-        public const string EntraResourceUri = "adbc.bigquery.entra_resource_uri";
-
-        /// <summary>
-        /// The Entra ID authority. Defaults to <c>https://login.microsoftonline.com</c>; override for sovereign clouds.
-        /// </summary>
-        public const string EntraAuthorityUri = "adbc.bigquery.entra_authority_uri";
-
-        /// <summary>
-        /// Base64-encoded PKCS#12 certificate used to sign the Entra client assertion. Supply this
-        /// instead of <see cref="ClientSecret"/> when the tenant forbids client secrets.
-        /// </summary>
-        public const string ClientCertificate = "adbc.bigquery.client_certificate";
-
-        /// <summary>
-        /// Optional password protecting <see cref="ClientCertificate"/>.
-        /// </summary>
-        public const string ClientCertificatePassword = "adbc.bigquery.client_certificate_password";
-
         /// <summary>
         /// Optional Google service account to impersonate after the Security Token Service exchange.
         /// </summary>
@@ -124,7 +98,7 @@ namespace AdbcDrivers.BigQuery
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
-            StatementType, UseLegacySQL, TenantId, EntraAuthorityUri
+            StatementType, UseLegacySQL
         };
 
         public static bool IsSafeToLog(string name)
@@ -143,7 +117,6 @@ namespace AdbcDrivers.BigQuery
     {
         public const string UserAuthenticationType = "user";
         public const string EntraIdAuthenticationType = "aad";
-        public const string EntraServicePrincipalAuthenticationType = "aad_service_principal";
         public const string ServiceAccountAuthenticationType = "service";
         public const string MockAuthenticationType = "mock";
         public const string TokenEndpoint = "https://accounts.google.com/o/oauth2/token";
@@ -163,7 +136,6 @@ namespace AdbcDrivers.BigQuery
         /// See https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds.
         /// </summary>
         public const string AzureSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt";
-        public const string DefaultEntraAuthorityUri = "https://login.microsoftonline.com";
         public const string EntraTokenEndpointFormat = "{0}/{1}/oauth2/v2.0/token";
         public const string EntraDefaultScopeSuffix = "/.default";
         public const string ServiceAccountImpersonationUrlFormat = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{0}:generateAccessToken";
@@ -174,9 +146,7 @@ namespace AdbcDrivers.BigQuery
         public const string ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
         /// <summary>
-        /// Lifetime of the generated client assertion. Entra allows up to 10 minutes.
         /// </summary>
-        public const int ClientAssertionLifetimeSeconds = 300;
 
         // default value per https://pkg.go.dev/cloud.google.com/go/bigquery#section-readme
         public const string DetectProjectId = "*detect-project-id*";

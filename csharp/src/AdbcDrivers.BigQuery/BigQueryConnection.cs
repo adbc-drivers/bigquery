@@ -26,6 +26,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -164,16 +165,6 @@ namespace AdbcDrivers.BigQuery
                 !string.IsNullOrEmpty(storageEndpoint))
             {
                 TestStorageEndpoint = storageEndpoint;
-            }
-
-            // With Workload Identity Federation the driver holds the service principal credential,
-            // so it can mint a fresh short-lived Google token itself instead of depending on the
-            // caller to supply one. This is what keeps unattended workloads running past the
-            // lifetime of a single token.
-            if (this.properties.TryGetValue(BigQueryParameters.AuthenticationType, out string? authenticationType) &&
-                BigQueryConstants.EntraServicePrincipalAuthenticationType.Equals(authenticationType, StringComparison.OrdinalIgnoreCase))
-            {
-                UpdateToken = () => Task.Run(() => UpdateClientToken());
             }
         }
 
@@ -523,10 +514,9 @@ namespace AdbcDrivers.BigQuery
                     if (!authenticationType.Equals(BigQueryConstants.UserAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.EntraIdAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
-                        !authenticationType.Equals(BigQueryConstants.EntraServicePrincipalAuthenticationType, StringComparison.OrdinalIgnoreCase) &&
                         !authenticationType.Equals(BigQueryConstants.MockAuthenticationType, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new ArgumentException($"The {BigQueryParameters.AuthenticationType} parameter can only be `{BigQueryConstants.UserAuthenticationType}`, `{BigQueryConstants.ServiceAccountAuthenticationType}`, `{BigQueryConstants.EntraIdAuthenticationType}`, `{BigQueryConstants.EntraServicePrincipalAuthenticationType}` or `{BigQueryConstants.MockAuthenticationType}`");
+                        throw new ArgumentException($"The {BigQueryParameters.AuthenticationType} parameter can only be `{BigQueryConstants.UserAuthenticationType}`, `{BigQueryConstants.ServiceAccountAuthenticationType}`, `{BigQueryConstants.EntraIdAuthenticationType}` or `{BigQueryConstants.MockAuthenticationType}`");
                     }
                     else
                     {
@@ -555,12 +545,10 @@ namespace AdbcDrivers.BigQuery
                     if (!this.properties.TryGetValue(BigQueryParameters.AudienceUri, out audienceUri))
                         throw new ArgumentException($"The {BigQueryParameters.AudienceUri} parameter is not present");
 
-                    Credential = ApplyScopes(GoogleCredential.FromAccessToken(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken)));
-                }
-                else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.EntraServicePrincipalAuthenticationType, StringComparison.OrdinalIgnoreCase))
-                {
+                    this.properties.TryGetValue(BigQueryParameters.BillingProjectId, out string? workforcePoolUserProject);
+
                     Credential = ApplyScopes(GoogleCredential.FromAccessToken(
-                        WorkloadIdentityFederation.GetGoogleAccessToken(this.httpClient, CreateWorkloadIdentityFederationOptions(), activity)));
+                        ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken, workforcePoolUserProject), activity)));
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
@@ -636,45 +624,26 @@ namespace AdbcDrivers.BigQuery
         }
 
         /// <summary>
-        /// Builds the Workload Identity Federation configuration from the connection properties.
+        /// Applies service account impersonation to an already-federated token when the caller asked
+        /// for it, so BigQuery grants can live on a shared service account rather than each user.
         /// </summary>
-        private WorkloadIdentityFederationOptions CreateWorkloadIdentityFederationOptions()
+        private string? ImpersonateIfRequested(string? federatedToken, Activity? activity)
         {
-            this.properties.TryGetValue(BigQueryParameters.ClientId, out string? clientId);
-            this.properties.TryGetValue(BigQueryParameters.ClientSecret, out string? clientSecret);
-            this.properties.TryGetValue(BigQueryParameters.ClientCertificate, out string? clientCertificate);
-            this.properties.TryGetValue(BigQueryParameters.ClientCertificatePassword, out string? clientCertificatePassword);
-            this.properties.TryGetValue(BigQueryParameters.TenantId, out string? tenantId);
-            this.properties.TryGetValue(BigQueryParameters.AudienceUri, out string? audienceUri);
-            this.properties.TryGetValue(BigQueryParameters.EntraResourceUri, out string? entraResourceUri);
-            this.properties.TryGetValue(BigQueryParameters.EntraAuthorityUri, out string? authorityUri);
             this.properties.TryGetValue(BigQueryParameters.ServiceAccountImpersonationEmail, out string? impersonationEmail);
-            this.properties.TryGetValue(BigQueryParameters.Scopes, out string? scopes);
 
-            // Entra assigns `api://{client_id}` when an application exposes an API without a custom
-            // identifier, which keeps the pool provider's allowed audience aligned by default.
-            if (string.IsNullOrWhiteSpace(entraResourceUri) && !string.IsNullOrWhiteSpace(clientId))
+            if (string.IsNullOrWhiteSpace(impersonationEmail) || string.IsNullOrEmpty(federatedToken))
             {
-                entraResourceUri = "api://" + clientId;
+                return federatedToken;
             }
+
+            this.properties.TryGetValue(BigQueryParameters.Scopes, out string? scopes);
 
             string scope = string.IsNullOrWhiteSpace(scopes)
                 ? BigQueryConstants.EntraIdScope
                 : string.Join(" ", scopes!.Split(',').Where(x => x.Length > 0));
 
-            return new WorkloadIdentityFederationOptions
-            {
-                TenantId = tenantId ?? string.Empty,
-                ClientId = clientId ?? string.Empty,
-                ClientSecret = clientSecret ?? string.Empty,
-                ClientCertificate = string.IsNullOrWhiteSpace(clientCertificate) ? null : clientCertificate,
-                ClientCertificatePassword = string.IsNullOrWhiteSpace(clientCertificatePassword) ? null : clientCertificatePassword,
-                AudienceUri = audienceUri ?? string.Empty,
-                EntraResourceUri = entraResourceUri ?? string.Empty,
-                AuthorityUri = string.IsNullOrWhiteSpace(authorityUri) ? BigQueryConstants.DefaultEntraAuthorityUri : authorityUri!,
-                ServiceAccountImpersonationEmail = string.IsNullOrWhiteSpace(impersonationEmail) ? null : impersonationEmail,
-                Scope = scope
-            };
+            return WorkloadIdentityFederation.ImpersonateServiceAccount(
+                this.httpClient, impersonationEmail!, scope, federatedToken!, activity);
         }
 
         public override IArrowArrayStream GetInfo(IReadOnlyList<AdbcInfoCode> codes)
@@ -1969,12 +1938,24 @@ namespace AdbcDrivers.BigQuery
             request.Headers.Add("Accept", "application/json");
             request.Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded");
             using HttpResponseMessage response = this.httpClient.SendAsync(request).GetAwaiter().GetResult();
-            response.EnsureSuccessStatusCode();
             string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+            // Google explains refusals (expired or revoked refresh tokens, for example) only in the
+            // body, so surface it instead of collapsing to a bare status code.
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException(BuildTokenFailureMessage(response.StatusCode, responseBody));
+            }
 
             BigQueryTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryTokenResponse>(responseBody);
 
             return bigQueryTokenResponse?.AccessToken;
+        }
+
+        internal static string BuildTokenFailureMessage(HttpStatusCode statusCode, string? responseBody)
+        {
+            string detail = string.IsNullOrWhiteSpace(responseBody) ? "no response body" : responseBody!.Trim();
+            return $"The Google token endpoint returned {(int)statusCode} ({statusCode}): {detail}";
         }
 
         /// <summary>
@@ -1983,27 +1964,21 @@ namespace AdbcDrivers.BigQuery
         /// <param name="audience"></param>
         /// <param name="entraAccessToken"></param>
         /// <returns></returns>
-        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken)
+        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken, string? workforcePoolUserProject)
         {
             try
             {
-                var requestBody = new
-                {
-                    scope = BigQueryConstants.EntraIdScope,
-                    subjectToken = entraAccessToken,
-                    audience = audience,
-                    grantType = BigQueryConstants.EntraGrantType,
-                    subjectTokenType = BigQueryConstants.EntraSubjectTokenType,
-                    requestedTokenType = BigQueryConstants.EntraRequestedTokenType
-                };
-
-                string json = JsonSerializer.Serialize(requestBody);
+                string json = CreateEntraStsRequestBody(audience, entraAccessToken, workforcePoolUserProject);
                 using StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 using HttpResponseMessage response = this.httpClient.PostAsync(BigQueryConstants.EntraStsTokenEndpoint, content).GetAwaiter().GetResult();
-                response.EnsureSuccessStatusCode();
 
                 string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException(BuildStsFailureMessage(response.StatusCode, responseBody));
+                }
 
                 BigQueryStsTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryStsTokenResponse>(responseBody);
 
@@ -2012,10 +1987,44 @@ namespace AdbcDrivers.BigQuery
             catch (Exception ex)
             {
                 throw new AdbcException(
-                    "Unable to obtain access token from BigQuery",
+                    $"Unable to obtain access token from BigQuery. {ex.Message}",
                     AdbcStatusCode.Unauthenticated,
                     ex);
             }
+        }
+
+        /// <summary>
+        /// Includes the Security Token Service response body, which carries the actionable reason
+        /// (for example an unmapped google.subject or a rejected audience).
+        /// </summary>
+        internal static string BuildStsFailureMessage(HttpStatusCode statusCode, string? responseBody)
+        {
+            string detail = string.IsNullOrWhiteSpace(responseBody) ? "(no response body)" : responseBody!.Trim();
+
+            return $"The Google Security Token Service returned {(int)statusCode} ({statusCode}): {detail}";
+        }
+
+        internal static string CreateEntraStsRequestBody(string audience, string entraAccessToken, string? workforcePoolUserProject)
+        {
+            Dictionary<string, object> requestBody = new Dictionary<string, object>
+            {
+                ["scope"] = BigQueryConstants.EntraIdScope,
+                ["subjectToken"] = entraAccessToken,
+                ["audience"] = audience,
+                ["grantType"] = BigQueryConstants.EntraGrantType,
+                ["subjectTokenType"] = BigQueryConstants.EntraSubjectTokenType,
+                ["requestedTokenType"] = BigQueryConstants.EntraRequestedTokenType
+            };
+
+            // Workforce pools require the project used for quota/billing in the
+            // STS `options` field. Workload-pool and legacy callers that do not
+            // supply a billing project retain the previous request shape.
+            if (!string.IsNullOrWhiteSpace(workforcePoolUserProject))
+            {
+                requestBody["options"] = JsonSerializer.Serialize(new { userProject = workforcePoolUserProject });
+            }
+
+            return JsonSerializer.Serialize(requestBody);
         }
 
         enum XdbcDataType
