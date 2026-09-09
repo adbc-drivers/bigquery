@@ -83,6 +83,8 @@ type connectionImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
+	jobCreationMode bigquery.JobCreationMode
+
 	client *bigquery.Client
 }
 
@@ -606,6 +608,8 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 			return OptionValueCompressionNone, nil
 		}
 		return c.bulkIngestCompression, nil
+  case OptionJobCreationMode:
+		return string(c.jobCreationMode), nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -684,6 +688,13 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 			}
 		}
 		c.bulkIngestCompression = value
+	case OptionJobCreationMode:
+		mode, err := stringToJobCreationMode(value)
+		if err == nil {
+			c.jobCreationMode = mode
+		} else {
+			return err
+		}
 	default:
 		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
@@ -838,6 +849,12 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	if c.endpoint != "" {
 		bigQueryAuthOptions = append(bigQueryAuthOptions, option.WithEndpoint(c.endpoint))
 	}
+
+	// Add job creation mode if specified for BigQuery API client
+	if c.jobCreationMode != "" {
+		bigQueryAuthOptions = append(bigQueryAuthOptions, bigquery.WithDefaultJobCreationMode(c.jobCreationMode))
+	}
+
 
 	client, err := bigquery.NewClient(ctx, c.catalog, bigQueryAuthOptions...)
 	if err != nil {

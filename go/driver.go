@@ -130,6 +130,11 @@ const (
 	OptionValueCompressionNone  = "none"
 	OptionValueCompressionLZ4   = "lz4"
 	OptionValueCompressionZSTD  = "zstd"
+
+	// OptionJobCreationMode controls whether query jobs are created (e.g. optional/required).
+	OptionJobCreationMode = "bigquery.job_creation_mode"
+	OptionJobCreationModeOptional = "optional"
+	OptionJobCreationModeRequired = "required"
 )
 
 var (
@@ -180,6 +185,9 @@ var (
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
 		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
+		"adbc.bigquery.sql.query.job_creation_mode":           OptionJobCreationMode,
+		"adbc.bigquery.sql.query.job_creation_mode_optional":  OptionJobCreationModeOptional,
+		"adbc.bigquery.sql.query.job_creation_mode_required":  OptionJobCreationModeRequired,
 	}
 )
 
@@ -305,5 +313,20 @@ func tableToString(value *bigquery.Table) string {
 		return ""
 	} else {
 		return fmt.Sprintf("%s.%s.%s", value.ProjectID, value.DatasetID, value.TableID)
+	}
+}
+
+func stringToJobCreationMode(value string) (bigquery.JobCreationMode, error) {
+	v := bigquery.JobCreationMode(value)
+	switch v {
+	case OptionJobCreationModeOptional, bigquery.JobCreationModeOptional:
+		return bigquery.JobCreationModeOptional, nil
+	case OptionJobCreationModeRequired, bigquery.JobCreationModeRequired:
+		return bigquery.JobCreationModeRequired, nil
+	default:
+		return v, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("unknown job creation mode value `%s`", v),
+		}
 	}
 }

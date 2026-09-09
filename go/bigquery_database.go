@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"google.golang.org/api/option"
@@ -61,6 +62,8 @@ type databaseImpl struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	jobCreationMode bigquery.JobCreationMode
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
@@ -86,6 +89,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		quotaProject:               d.quotaProject,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
+		jobCreationMode:            d.jobCreationMode,
 	}
 
 	err := conn.newClient(ctx)
@@ -149,6 +153,9 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 			return OptionValueCompressionNone, nil
 		}
 		return d.bulkIngestCompression, nil
+	case OptionJobCreationMode:
+		return string(d.jobCreationMode), nil
+
 	default:
 		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
@@ -291,6 +298,13 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			}
 		}
 		d.bulkIngestCompression = value
+	case OptionJobCreationMode:
+		mode, err := stringToJobCreationMode(value)
+		if err == nil {
+			d.jobCreationMode = mode
+		} else {
+			return err
+		}
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}
