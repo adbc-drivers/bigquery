@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/bigquery"
 	driver "github.com/adbc-drivers/bigquery/go"
@@ -51,6 +52,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/api/iterator"
 )
 
 type BigQueryQuirks struct {
@@ -2339,6 +2341,82 @@ func (suite *BigQueryTests) TestImpersonation() {
 	_, _, err = stmt.ExecuteQuery(ctx)
 	suite.ErrorContains(err, "Could not read Arrow query results: (PermissionDenied) request failed: the user does not have 'bigquery.readsessions.create' permission")
 	suite.ErrorContains(err, "Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282")
+}
+
+func (suite *BigQueryTests) TestUserJob403() {
+	// Create an anonymous dataset implicitly by running a query, then try
+	// to list tables from another user - this generates a 403 but this
+	// should not cause the whole operation to error
+	targetPrincipal, ok := os.LookupEnv("BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL")
+	if !ok || targetPrincipal == "" {
+		suite.T().Skip("BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL not set, skipping impersonation test")
+	}
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT 42"))
+	rdr, _, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	ctx := context.Background()
+	options := maps.Clone(suite.Quirks.DatabaseOptions())
+	options["bigquery.auth.credentials_type"] = "impersonated_service_account"
+	options["bigquery.impersonate.target_principal"] = targetPrincipal
+	options["bigquery.impersonate.scopes"] = "https://www.googleapis.com/auth/cloud-platform"
+
+	db, err := suite.driver.NewDatabaseWithContext(ctx, options)
+	suite.Require().NoError(err)
+	defer testutil.CheckedCloseWithContext(suite.T(), db, context.Background())
+
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	})
+	logger := slog.New(handler)
+	db.(adbc.DatabaseLogging).SetLogger(logger)
+
+	cnxn, err := db.Open(ctx)
+	suite.Require().NoError(err)
+	defer testutil.CheckedCloseWithContext(suite.T(), cnxn, context.Background())
+
+	obj, err := cnxn.GetObjects(ctx, adbc.ObjectDepthTables, &suite.Quirks.catalogName, nil, nil, nil, nil)
+	suite.Require().NoError(err)
+	defer obj.Release()
+	for obj.Next() {
+	}
+	suite.NoError(obj.Err())
+}
+
+func (suite *BigQueryTests) TestCleanUpOldDatasets() {
+	// Best-effort clean up of old datasets
+	ctx := context.Background()
+	datasets := suite.Quirks.client.Datasets(ctx)
+	for {
+		ds, err := datasets.Next()
+		if err == iterator.Done {
+			break
+		} else if err != nil {
+			suite.T().Logf("Error listing datasets: %v", err)
+			break
+		}
+
+		if !strings.HasPrefix(ds.DatasetID, "ADBC_TESTING_") {
+			continue
+		}
+
+		meta, err := ds.Metadata(ctx)
+		if err != nil {
+			suite.T().Logf("Error getting metadata for dataset %s: %v", ds.DatasetID, err)
+			continue
+		}
+
+		if meta.CreationTime.Before(time.Now().Add(-24 * time.Hour)) {
+			suite.T().Logf("Deleting old test dataset: %s", ds.DatasetID)
+			err = ds.DeleteWithContents(ctx)
+			if err != nil {
+				suite.T().Logf("Error deleting dataset %s: %v", ds.DatasetID, err)
+			}
+		}
+	}
 }
 
 func TestOldOptionNamesURI(t *testing.T) {
