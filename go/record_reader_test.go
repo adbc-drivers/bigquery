@@ -67,6 +67,44 @@ func TestMetadataFromJobStatistics(t *testing.T) {
 	require.NoError(t, err)
 	metadata := md.ToMap()
 
+	assert.Equal(t, "2026-01-02T03:04:05.000000006Z", metadata["BIGQUERY:statistics:creation_time"])
+	assert.Equal(t, "1024", metadata["BIGQUERY:statistics:total_bytes_processed"])
+	assert.Equal(t, "2000000", metadata["BIGQUERY:statistics:total_slot_duration"])
+	assert.Equal(t, "5000000", metadata["BIGQUERY:statistics:final_execution_duration"])
+	assert.Equal(t, "ENTERPRISE", metadata["BIGQUERY:statistics:edition"])
+	assert.Equal(t, "0.75", metadata["BIGQUERY:statistics:completion_ratio"])
+	assert.Equal(t, "3", metadata["BIGQUERY:statistics:query:billing_tier"])
+	assert.Equal(t, "true", metadata["BIGQUERY:statistics:query:cache_hit"])
+	assert.Equal(t, "SELECT", metadata["BIGQUERY:statistics:query:statement_type"])
+	assert.Equal(t, "2048", metadata["BIGQUERY:statistics:query:total_bytes_billed"])
+	assert.Equal(t, "4096", metadata["BIGQUERY:statistics:query:total_bytes_processed"])
+	assert.Equal(t, "PRECISE", metadata["BIGQUERY:statistics:query:total_bytes_processed_accuracy"])
+	assert.Equal(t, "6", metadata["BIGQUERY:statistics:query:num_dml_affected_rows"])
+	assert.Equal(t, "33", metadata["BIGQUERY:statistics:query:slot_millis"])
+	assert.Equal(t, "CREATE_TABLE", metadata["BIGQUERY:statistics:query:ddl_operation_performed"])
+
+	var reservationUsage []bigquery.ReservationUsage
+	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:statistics:reservation_usage"]), &reservationUsage))
+	require.Len(t, reservationUsage, 1)
+	assert.Equal(t, "primary", reservationUsage[0].Name)
+	assert.Equal(t, int64(12), reservationUsage[0].SlotMillis)
+
+	var dmlStats bigquery.DMLStatistics
+	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:statistics:query:dml_stats"]), &dmlStats))
+	assert.Equal(t, int64(1), dmlStats.InsertedRowCount)
+	assert.Equal(t, int64(2), dmlStats.DeletedRowCount)
+	assert.Equal(t, int64(3), dmlStats.UpdatedRowCount)
+
+	var exportStats bigquery.ExportDataStatistics
+	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:statistics:query:export_data_statistics"]), &exportStats))
+	assert.Equal(t, int64(4), exportStats.FileCount)
+	assert.Equal(t, int64(5), exportStats.RowCount)
+
+	assert.NotContains(t, metadata, "BIGQUERY:statistics:query:query_plan")
+	assert.NotContains(t, metadata, "BIGQUERY:statistics:query:timeline")
+	assert.NotContains(t, metadata, "BIGQUERY:statistics:query:referenced_tables")
+	assert.NotContains(t, metadata, "BIGQUERY:statistics:query:schema")
+
 	assert.Equal(t, "2026-01-02T03:04:05.000000006Z", metadata["BIGQUERY:Statistics:CreationTime"])
 	assert.Equal(t, "1024", metadata["BIGQUERY:Statistics:TotalBytesProcessed"])
 	assert.Equal(t, "2000000", metadata["BIGQUERY:Statistics:TotalSlotDuration"])
@@ -83,22 +121,22 @@ func TestMetadataFromJobStatistics(t *testing.T) {
 	assert.Equal(t, "33", metadata["BIGQUERY:Statistics:Query:SlotMillis"])
 	assert.Equal(t, "CREATE_TABLE", metadata["BIGQUERY:Statistics:Query:DDLOperationPerformed"])
 
-	var reservationUsage []bigquery.ReservationUsage
-	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:Statistics:ReservationUsage"]), &reservationUsage))
-	require.Len(t, reservationUsage, 1)
-	assert.Equal(t, "primary", reservationUsage[0].Name)
-	assert.Equal(t, int64(12), reservationUsage[0].SlotMillis)
+	var legacyReservationUsage []bigquery.ReservationUsage
+	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:Statistics:ReservationUsage"]), &legacyReservationUsage))
+	require.Len(t, legacyReservationUsage, 1)
+	assert.Equal(t, "primary", legacyReservationUsage[0].Name)
+	assert.Equal(t, int64(12), legacyReservationUsage[0].SlotMillis)
 
-	var dmlStats bigquery.DMLStatistics
-	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:Statistics:Query:DMLStats"]), &dmlStats))
-	assert.Equal(t, int64(1), dmlStats.InsertedRowCount)
-	assert.Equal(t, int64(2), dmlStats.DeletedRowCount)
-	assert.Equal(t, int64(3), dmlStats.UpdatedRowCount)
+	var legacyDmlStats bigquery.DMLStatistics
+	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:Statistics:Query:DMLStats"]), &legacyDmlStats))
+	assert.Equal(t, int64(1), legacyDmlStats.InsertedRowCount)
+	assert.Equal(t, int64(2), legacyDmlStats.DeletedRowCount)
+	assert.Equal(t, int64(3), legacyDmlStats.UpdatedRowCount)
 
-	var exportStats bigquery.ExportDataStatistics
-	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:Statistics:Query:ExportDataStatistics"]), &exportStats))
-	assert.Equal(t, int64(4), exportStats.FileCount)
-	assert.Equal(t, int64(5), exportStats.RowCount)
+	var legacyExportStats bigquery.ExportDataStatistics
+	require.NoError(t, json.Unmarshal([]byte(metadata["BIGQUERY:Statistics:Query:ExportDataStatistics"]), &legacyExportStats))
+	assert.Equal(t, int64(4), legacyExportStats.FileCount)
+	assert.Equal(t, int64(5), legacyExportStats.RowCount)
 
 	assert.NotContains(t, metadata, "BIGQUERY:Statistics:Query:QueryPlan")
 	assert.NotContains(t, metadata, "BIGQUERY:Statistics:Query:Timeline")
@@ -115,8 +153,8 @@ func TestIpcReaderFromArrowIteratorAttachesJobStatisticsMetadata(t *testing.T) {
 	defer rdr.Release()
 
 	metadata := schema.Metadata().ToMap()
-	assert.Equal(t, "3", metadata["BIGQUERY:Statistics:Query:BillingTier"])
-	assert.Equal(t, "SELECT", metadata["BIGQUERY:Statistics:Query:StatementType"])
+	assert.Equal(t, "3", metadata["BIGQUERY:statistics:query:billing_tier"])
+	assert.Equal(t, "SELECT", metadata["BIGQUERY:statistics:query:statement_type"])
 	assert.Equal(t, "job-abc", metadata[MetadataKeyBigqueryQueryID])
 }
 
@@ -128,8 +166,8 @@ func TestMakeDryRunReaderAttachesJobStatisticsMetadata(t *testing.T) {
 	defer rdr.Release()
 
 	metadata := rdr.Schema().Metadata().ToMap()
-	assert.Equal(t, "3", metadata["BIGQUERY:Statistics:Query:BillingTier"])
-	assert.Equal(t, "SELECT", metadata["BIGQUERY:Statistics:Query:StatementType"])
+	assert.Equal(t, "3", metadata["BIGQUERY:statistics:query:billing_tier"])
+	assert.Equal(t, "SELECT", metadata["BIGQUERY:statistics:query:statement_type"])
 	assert.Equal(t, "dryrun-job", metadata[MetadataKeyBigqueryQueryID])
 }
 
