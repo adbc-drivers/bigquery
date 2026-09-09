@@ -132,7 +132,7 @@ const (
 	OptionValueCompressionZSTD  = "zstd"
 
 	// OptionJobCreationMode controls whether query jobs are created (e.g. optional/required).
-	OptionJobCreationMode = "bigquery.job_creation_mode"
+	OptionJobCreationMode         = "bigquery.job_creation_mode"
 	OptionJobCreationModeOptional = "optional"
 	OptionJobCreationModeRequired = "required"
 )

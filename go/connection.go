@@ -608,7 +608,7 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 			return OptionValueCompressionNone, nil
 		}
 		return c.bulkIngestCompression, nil
-  case OptionJobCreationMode:
+	case OptionJobCreationMode:
 		return string(c.jobCreationMode), nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
