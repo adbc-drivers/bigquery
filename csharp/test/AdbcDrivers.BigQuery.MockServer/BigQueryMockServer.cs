@@ -623,13 +623,6 @@ namespace AdbcDrivers.BigQuery.MockServer
                             new TableFieldSchema { Name = "value", Type = "INTEGER", Mode = "NULLABLE" }
                         }
                     },
-                    Rows = new[]
-                    {
-                        new TableRow
-                        {
-                            F = new[] { new TableCell { V = "42" } }
-                        }
-                    },
                 };
 
                 if (mockJob.IsCancelled)
