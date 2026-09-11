@@ -18,6 +18,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Types;
@@ -93,7 +94,74 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
-        public async System.Threading.Tasks.Task CanBulkIngestAppendToTable()
+        public void UseJobCreationModeExecutesThroughQueriesEndpoint()
+        {
+            using var mockServer = new BigQueryMockServer();
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(BigQueryParameters.UseJobCreationMode, "true");
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            QueryResult result = statement.ExecuteQuery();
+            Assert.NotNull(result.Stream);
+            result.Stream.Dispose();
+
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobQuery));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            Assert.NotNull(mockServer.LastQueryRequest);
+            Assert.Equal(BigQueryConstants.JobCreationRequired, mockServer.LastQueryRequest!.JobCreationMode);
+        }
+
+        [Fact]
+        public async Task UseJobCreationModeReturnsEligibleInlineResultsWithoutStorageRead()
+        {
+            using var mockServer = new BigQueryMockServer();
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(BigQueryParameters.UseJobCreationMode, "true");
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            QueryResult result = statement.ExecuteQuery();
+
+            Assert.Equal(0, mockServer.ReadService.CreateReadSessionCallCount);
+            Assert.Equal(0, mockServer.QueryResultsRequestCount);
+            await AssertSingleRowAsync(result);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task UseJobCreationModeFallsBackForIncompleteOrPagedResults(bool includesPagedResults)
+        {
+            using var mockServer = new BigQueryMockServer
+            {
+                OptionalQueryCreatesJob = true,
+                OptionalQueryIncludesPagedResults = includesPagedResults,
+            };
+            ConfigureSingleRowStorageResults(mockServer);
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(BigQueryParameters.UseJobCreationMode, "true");
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            QueryResult result = statement.ExecuteQuery();
+
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobQuery));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            Assert.True(mockServer.QueryResultsRequestCount > 0);
+            Assert.Equal(1, mockServer.ReadService.CreateReadSessionCallCount);
+            await AssertSingleRowAsync(result);
+        }
+
+        [Fact]
+        public void CanBulkIngestAppendToTable()
         {
             using var mockServer = new BigQueryMockServer();
 
@@ -349,6 +417,40 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 },
                 3);
         }
+
+        private static Dictionary<string, string> CreateParameters(BigQueryMockServer mockServer) => new()
+        {
+            { BigQueryParameters.ProjectId, "mock-project" },
+            { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+            { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+            { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+        };
+
+        private static void ConfigureSingleRowStorageResults(BigQueryMockServer mockServer)
+        {
+            var schema = new Schema(new[] { new Field("value", Int64Type.Default, nullable: true) }, null);
+            using var batch = new RecordBatch(
+                schema,
+                new IArrowArray[] { new Int64Array.Builder().Append(42).Build() },
+                1);
+
+            mockServer.ReadService.DefaultArrowSchema = ArrowSerializationHelpers.SerializeSchema(schema);
+            mockServer.ReadService.DefaultArrowBatch = ArrowSerializationHelpers.SerializeRecordBatch(batch);
+            mockServer.ReadService.DefaultRowCount = 1;
+        }
+
+        private static async Task AssertSingleRowAsync(QueryResult result)
+        {
+            Assert.NotNull(result.Stream);
+            using (result.Stream)
+            {
+                using RecordBatch? batch = await result.Stream.ReadNextRecordBatchAsync();
+                Assert.NotNull(batch);
+                Assert.Equal(1, batch!.Length);
+                Assert.Equal(42L, Assert.IsType<Int64Array>(batch.Column(0)).GetValue(0));
+            }
+        }
+
     }
 }
 
