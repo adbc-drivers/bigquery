@@ -368,7 +368,10 @@ namespace AdbcDrivers.BigQuery.MockServer
                 string? queryText = queryRequest?.Query;
                 if (queryText != null)
                 {
-                    _executedQueries.Enqueue(queryText);
+                    _executedQueries.Enqueue((
+                        queryText,
+                        (IReadOnlyList<QueryParameter>?)queryRequest?.QueryParameters
+                            ?? Array.Empty<QueryParameter>()));
                 }
 
                 if (!OptionalQueryCreatesJob)
