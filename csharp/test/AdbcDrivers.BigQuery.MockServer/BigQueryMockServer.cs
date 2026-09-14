@@ -126,6 +126,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// <summary>The most recent jobs.query request.</summary>
         public QueryRequest? LastQueryRequest { get; private set; }
 
+        /// <summary>The most recent jobs.insert request.</summary>
+        public Job? LastInsertedJob { get; private set; }
+
         /// <summary>The most recent page token sent to jobs.getQueryResults.</summary>
         public string? LastQueryResultsPageToken { get; private set; }
 
@@ -454,6 +457,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                 try
                 {
                     jobRequest = NewtonsoftJsonSerializer.Instance.Deserialize<Job>(body);
+                    LastInsertedJob = jobRequest;
                 }
                 catch
                 {

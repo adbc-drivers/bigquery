@@ -467,6 +467,22 @@ namespace AdbcDrivers.BigQuery.Tests
                 statement.SetOption(BigQueryParameters.GetQueryResultsOptionsTimeout, "abc"));
         }
 
+        [Theory]
+        [InlineData("tru")]
+        [InlineData("1")]
+        [InlineData("")]
+        public void SetOption_ThrowsArgumentException_WhenJobCreationModeIsNotBoolean(string value)
+        {
+            var connection = new BigQueryConnection(new Dictionary<string, string>());
+            var statement = new BigQueryStatement(connection);
+
+            ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+                statement.SetOption(BigQueryParameters.UseJobCreationMode, value));
+
+            Assert.Contains(BigQueryParameters.UseJobCreationMode, exception.Message);
+            Assert.DoesNotContain(BigQueryParameters.UseJobCreationMode, statement.Options!);
+        }
+
         private static TimeSpan? InvokeGetEffectiveQueryResultsTimeout(BigQueryStatement statement)
         {
             const BindingFlags bindingAttr = BindingFlags.NonPublic | BindingFlags.Instance;

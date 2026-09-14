@@ -56,6 +56,8 @@ namespace AdbcDrivers.BigQuery
     class BigQueryStatement : TracingStatement, ITokenProtectedResource, IDisposable
     {
         private const string ClassName = nameof(BigQueryStatement);
+        private const int DefaultRestResultMaxRows = 1000;
+        private const string JobCreationRequired = "JOB_CREATION_REQUIRED";
         readonly BigQueryConnection bigQueryConnection;
         readonly CancellationRegistry cancellationRegistry;
 
@@ -192,6 +194,12 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.GetQueryResultsOptionsTimeout}' is not a valid positive integer.");
                     }
                     break;
+                case BigQueryParameters.UseJobCreationMode:
+                    if (!bool.TryParse(value, out _))
+                    {
+                        throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.UseJobCreationMode}' is not a valid boolean.");
+                    }
+                    break;
                 default:
                     // TODO: Throw an exception if setting value is unsupported at particular execution states.
                     break;
@@ -241,17 +249,19 @@ namespace AdbcDrivers.BigQuery
 
                 BigQueryJob? job = null;
                 JobReference jobReference;
-                if (useJobCreationMode)
+                if (useJobCreationMode && CanUseJobCreationRequiredMode(queryOptions))
                 {
                     string requestId = Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture);
                     QueryRequest queryRequest = CreateJobCreationRequiredModeRequest(queryOptions, queryResultsTimeout, requestId);
                     QueryResponse queryResponse;
                     using (JobCancellationContext queryContext = new JobCancellationContext(cancellationRegistry))
                     {
-                        queryResponse = await ExecuteWithRetriesAsync(
-                            () => Client.Service.Jobs.Query(queryRequest, queryOptions.ProjectId ?? Client.ProjectId).ExecuteAsync(queryContext.CancellationToken),
-                            activity,
-                            queryContext.CancellationToken).ConfigureAwait(false);
+                        queryResponse = await this.TraceActivityAsync(
+                            queryActivity => ExecuteWithRetriesAsync(
+                                () => Client.Service.Jobs.Query(queryRequest, queryOptions.ProjectId ?? Client.ProjectId).ExecuteAsync(queryContext.CancellationToken),
+                                queryActivity,
+                                queryContext.CancellationToken),
+                            ClassName + "." + nameof(ExecuteQueryInternalAsync) + ".Jobs.Query").ConfigureAwait(false);
                     }
 
                     if (TryCreateRestQueryResult(
@@ -425,10 +435,14 @@ namespace AdbcDrivers.BigQuery
 
         private QueryRequest CreateJobCreationRequiredModeRequest(QueryOptions queryOptions, TimeSpan? timeout, string requestId)
         {
+            JobConfigurationQuery queryConfiguration = new JobConfigurationQuery();
+            queryOptions.ConfigurationModifier?.Invoke(queryConfiguration);
+
             return new QueryRequest
             {
+                ConnectionProperties = queryConfiguration.ConnectionProperties,
                 FormatOptions = new DataFormatOptions { UseInt64Timestamp = true },
-                JobCreationMode = BigQueryConstants.JobCreationRequired,
+                JobCreationMode = JobCreationRequired,
                 Labels = queryOptions.Labels,
                 Location = queryOptions.JobLocation ?? Client.DefaultLocation,
                 Query = SqlQuery,
@@ -436,6 +450,11 @@ namespace AdbcDrivers.BigQuery
                 TimeoutMs = timeout.HasValue ? (long?)timeout.Value.TotalMilliseconds : null,
                 UseLegacySql = queryOptions.UseLegacySql ?? false,
             };
+        }
+
+        private static bool CanUseJobCreationRequiredMode(QueryOptions queryOptions)
+        {
+            return queryOptions.AllowLargeResults != true && queryOptions.DestinationTable == null;
         }
 
         private BigQueryResults CreateInlineQueryResults(QueryResponse queryResponse, GetQueryResultsOptions options)
@@ -469,7 +488,7 @@ namespace AdbcDrivers.BigQuery
 
             if (response.JobComplete != true ||
                 !response.TotalRows.HasValue ||
-                response.TotalRows.Value > BigQueryConstants.DefaultRestResultMaxRows ||
+                response.TotalRows.Value > DefaultRestResultMaxRows ||
                 response.TotalRows.Value != pageRowCount ||
                 response.Schema?.Fields?.Count <= 0 ||
                 !string.IsNullOrEmpty(response.PageToken))
@@ -569,7 +588,7 @@ namespace AdbcDrivers.BigQuery
                 IArrowArray[] childArrays = field.Fields
                     .Select(child => BuildRestArray(child, values.Select(value => GetStructValue(value, child.Name)).ToList()))
                     .ToArray();
-                ArrowBuffer.BitmapBuilder validityBuilder = new ArrowBuffer.BitmapBuilder();
+                ArrowBuffer.BitmapBuilder validityBuilder = new ArrowBuffer.BitmapBuilder(values.Count);
                 foreach (object? value in values)
                 {
                     validityBuilder.Append(value != null);
@@ -581,29 +600,35 @@ namespace AdbcDrivers.BigQuery
             {
                 case "INTEGER":
                 case "INT64":
-                    var int64Builder = new Int64Array.Builder();
+                    Int64Array.Builder int64Builder = new Int64Array.Builder();
+                    int64Builder.Reserve(values.Count);
                     foreach (object? value in values) { if (value == null) int64Builder.AppendNull(); else int64Builder.Append(Convert.ToInt64(value, CultureInfo.InvariantCulture)); }
                     return int64Builder.Build();
                 case "FLOAT":
                 case "FLOAT64":
-                    var doubleBuilder = new DoubleArray.Builder();
+                    DoubleArray.Builder doubleBuilder = new DoubleArray.Builder();
+                    doubleBuilder.Reserve(values.Count);
                     foreach (object? value in values) { if (value == null) doubleBuilder.AppendNull(); else doubleBuilder.Append(Convert.ToDouble(value, CultureInfo.InvariantCulture)); }
                     return doubleBuilder.Build();
                 case "BOOL":
                 case "BOOLEAN":
-                    var booleanBuilder = new BooleanArray.Builder();
+                    BooleanArray.Builder booleanBuilder = new BooleanArray.Builder();
+                    booleanBuilder.Reserve(values.Count);
                     foreach (object? value in values) { if (value == null) booleanBuilder.AppendNull(); else booleanBuilder.Append(Convert.ToBoolean(value, CultureInfo.InvariantCulture)); }
                     return booleanBuilder.Build();
                 case "BYTES":
-                    var binaryBuilder = new BinaryArray.Builder();
+                    BinaryArray.Builder binaryBuilder = new BinaryArray.Builder();
+                    binaryBuilder.Reserve(values.Count);
                     foreach (object? value in values) { if (value == null) binaryBuilder.AppendNull(); else binaryBuilder.Append((value is byte[] bytes ? bytes : Convert.FromBase64String(Convert.ToString(value, CultureInfo.InvariantCulture)!)).AsSpan()); }
                     return binaryBuilder.Build();
                 case "DATE":
-                    var dateBuilder = new Date32Array.Builder();
+                    Date32Array.Builder dateBuilder = new Date32Array.Builder();
+                    dateBuilder.Reserve(values.Count);
                     foreach (object? value in values) { if (value == null) dateBuilder.AppendNull(); else dateBuilder.Append(value is DateTime date ? date : DateTime.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!, CultureInfo.InvariantCulture)); }
                     return dateBuilder.Build();
                 case "DATETIME":
-                    var dateTimeBuilder = new TimestampArray.Builder((TimestampType)TranslateType(field));
+                    TimestampArray.Builder dateTimeBuilder = new TimestampArray.Builder((TimestampType)TranslateType(field));
+                    dateTimeBuilder.Reserve(values.Count);
                     foreach (object? value in values)
                     {
                         if (value == null) dateTimeBuilder.AppendNull();
@@ -617,7 +642,8 @@ namespace AdbcDrivers.BigQuery
                     }
                     return dateTimeBuilder.Build();
                 case "TIMESTAMP":
-                    var timestampBuilder = new TimestampArray.Builder((TimestampType)TranslateType(field));
+                    TimestampArray.Builder timestampBuilder = new TimestampArray.Builder((TimestampType)TranslateType(field));
+                    timestampBuilder.Reserve(values.Count);
                     foreach (object? value in values)
                     {
                         if (value == null) timestampBuilder.AppendNull();
@@ -627,7 +653,8 @@ namespace AdbcDrivers.BigQuery
                     }
                     return timestampBuilder.Build();
                 case "TIME":
-                    var timeBuilder = new Time64Array.Builder(TimeUnit.Microsecond);
+                    Time64Array.Builder timeBuilder = new Time64Array.Builder(TimeUnit.Microsecond);
+                    timeBuilder.Reserve(values.Count);
                     foreach (object? value in values)
                     {
                         if (value == null) timeBuilder.AppendNull();
@@ -640,7 +667,8 @@ namespace AdbcDrivers.BigQuery
                     return timeBuilder.Build();
                 case "NUMERIC":
                 case "DECIMAL":
-                    var decimalBuilder = new Decimal128Array.Builder(new Decimal128Type(38, 9));
+                    Decimal128Array.Builder decimalBuilder = new Decimal128Array.Builder(new Decimal128Type(38, 9));
+                    decimalBuilder.Reserve(values.Count);
                     foreach (object? value in values)
                     {
                         if (value == null) decimalBuilder.AppendNull();
@@ -653,7 +681,8 @@ namespace AdbcDrivers.BigQuery
                     {
                         return BuildStringArray(values);
                     }
-                    var bigDecimalBuilder = new Decimal256Array.Builder(new Decimal256Type(76, 38));
+                    Decimal256Array.Builder bigDecimalBuilder = new Decimal256Array.Builder(new Decimal256Type(76, 38));
+                    bigDecimalBuilder.Reserve(values.Count);
                     foreach (object? value in values)
                     {
                         if (value == null) bigDecimalBuilder.AppendNull();
@@ -682,9 +711,10 @@ namespace AdbcDrivers.BigQuery
             throw new InvalidOperationException($"REST struct value does not contain field '{fieldName}'.");
         }
 
-        private static StringArray BuildStringArray(IEnumerable<object?> values)
+        private static StringArray BuildStringArray(IReadOnlyCollection<object?> values)
         {
             StringArray.Builder stringBuilder = new StringArray.Builder();
+            stringBuilder.Reserve(values.Count);
             foreach (object? value in values)
             {
                 if (value == null) stringBuilder.AppendNull();
@@ -1485,7 +1515,7 @@ namespace AdbcDrivers.BigQuery
                         activity?.AddBigQueryParameterTag(BigQueryParameters.IsMetadataCommand, isMetadataCommand);
                         break;
                     case BigQueryParameters.UseJobCreationMode:
-                        useJobCreationMode = keyValuePair.Value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                        useJobCreationMode = bool.Parse(keyValuePair.Value);
                         activity?.AddBigQueryParameterTag(BigQueryParameters.UseJobCreationMode, useJobCreationMode);
                         break;
                     case BigQueryParameters.CatalogName:
