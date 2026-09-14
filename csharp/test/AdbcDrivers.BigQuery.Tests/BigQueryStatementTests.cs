@@ -468,7 +468,7 @@ namespace AdbcDrivers.BigQuery.Tests
         }
 
         [Theory]
-        [InlineData("tru")]
+        [InlineData("invalid")]
         [InlineData("1")]
         [InlineData("")]
         public void SetOption_ThrowsArgumentException_WhenJobCreationModeIsNotBoolean(string value)

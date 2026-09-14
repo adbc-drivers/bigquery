@@ -27,6 +27,8 @@ using Google.Apis.Json;
 using Google.Apis.Requests;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -204,17 +206,14 @@ namespace AdbcDrivers.BigQuery.MockServer
             ReadService = new MockBigQueryReadService();
             WriteService = new MockBigQueryWriteService();
 
-            int restPort = GetFreePort();
-            int grpcPort = GetFreePort();
-
-            _restApp = BuildRestApp(restPort);
-            _grpcApp = BuildGrpcApp(grpcPort);
+            _restApp = BuildRestApp();
+            _grpcApp = BuildGrpcApp();
 
             _restApp.StartAsync().GetAwaiter().GetResult();
             _grpcApp.StartAsync().GetAwaiter().GetResult();
 
-            RestEndpoint = $"127.0.0.1:{restPort}";
-            GrpcEndpoint = $"127.0.0.1:{grpcPort}";
+            RestEndpoint = GetBoundEndpoint(_restApp);
+            GrpcEndpoint = GetBoundEndpoint(_grpcApp);
         }
 
         /// <summary>
@@ -313,13 +312,13 @@ namespace AdbcDrivers.BigQuery.MockServer
             return request;
         }
 
-        private WebApplication BuildRestApp(int port)
+        private WebApplication BuildRestApp()
         {
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.Listen(IPAddress.Loopback, port, listenOptions =>
+                options.Listen(IPAddress.Loopback, 0, listenOptions =>
                 {
                     listenOptions.Protocols = HttpProtocols.Http1;
                 });
@@ -330,7 +329,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             return app;
         }
 
-        private WebApplication BuildGrpcApp(int port)
+        private WebApplication BuildGrpcApp()
         {
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
@@ -339,7 +338,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             builder.Services.AddSingleton(WriteService);
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.Listen(IPAddress.Loopback, port, listenOptions =>
+                options.Listen(IPAddress.Loopback, 0, listenOptions =>
                 {
                     listenOptions.Protocols = HttpProtocols.Http2;
                 });
@@ -866,11 +865,12 @@ namespace AdbcDrivers.BigQuery.MockServer
             };
         }
 
-        private static int GetFreePort()
+        private static string GetBoundEndpoint(WebApplication app)
         {
-            using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            listener.Start();
-            return ((IPEndPoint)listener.LocalEndpoint).Port;
+            IServer server = app.Services.GetRequiredService<IServer>();
+            IServerAddressesFeature addresses = server.Features.Get<IServerAddressesFeature>()
+                ?? throw new InvalidOperationException("The mock server did not expose a bound address.");
+            return new Uri(addresses.Addresses.Single()).Authority;
         }
 
         public void Dispose()
