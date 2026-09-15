@@ -545,7 +545,13 @@ namespace AdbcDrivers.BigQuery
                     if (!this.properties.TryGetValue(BigQueryParameters.AudienceUri, out audienceUri))
                         throw new ArgumentException($"The {BigQueryParameters.AudienceUri} parameter is not present");
 
-                    this.properties.TryGetValue(BigQueryParameters.BillingProjectId, out string? workforcePoolUserProject);
+                    // Only workforce pools take options.userProject. Fall back to the billing project
+                    // for them, which is what the ODBC driver's BYOID_PoolUserProject has always sent.
+                    if (!this.properties.TryGetValue(BigQueryParameters.WorkforcePoolUserProject, out string? workforcePoolUserProject)
+                        || string.IsNullOrWhiteSpace(workforcePoolUserProject))
+                    {
+                        this.properties.TryGetValue(BigQueryParameters.BillingProjectId, out workforcePoolUserProject);
+                    }
 
                     Credential = ApplyScopes(GoogleCredential.FromAccessToken(
                         ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken, workforcePoolUserProject), activity)));
@@ -2100,16 +2106,19 @@ namespace AdbcDrivers.BigQuery
                 ["requestedTokenType"] = BigQueryConstants.EntraRequestedTokenType
             };
 
-            // Workforce pools require the project used for quota/billing in the
-            // STS `options` field. Workload-pool and legacy callers that do not
-            // supply a billing project retain the previous request shape.
-            if (!string.IsNullOrWhiteSpace(workforcePoolUserProject))
+            // options.userProject is a workforce-pool concept. Workload identity pool audiences already
+            // name their project, and sending it there adds a serviceusage.serviceUsageConsumer
+            // requirement the exchange would not otherwise have.
+            if (IsWorkforcePoolAudience(audience) && !string.IsNullOrWhiteSpace(workforcePoolUserProject))
             {
                 requestBody["options"] = JsonSerializer.Serialize(new { userProject = workforcePoolUserProject });
             }
 
             return JsonSerializer.Serialize(requestBody);
         }
+
+        internal static bool IsWorkforcePoolAudience(string? audience) =>
+            audience?.IndexOf("/workforcePools/", StringComparison.OrdinalIgnoreCase) >= 0;
 
         enum XdbcDataType
         {

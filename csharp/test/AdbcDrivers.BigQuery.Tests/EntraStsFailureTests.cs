@@ -106,5 +106,60 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Contains(BigQueryConstants.AzureSubjectTokenType, body);
             Assert.DoesNotContain(BigQueryConstants.EntraSubjectTokenType, body);
         }
+
+        private const string WorkforceAudience =
+            "//iam.googleapis.com/locations/global/workforcePools/pool/providers/azuread";
+
+        private const string WorkloadAudience =
+            "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/pool/providers/entra";
+
+        /// <summary>
+        /// options.userProject is a workforce pool concept. A workload identity pool audience already
+        /// names its project, and sending userProject there imposes a serviceusage.serviceUsageConsumer
+        /// requirement the exchange would not otherwise have.
+        /// </summary>
+        [Fact]
+        public void StsRequestBodyOmitsUserProjectForWorkloadPoolAudiences()
+        {
+            string body = CreateEntraStsRequestBody(WorkloadAudience, "token", "my-billing-project");
+
+            Assert.DoesNotContain("options", body);
+            Assert.DoesNotContain("userProject", body);
+            Assert.DoesNotContain("my-billing-project", body);
+        }
+
+        [Fact]
+        public void StsRequestBodyIncludesUserProjectForWorkforcePoolAudiences()
+        {
+            string body = CreateEntraStsRequestBody(WorkforceAudience, "token", "my-billing-project");
+
+            Assert.Contains("userProject", body);
+            Assert.Contains("my-billing-project", body);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void StsRequestBodyOmitsUserProjectWhenNoneSupplied(string? userProject)
+        {
+            string body = CreateEntraStsRequestBody(WorkforceAudience, "token", userProject);
+
+            Assert.DoesNotContain("userProject", body);
+        }
+
+        [Theory]
+        [InlineData(WorkforceAudience, true)]
+        [InlineData(WorkloadAudience, false)]
+        [InlineData("//iam.googleapis.com/locations/global/WORKFORCEPOOLS/p/providers/x", true)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void WorkforceAudienceDetectionMatchesThePoolKind(string? audience, bool expected)
+        {
+            Assert.Equal(expected, BigQueryConnection.IsWorkforcePoolAudience(audience));
+        }
+
+        private static string CreateEntraStsRequestBody(string audience, string token, string? userProject) =>
+            BigQueryConnection.CreateEntraStsRequestBody(audience, token, userProject);
     }
 }

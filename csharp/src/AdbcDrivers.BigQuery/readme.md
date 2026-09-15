@@ -62,6 +62,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.billing_project_id**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;The [Project ID](https://cloud.google.com/resource-manager/docs/creating-managing-projects) used for accessing billing BigQuery. If not specified, will default to the detected project ID.
 
+**adbc.bigquery.workforce_pool_user_project**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;The project charged for quota when federating through a Google [workforce pool](https://cloud.google.com/iam/docs/workforce-identity-federation), sent as the Security Token Service `options.userProject`. Only applies to workforce pool audiences; it is not sent for workload identity pool audiences, which already identify their project. Falls back to `adbc.bigquery.billing_project_id` when not set.
+
 **adbc.bigquery.client_id**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;The OAuth client ID. Required for `user` authentication.
 
