@@ -545,16 +545,8 @@ namespace AdbcDrivers.BigQuery
                     if (!this.properties.TryGetValue(BigQueryParameters.AudienceUri, out audienceUri))
                         throw new ArgumentException($"The {BigQueryParameters.AudienceUri} parameter is not present");
 
-                    // Only workforce pools take options.userProject. Fall back to the billing project
-                    // for them, which is what the ODBC driver's BYOID_PoolUserProject has always sent.
-                    if (!this.properties.TryGetValue(BigQueryParameters.WorkforcePoolUserProject, out string? workforcePoolUserProject)
-                        || string.IsNullOrWhiteSpace(workforcePoolUserProject))
-                    {
-                        this.properties.TryGetValue(BigQueryParameters.BillingProjectId, out workforcePoolUserProject);
-                    }
-
                     Credential = ApplyScopes(GoogleCredential.FromAccessToken(
-                        ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken, workforcePoolUserProject), activity)));
+                        ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken), activity)));
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
@@ -2054,11 +2046,11 @@ namespace AdbcDrivers.BigQuery
         /// <param name="audience"></param>
         /// <param name="entraAccessToken"></param>
         /// <returns></returns>
-        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken, string? workforcePoolUserProject)
+        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken)
         {
             try
             {
-                string json = CreateEntraStsRequestBody(audience, entraAccessToken, workforcePoolUserProject);
+                string json = CreateEntraStsRequestBody(audience, entraAccessToken);
                 using StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 using HttpResponseMessage response = this.httpClient.PostAsync(BigQueryConstants.EntraStsTokenEndpoint, content).GetAwaiter().GetResult();
@@ -2094,31 +2086,20 @@ namespace AdbcDrivers.BigQuery
             return $"The Google Security Token Service returned {(int)statusCode} ({statusCode}): {detail}";
         }
 
-        internal static string CreateEntraStsRequestBody(string audience, string entraAccessToken, string? workforcePoolUserProject)
+        internal static string CreateEntraStsRequestBody(string audience, string entraAccessToken)
         {
-            Dictionary<string, object> requestBody = new Dictionary<string, object>
+            var requestBody = new
             {
-                ["scope"] = BigQueryConstants.EntraIdScope,
-                ["subjectToken"] = entraAccessToken,
-                ["audience"] = audience,
-                ["grantType"] = BigQueryConstants.EntraGrantType,
-                ["subjectTokenType"] = BigQueryConstants.AzureSubjectTokenType,
-                ["requestedTokenType"] = BigQueryConstants.EntraRequestedTokenType
+                scope = BigQueryConstants.EntraIdScope,
+                subjectToken = entraAccessToken,
+                audience = audience,
+                grantType = BigQueryConstants.EntraGrantType,
+                subjectTokenType = BigQueryConstants.AzureSubjectTokenType,
+                requestedTokenType = BigQueryConstants.EntraRequestedTokenType
             };
-
-            // options.userProject is a workforce-pool concept. Workload identity pool audiences already
-            // name their project, and sending it there adds a serviceusage.serviceUsageConsumer
-            // requirement the exchange would not otherwise have.
-            if (IsWorkforcePoolAudience(audience) && !string.IsNullOrWhiteSpace(workforcePoolUserProject))
-            {
-                requestBody["options"] = JsonSerializer.Serialize(new { userProject = workforcePoolUserProject });
-            }
 
             return JsonSerializer.Serialize(requestBody);
         }
-
-        internal static bool IsWorkforcePoolAudience(string? audience) =>
-            audience?.IndexOf("/workforcePools/", StringComparison.OrdinalIgnoreCase) >= 0;
 
         enum XdbcDataType
         {

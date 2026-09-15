@@ -44,13 +44,6 @@ namespace AdbcDrivers.BigQuery
         /// Optional Google service account to impersonate after the Security Token Service exchange.
         /// </summary>
         public const string ServiceAccountImpersonationEmail = "adbc.bigquery.service_account_impersonation_email";
-
-        /// <summary>
-        /// The project charged for quota when federating through a Google *workforce* pool, sent as the
-        /// Security Token Service <c>options.userProject</c>. Distinct from <see cref="BillingProjectId"/>,
-        /// which is the BigQuery billing project. Ignored for workload identity pool audiences.
-        /// </summary>
-        public const string WorkforcePoolUserProject = "adbc.bigquery.workforce_pool_user_project";
         public const string EvaluationKind = "adbc.bigquery.multiple_statement.evaluation_kind";
         public const string GetQueryResultsOptionsTimeout = "adbc.bigquery.get_query_results_options.timeout";
         public const string IncludeConstraintsWithGetObjects = "adbc.bigquery.include_constraints_getobjects";
@@ -104,7 +97,7 @@ namespace AdbcDrivers.BigQuery
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
-            StatementType, UseLegacySQL, WorkforcePoolUserProject
+            StatementType, UseLegacySQL
         };
 
         public static bool IsSafeToLog(string name)

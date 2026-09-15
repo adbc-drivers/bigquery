@@ -98,68 +98,26 @@ namespace AdbcDrivers.BigQuery.Tests
         [Fact]
         public void StsRequestBodyDeclaresAccessTokenAsJwt()
         {
-            string body = BigQueryConnection.CreateEntraStsRequestBody(
-                "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/v",
-                "an.entra.accesstoken",
-                null);
+            string body = BigQueryConnection.CreateEntraStsRequestBody(WorkloadAudience, "an.entra.accesstoken");
 
             Assert.Contains(BigQueryConstants.AzureSubjectTokenType, body);
             Assert.DoesNotContain(BigQueryConstants.EntraSubjectTokenType, body);
         }
 
-        private const string WorkforceAudience =
-            "//iam.googleapis.com/locations/global/workforcePools/pool/providers/azuread";
-
         private const string WorkloadAudience =
             "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/pool/providers/entra";
 
         /// <summary>
-        /// options.userProject is a workforce pool concept. A workload identity pool audience already
-        /// names its project, and sending userProject there imposes a serviceusage.serviceUsageConsumer
-        /// requirement the exchange would not otherwise have.
+        /// options.userProject is a workforce pool concept. This connector federates through workload
+        /// identity pools, whose audience already names the project, so the request must not carry it.
         /// </summary>
         [Fact]
-        public void StsRequestBodyOmitsUserProjectForWorkloadPoolAudiences()
+        public void StsRequestBodyDoesNotCarryUserProject()
         {
-            string body = CreateEntraStsRequestBody(WorkloadAudience, "token", "my-billing-project");
+            string body = BigQueryConnection.CreateEntraStsRequestBody(WorkloadAudience, "an.entra.accesstoken");
 
             Assert.DoesNotContain("options", body);
             Assert.DoesNotContain("userProject", body);
-            Assert.DoesNotContain("my-billing-project", body);
         }
-
-        [Fact]
-        public void StsRequestBodyIncludesUserProjectForWorkforcePoolAudiences()
-        {
-            string body = CreateEntraStsRequestBody(WorkforceAudience, "token", "my-billing-project");
-
-            Assert.Contains("userProject", body);
-            Assert.Contains("my-billing-project", body);
-        }
-
-        [Theory]
-        [InlineData(null)]
-        [InlineData("")]
-        [InlineData("   ")]
-        public void StsRequestBodyOmitsUserProjectWhenNoneSupplied(string? userProject)
-        {
-            string body = CreateEntraStsRequestBody(WorkforceAudience, "token", userProject);
-
-            Assert.DoesNotContain("userProject", body);
-        }
-
-        [Theory]
-        [InlineData(WorkforceAudience, true)]
-        [InlineData(WorkloadAudience, false)]
-        [InlineData("//iam.googleapis.com/locations/global/WORKFORCEPOOLS/p/providers/x", true)]
-        [InlineData("", false)]
-        [InlineData(null, false)]
-        public void WorkforceAudienceDetectionMatchesThePoolKind(string? audience, bool expected)
-        {
-            Assert.Equal(expected, BigQueryConnection.IsWorkforcePoolAudience(audience));
-        }
-
-        private static string CreateEntraStsRequestBody(string audience, string token, string? userProject) =>
-            BigQueryConnection.CreateEntraStsRequestBody(audience, token, userProject);
     }
 }
