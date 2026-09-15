@@ -110,11 +110,28 @@ namespace AdbcDrivers.BigQuery.Tests
         }
 
         [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
         [InlineData("no-at-sign")]
         [InlineData("two@at@signs.com")]
         [InlineData("trailing@")]
+        [InlineData("@leading.com")]
         [InlineData("space in@name.com")]
         [InlineData("semicolon;@name.com")]
+        [InlineData("slash@name.com/../evil")]
+        [InlineData(" leading-space@name.com")]
+        [InlineData("trailing-space@name.com ")]
+        // $ matches before a trailing newline, so the pattern is anchored with \z instead.
+        [InlineData("newline@name.com\n")]
+        [InlineData("newline@name.com\r\n")]
+        [InlineData("injection@name.com\nX-Evil: 1")]
+        // The previous character-by-character check accepted all of the following.
+        [InlineData("no-dot@localhost")]
+        [InlineData("empty-label@.com")]
+        [InlineData("double-dot@name..com")]
+        [InlineData("trailing-dot@name.com.")]
+        [InlineData("cyrilliс@name.com")]
+        [InlineData("ｆｕｌｌｗｉｄｔｈ@name.com")]
         public void ImpersonationRejectsMalformedServiceAccountEmails(string email)
         {
             RecordingHandler handler = RecordingHandler.RespondWith("{\"accessToken\":\"unused\"}");
@@ -125,6 +142,27 @@ namespace AdbcDrivers.BigQuery.Tests
                     httpClient, email, new[] { BigQueryConstants.EntraIdScope }, FederatedToken));
 
             Assert.Null(handler.Request);
+        }
+
+        /// <summary>
+        /// The default and service-agent accounts do not follow the user-managed naming rules, so
+        /// the pattern must stay permissive enough for all of them.
+        /// </summary>
+        [Theory]
+        [InlineData("bq-wif@example-project.iam.gserviceaccount.com")]
+        [InlineData("123456789-compute@developer.gserviceaccount.com")]
+        [InlineData("service-123456@gcp-sa-aiplatform.iam.gserviceaccount.com")]
+        [InlineData("my-project@appspot.gserviceaccount.com")]
+        [InlineData("123456789@cloudservices.gserviceaccount.com")]
+        public void ImpersonationAcceptsRealGoogleServiceAccountFormats(string email)
+        {
+            RecordingHandler handler = RecordingHandler.RespondWith("{\"accessToken\":\"impersonated\"}");
+            using HttpClient httpClient = new HttpClient(handler);
+
+            string token = WorkloadIdentityFederation.ImpersonateServiceAccount(
+                httpClient, email, new[] { BigQueryConstants.EntraIdScope }, FederatedToken);
+
+            Assert.Equal("impersonated", token);
         }
 
         [Fact]

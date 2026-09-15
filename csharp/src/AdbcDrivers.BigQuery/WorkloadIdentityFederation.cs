@@ -25,6 +25,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Apache.Arrow.Adbc;
@@ -45,6 +46,15 @@ namespace AdbcDrivers.BigQuery
         internal const string ImpersonationStep = "sa_impersonation";
 
         private const string TagPrefix = "wif.";
+
+        // Guards the value interpolated into the impersonation URL. Deliberately ASCII-only:
+        // Google service account emails are, and char.IsLetterOrDigit would accept Unicode letters.
+        // \A and \z rather than ^ and $, because $ also matches before a trailing newline.
+        // Domain labels exclude '.', so the pattern cannot backtrack ambiguously.
+        private static readonly Regex ServiceAccountEmailPattern = new Regex(
+            @"\A[A-Za-z0-9._-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+\z",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
 
         /// <summary>
         /// Exchanges an already-federated token for one belonging to <paramref name="serviceAccountEmail"/>.
@@ -72,21 +82,7 @@ namespace AdbcDrivers.BigQuery
 
         private static bool IsSafeServiceAccountEmail(string value)
         {
-            int atIndex = value.IndexOf('@');
-            if (atIndex <= 0 || atIndex != value.LastIndexOf('@') || atIndex == value.Length - 1)
-            {
-                return false;
-            }
-
-            foreach (char c in value)
-            {
-                if (!char.IsLetterOrDigit(c) && c != '-' && c != '.' && c != '_' && c != '@')
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return !string.IsNullOrEmpty(value) && ServiceAccountEmailPattern.IsMatch(value);
         }
 
         /// <summary>
