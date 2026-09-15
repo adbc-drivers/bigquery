@@ -139,6 +139,7 @@ def test_impersonate_empty_value(driver, driver_path, db_kwargs, option) -> None
         lifetime = conn.adbc_connection.get_option("bigquery.impersonate.lifetime")
         assert lifetime == "", lifetime
 
+
 def test_get_objects_hidden_dataset(driver, conn) -> None:
     # BigQuery hides datasets whose name starts with an underscore from
     # dataset listings by default. GetObjects opts into listing them, so
@@ -154,6 +155,7 @@ def test_get_objects_hidden_dataset(driver, conn) -> None:
         for schema in (catalog["catalog_db_schemas"] or [])
     ]
     assert name in schemas, f"{name} missing from {len(schemas)} listed schemas"
+
 
 def test_get_table_schema_table_metadata(driver, conn) -> None:
     # Table-level BigQuery metadata published on the Arrow schema.
