@@ -159,9 +159,7 @@ func TestIpcReaderFromArrowIteratorAttachesJobStatisticsMetadata(t *testing.T) {
 }
 
 func TestMakeDryRunReaderAttachesJobStatisticsMetadata(t *testing.T) {
-	rdr, err := makeDryRunReader(&bigquery.JobStatus{
-		Statistics: sampleJobStatistics(),
-	}, "dryrun-job")
+	rdr, err := makeDryRunReader(sampleJobStatistics(), "dryrun-job")
 	require.NoError(t, err)
 	defer rdr.Release()
 

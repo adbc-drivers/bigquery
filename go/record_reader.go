@@ -26,7 +26,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"log/slog"
 	"sync"
@@ -38,9 +37,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/googleapis/gax-go/v2/apierror"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
 )
 
 // MetadataKeyBigqueryQueryID is the Arrow schema metadata key under which the
@@ -70,144 +67,6 @@ func checkContext(ctx context.Context, maybeErr error) error {
 	return ctx.Err()
 }
 
-func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool, st *statement) (bigquery.ArrowIterator, *bigquery.JobStatus, string, int64, error) {
-	// Parameterized execution reuses query, including its job ID policy.
-	jobIDConfig := query.JobIDConfig
-	defer func() { query.JobIDConfig = jobIDConfig }()
-
-	activeJob := st.beginJob(st.cnxn.client, &query.JobIDConfig)
-	defer st.finishJob(ctx, logger, activeJob)
-
-	job, err := query.Run(ctx)
-	if err != nil {
-		return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
-	}
-	activeJob.setJob(job)
-	jobID := job.ID()
-
-	// The project id, location, and job id are all URL-safe:
-	// - Project id and job id can only contain URL-safe characters:
-	//   https://cloud.google.com/bigquery/docs/reference/rest/v2/JobReference
-	// - Locations are also URL-safe, listed here:
-	//   https://cloud.google.com/bigquery/docs/locations
-	jobLink := fmt.Sprintf(
-		"https://console.cloud.google.com/bigquery?project=%s&j=bq:%s:%s&page=queryresults",
-		job.ProjectID(), job.Location(), job.ID(),
-	)
-	wrap := func(err error) error {
-		if err == nil {
-			return err
-		}
-		if adbcErr, ok := errors.AsType[adbc.Error](err); ok {
-			adbcErr.Msg = fmt.Sprintf("%s (Query: %s)", adbcErr.Msg, jobLink)
-			return adbcErr
-		}
-		return fmt.Errorf("%w (Query: %s)", err, jobLink)
-	}
-
-	// XXX: Google SDK badness.  We can't use Wait here because queries that
-	// *fail* with a rateLimitExceeded (e.g. too many metadata operations)
-	// will get the *polling* retried infinitely in Google's SDK (I believe
-	// the SDK wants to retry "polling for job status" rate limit exceeded but
-	// doesn't differentiate between them because googleapi.CheckResponse
-	// appears to put the API error from the response object as an error of
-	// the API call, from digging around using a debugger.  In other words, it
-	// seems to be confusing "I got an error that my API request was rate
-	// limited" and "I got an error that my job was rate limited" because
-	// their internal APIs mix both errors into a single error path.)
-	js, err := safeWaitForJob(ctx, logger, job)
-	if err != nil {
-		return nil, nil, jobID, -1, wrap(err)
-	}
-	activeJob.markFinished()
-
-	if err := js.Err(); err != nil {
-		return nil, js, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "complete job"))
-	} else if !js.Done() {
-		return nil, js, jobID, -1, wrap(adbc.Error{
-			Code: adbc.StatusInternal,
-			Msg:  "[bq] Query job did not complete",
-		})
-	}
-
-	mayReturnResults := false
-	stats, statsOk := js.Statistics.Details.(*bigquery.QueryStatistics)
-	if executeUpdate {
-		if statsOk {
-			return nil, js, jobID, stats.NumDMLAffectedRows, nil
-		}
-		return nil, js, jobID, -1, nil
-	} else if query.DryRun {
-		return nil, js, jobID, js.Statistics.TotalBytesProcessed, nil
-	} else if statsOk {
-		// note that SCRIPT doesn't always have results. we catch this below
-		mayReturnResults = stats.StatementType == "SELECT" || stats.StatementType == "CALL" || stats.StatementType == "SCRIPT"
-	}
-
-	// XXX: the Google SDK badness also applies here; it makes a similar
-	// mistake with the retry, so we wait for the job above.
-	iter, err := job.Read(ctx)
-	if err != nil {
-		return nil, js, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
-	}
-
-	var arrowIterator bigquery.ArrowIterator
-	// We need to detect if this actually returned data. Originally we
-	// checked for the presence of a schema, but it turns out statements
-	// like CREATE VIEW return a schema! Then we checked if there are
-	// rows, but it turns out that bigquery-emulator returns
-	// iter.TotalRows == 0 (this is valid as per the API: the field is not
-	// _necessarily_ populated until after a call to Next). Finally we use
-	// job statistics instead
-	if mayReturnResults {
-		if arrowIterator, err = iter.ArrowIterator(); err != nil {
-			if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
-				// Script job with no results
-				// N.B. BigQuery SDK doesn't give a structured error - it's a fmt.Errorf
-				arrowIterator = emptyArrowIterator{iter.Schema}
-			} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok && apiErr.GRPCStatus() != nil && apiErr.GRPCStatus().Code() == codes.PermissionDenied {
-				// Preserve the previous error
-				// message. readSessionUser may sound
-				// unrelated but creating a "read session" is
-				// the first step of using the Storage API.
-				return nil, js, jobID, -1, wrap(adbc.Error{
-					Code: adbc.StatusUnauthorized,
-					Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
-				})
-			} else {
-				return nil, js, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
-			}
-		}
-	} else {
-		arrowIterator = emptyArrowIterator{iter.Schema}
-	}
-	totalRows := int64(iter.TotalRows)
-	return arrowIterator, js, jobID, totalRows, nil
-}
-
-func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatistics *bigquery.JobStatistics, jobID string, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
-	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
-	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
-
-	fields := make([]arrow.Field, len(arrowIterator.Schema()))
-	for i, field := range arrowIterator.Schema() {
-		fields[i], err = buildField(field, 0)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	metadata, err := metadataFromJobStatistics(jobStatistics, jobID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return rdr, arrow.NewSchema(fields, metadata), nil
-}
-
 func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) ([]bigquery.QueryParameter, error) {
 	parameters := make([]bigquery.QueryParameter, values.NumCols())
 	includeName := parameterMode == OptionValueQueryParameterModeNamed
@@ -225,92 +84,35 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 	return parameters, nil
 }
 
-func makeDryRunReader(js *bigquery.JobStatus, jobID string) (array.RecordReader, error) {
-	metadata, err := metadataFromJobStatistics(js.Statistics, jobID)
+func makeDryRunReader(stats *bigquery.JobStatistics, jobID string) (array.RecordReader, error) {
+	metadata, err := metadataFromJobStatistics(stats, jobID)
 	if err != nil {
 		return nil, err
 	}
 
-	statistics, ok := js.Statistics.Details.(*bigquery.QueryStatistics)
 	var schema *arrow.Schema
-	if !ok {
-		// No schema, return an empty schema
+	if stats == nil {
 		schema = arrow.NewSchema([]arrow.Field{}, metadata)
 	} else {
-		bqSchema := statistics.Schema
-		fields := make([]arrow.Field, len(bqSchema))
-		for i, field := range bqSchema {
-			var err error
-			fields[i], err = buildField(field, 0)
-			if err != nil {
-				return nil, err
+		statistics, ok := stats.Details.(*bigquery.QueryStatistics)
+		if !ok {
+			// No schema, return an empty schema
+			schema = arrow.NewSchema([]arrow.Field{}, metadata)
+		} else {
+			bqSchema := statistics.Schema
+			fields := make([]arrow.Field, len(bqSchema))
+			for i, field := range bqSchema {
+				var err error
+				fields[i], err = buildField(field, 0)
+				if err != nil {
+					return nil, err
+				}
 			}
+			schema = arrow.NewSchema(fields, metadata)
 		}
-		schema = arrow.NewSchema(fields, metadata)
 	}
 	rdr, _ := array.NewRecordReader(schema, []arrow.RecordBatch{})
 	return rdr, nil
-}
-
-func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, st *statement) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
-	arrowIterator, jobStatus, jobID, totalRows, err := runQuery(ctx, logger, query, false, st)
-	if err != nil {
-		return nil, -1, err
-	} else if query.DryRun || arrowIterator == nil {
-		// Dry run queries don't have an arrow iterator, so return an empty reader
-		rdr, err := makeDryRunReader(jobStatus, jobID)
-		if err != nil {
-			return nil, -1, err
-		}
-		return rdr, totalRows, nil
-	}
-
-	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, jobID, alloc)
-	if err != nil {
-		return nil, -1, err
-	}
-
-	chs := make([]chan arrow.RecordBatch, 1)
-	ctx, cancelFn := context.WithCancel(ctx)
-	ch := make(chan arrow.RecordBatch, resultRecordBufferSize)
-	chs[0] = ch
-
-	defer func() {
-		if err != nil {
-			close(ch)
-			cancelFn()
-		}
-	}()
-
-	result := &reader{
-		refCount:   1,
-		chs:        chs,
-		curChIndex: 0,
-		err:        nil,
-		cancelFn:   cancelFn,
-		schema:     schema,
-	}
-	bigqueryRdr = result
-
-	go streamRecordBatches(ctx, rdr, result, ch)
-	return bigqueryRdr, totalRows, nil
-}
-
-func streamRecordBatches(ctx context.Context, source array.RecordReader, result *reader, ch chan arrow.RecordBatch) {
-	defer close(ch)
-	defer source.Release()
-	for source.Next() && ctx.Err() == nil {
-		rec := source.RecordBatch()
-		rec.Retain()
-		select {
-		case ch <- rec:
-		case <-ctx.Done():
-			rec.Release()
-			result.setError(checkContext(ctx, nil))
-			return
-		}
-	}
-	result.setError(checkContext(ctx, source.Err()))
 }
 
 func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), st *statement) (int64, error) {
@@ -324,12 +126,12 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			query.Parameters = parameters
 		}
 
-		arrowIterator, jobStatus, jobID, rows, err := runQuery(ctx, logger, query, false, st)
+		arrowIterator, jobStatistics, jobID, rows, err := runQuery(ctx, logger, query, false, st)
 		if err != nil {
 			return -1, err
 		} else if arrowIterator == nil {
 			// Dry run
-			rdr, err := makeDryRunReader(jobStatus, jobID)
+			rdr, err := makeDryRunReader(jobStatistics, jobID)
 			if err != nil {
 				return -1, err
 			}
@@ -338,7 +140,7 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			continue
 		}
 		totalRows = rows
-		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatus.Statistics, jobID, alloc)
+		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatistics, jobID, alloc)
 		if err != nil {
 			return -1, err
 		}

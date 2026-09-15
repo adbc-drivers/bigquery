@@ -171,6 +171,36 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 			return st.bulkIngestCompression, nil
 		}
 		return st.cnxn.GetOption(ctx, key)
+	case OptionQueryJobCreationMode:
+		if st.queryConfig.JobCreationMode == nil {
+			return JobCreationModeRequired, nil
+		}
+		switch *st.queryConfig.JobCreationMode {
+		case bigquery.JobCreationModeRequired:
+			return JobCreationModeRequired, nil
+		case bigquery.JobCreationModeOptional:
+			return JobCreationModeOptional, nil
+		default:
+			return "", adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  fmt.Sprintf("[bq] unknown job creation mode: %v", *st.queryConfig.JobCreationMode),
+			}
+		}
+	case OptionQueryResultsFormat:
+		if st.queryConfig.QueryResultsFormat == nil {
+			return ResultsFormatArrow, nil
+		}
+		switch *st.queryConfig.QueryResultsFormat {
+		case bigquery.QueryResultsFormatArrow:
+			return ResultsFormatArrow, nil
+		case bigquery.QueryResultsFormatStructEncoding:
+			return ResultsFormatStructEncoding, nil
+		default:
+			return "", adbc.Error{
+				Code: adbc.StatusInternal,
+				Msg:  fmt.Sprintf("[bq] unknown query results format: %v", *st.queryConfig.QueryResultsFormat),
+			}
+		}
 	default:
 		val, err := st.cnxn.GetOption(ctx, key)
 		if err == nil {
@@ -341,6 +371,30 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.bulkIngestCompression = v
+	case OptionQueryJobCreationMode:
+		switch v {
+		case JobCreationModeRequired:
+			st.queryConfig.JobCreationMode = new(bigquery.JobCreationModeRequired)
+		case JobCreationModeOptional:
+			st.queryConfig.JobCreationMode = new(bigquery.JobCreationModeOptional)
+		default:
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid job creation mode: %s (expected %s or %s)", v, JobCreationModeRequired, JobCreationModeOptional),
+			}
+		}
+	case OptionQueryResultsFormat:
+		switch v {
+		case ResultsFormatArrow:
+			st.queryConfig.QueryResultsFormat = new(bigquery.QueryResultsFormatArrow)
+		case ResultsFormatStructEncoding:
+			st.queryConfig.QueryResultsFormat = new(bigquery.QueryResultsFormatStructEncoding)
+		default:
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid query results format: %s (expected %s or %s)", v, ResultsFormatArrow, ResultsFormatStructEncoding),
+			}
+		}
 
 	default:
 		return adbc.Error{

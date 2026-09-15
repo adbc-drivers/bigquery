@@ -92,6 +92,17 @@ const (
 	OptionQueryCreateSession           = "bigquery.query.create_session"
 	OptionQueryJobTimeout              = "bigquery.query.job_timeout"
 
+	OptionQueryJobCreationMode = "bigquery.query.job_creation_mode"
+	JobCreationModeRequired    = "required"
+	JobCreationModeOptional    = "optional"
+
+	OptionQueryResultsFormat           = "bigquery.query.results_format"
+	ResultsFormatArrow                 = "arrow"
+	ResultsFormatStructEncoding        = "struct_encoding"
+	OptionQueryArrowResultsCompression = "bigquery.query.arrow_results_compression"
+	ResultsCompressionLz4              = "lz4"
+	ResultsCompressionZstd             = "zstd"
+
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 

@@ -1381,6 +1381,34 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 	suite.Require().NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestJobCreationOptional() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT 42 AS THEANSWER"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	// TODO: don't require this option
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	suite.EqualValues(1, n)
+	suite.True(rdr.Next())
+	result := rdr.RecordBatch()
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{
+			Name: "THEANSWER", Type: arrow.PrimitiveTypes.Int64,
+			Nullable: true,
+		},
+	}, nil)
+	expected := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), expectedSchema, `[{"THEANSWER": 42}]`)
+	defer expected.Release()
+
+	suite.Truef(array.RecordEqual(expected, result), "expected: %s\ngot: %s", expected, result)
+
+	suite.False(rdr.Next())
+	suite.Require().NoError(rdr.Err())
+}
+
 func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 
 	suite.Require().NoError(suite.Quirks.DropTable(suite.cnxn, "bulk_ingest"))
