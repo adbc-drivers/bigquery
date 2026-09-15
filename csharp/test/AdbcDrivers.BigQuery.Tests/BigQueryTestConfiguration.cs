@@ -59,27 +59,6 @@ namespace AdbcDrivers.BigQuery.Tests
         public string Audience { get; set; } = string.Empty;
 
         /// <summary>
-        /// The Entra tenant used by the Workload Identity Federation authentication type.
-        /// </summary>
-        [JsonPropertyName("tenantId")]
-        public string TenantId { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Optional Application ID URI. Defaults to api://{clientId} when omitted.
-        /// </summary>
-        [JsonPropertyName("entraResourceUri")]
-        public string EntraResourceUri { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Base64-encoded PKCS#12 certificate, used when the tenant forbids client secrets.
-        /// </summary>
-        [JsonPropertyName("clientCertificate")]
-        public string ClientCertificate { get; set; } = string.Empty;
-
-        [JsonPropertyName("clientCertificatePassword")]
-        public string ClientCertificatePassword { get; set; } = string.Empty;
-
-        /// <summary>
         /// Optional Google service account to impersonate after the token exchange.
         /// </summary>
         [JsonPropertyName("serviceAccountImpersonationEmail")]
