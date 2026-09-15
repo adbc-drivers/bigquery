@@ -66,6 +66,7 @@ namespace AdbcDrivers.BigQuery
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
+        public const string UseJobCreationMode = "adbc.bigquery.statement.use_job_creation_required_mode";
 
         /// <summary>
         /// Overrides the BigQuery REST API endpoint for testing (e.g. "localhost:1234").
@@ -91,7 +92,7 @@ namespace AdbcDrivers.BigQuery
             AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
-            MaxFetchConcurrency, MaximumRetryAttempts, ProjectId, RetryDelayMs, StatementIndex,
+            MaxFetchConcurrency, MaximumRetryAttempts, UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,
             StatementType, UseLegacySQL
         };
 

@@ -149,6 +149,27 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
+        public void ExecuteQueryWithJobCreationMode_PreservesSessionId()
+        {
+            using (var resource = new BigQueryResource())
+            {
+                resource.Connection.AutoCommit = false;
+                using AdbcStatement statement = resource.Connection.CreateStatement();
+                statement.SetOption(BigQueryParameters.UseJobCreationMode, "true");
+                statement.SqlQuery = "SELECT 42 AS value";
+
+                QueryResult result = statement.ExecuteQuery();
+                result.Stream?.Dispose();
+
+                Assert.NotNull(resource.Server.LastQueryRequest);
+                var sessionProperty = Assert.Single(
+                    resource.Server.LastQueryRequest!.ConnectionProperties,
+                    property => property.Key == "session_id");
+                Assert.False(string.IsNullOrEmpty(sessionProperty.Value));
+            }
+        }
+
+        [Fact]
         public void Dispose_WithActiveSession_AbortsSession()
         {
             using (var resource = new BigQueryResource())
