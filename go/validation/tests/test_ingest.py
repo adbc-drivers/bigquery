@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import adbc_driver_manager
 import adbc_drivers_validation.tests.ingest
+import pytest
 
 from . import bigquery, utils
 
@@ -29,7 +31,15 @@ def pytest_generate_tests(metafunc) -> None:
 class TestIngest(adbc_drivers_validation.tests.ingest.TestIngest):
     @utils.retry_rate_limit
     def test_create(self, driver, conn, query) -> None:
-        super().test_create(driver, conn, query)
+        try:
+            super().test_create(driver, conn, query)
+        except adbc_driver_manager.Error as error:
+            if (
+                query.name == "ingest/string:storagewrite"
+                and "maximum retry attempts exceeded" in str(error)
+            ):
+                pytest.xfail("Known flaky BigQuery Storage Write API failure")
+            raise
 
     @utils.retry_rate_limit
     def test_append(self, driver, conn, query) -> None:

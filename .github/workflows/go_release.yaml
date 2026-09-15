@@ -78,7 +78,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e  # v0.10.2
         with:
           pixi-version: v0.72.0
           run-install: false
@@ -126,6 +126,7 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_DATASET_ID: ${{ secrets.BIGQUERY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_SECONDARY_DATASET_ID: ${{ secrets.BIGQUERY_SECONDARY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
+          BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL: ${{ secrets.BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL }} # zizmor: ignore[secrets-outside-env]
         working-directory: go
         run: |
           set -a
@@ -198,7 +199,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e  # v0.10.2
         with:
           pixi-version: v0.72.0
           run-install: false
@@ -254,6 +255,7 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_DATASET_ID: ${{ secrets.BIGQUERY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
           BIGQUERY_SECONDARY_DATASET_ID: ${{ secrets.BIGQUERY_SECONDARY_DATASET_ID }} # zizmor: ignore[secrets-outside-env]
+          BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL: ${{ secrets.BIGQUERY_IMPERSONATE_TARGET_PRINCIPAL }} # zizmor: ignore[secrets-outside-env]
         working-directory: go
         run: |
           set -a
@@ -337,7 +339,7 @@ jobs:
           check-latest: true
           go-version-file: go/go.mod
 
-      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e  # v0.10.2
         with:
           pixi-version: v0.72.0
           run-install: false
@@ -413,7 +415,7 @@ jobs:
           check-latest: true
           go-version: "stable"
 
-      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e  # v0.10.2
         with:
           pixi-version: v0.72.0
           run-install: false
@@ -491,7 +493,7 @@ jobs:
         with:
           cache: false
           go-version: 'stable'
-      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e  # v0.10.2
         with:
           pixi-version: v0.72.0
           run-install: false
@@ -552,7 +554,7 @@ jobs:
           persist-credentials: false
           submodules: 'recursive'
 
-      - uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347  # v0.10.1
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e  # v0.10.2
         with:
           pixi-version: v0.72.0
           run-install: false

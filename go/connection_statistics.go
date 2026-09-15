@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/bigquery"
@@ -148,6 +149,11 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 
 // getTableStatistics retrieves statistics for tables in a dataset
 func (c *connectionImpl) getTableStatistics(ctx context.Context, project, dataset string, tablePattern *regexp.Regexp, tableName *string, approximate bool) ([]driverbase.Statistic, error) {
+	// We can't query information_schema for hidden datasets, so bail early.
+	if strings.HasPrefix(dataset, "_") {
+		return nil, nil
+	}
+
 	// We intentionally resolve the exact table set with the Tables API first
 	// instead of relying on a direct LIKE filter against INFORMATION_SCHEMA.
 	// A broad metadata-view scan can still be expensive for wide patterns, while

@@ -243,9 +243,16 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 	case OptionImpersonateTargetPrincipal:
 		d.impersonateTargetPrincipal = value
 	case OptionImpersonateDelegates:
-		d.impersonateDelegates = strings.Split(value, ",")
+		// Guard against strings.Split("", ",") yielding [""]. These values are
+		// copied into the connection by Open, so an unguarded split here would
+		// defeat the same guard on the connection side.
+		if value != "" {
+			d.impersonateDelegates = strings.Split(value, ",")
+		}
 	case OptionImpersonateScopes:
-		d.impersonateScopes = strings.Split(value, ",")
+		if value != "" {
+			d.impersonateScopes = strings.Split(value, ",")
+		}
 	case OptionImpersonateLifetime:
 		duration, err := time.ParseDuration(value)
 		if err != nil {
