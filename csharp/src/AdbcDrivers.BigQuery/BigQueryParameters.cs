@@ -41,7 +41,6 @@ namespace AdbcDrivers.BigQuery
         public const string ClientTimeout = "adbc.bigquery.client.timeout";
 
         /// <summary>
-        /// <summary>
         /// Optional Google service account to impersonate after the Security Token Service exchange.
         /// </summary>
         public const string ServiceAccountImpersonationEmail = "adbc.bigquery.service_account_impersonation_email";

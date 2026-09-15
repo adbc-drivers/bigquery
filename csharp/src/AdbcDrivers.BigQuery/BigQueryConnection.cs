@@ -638,12 +638,14 @@ namespace AdbcDrivers.BigQuery
 
             this.properties.TryGetValue(BigQueryParameters.Scopes, out string? scopes);
 
-            string scope = string.IsNullOrWhiteSpace(scopes)
-                ? BigQueryConstants.EntraIdScope
-                : string.Join(" ", scopes!.Split(',').Where(x => x.Length > 0));
+            // generateAccessToken takes one array element per scope; joining them would be sent as
+            // a single malformed scope.
+            string[] scopeList = string.IsNullOrWhiteSpace(scopes)
+                ? new[] { BigQueryConstants.EntraIdScope }
+                : scopes!.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
 
             return WorkloadIdentityFederation.ImpersonateServiceAccount(
-                this.httpClient, impersonationEmail!, scope, federatedToken!, activity);
+                this.httpClient, impersonationEmail!, scopeList, federatedToken!, activity);
         }
 
         public override IArrowArrayStream GetInfo(IReadOnlyList<AdbcInfoCode> codes)
@@ -2094,7 +2096,7 @@ namespace AdbcDrivers.BigQuery
                 ["subjectToken"] = entraAccessToken,
                 ["audience"] = audience,
                 ["grantType"] = BigQueryConstants.EntraGrantType,
-                ["subjectTokenType"] = BigQueryConstants.EntraSubjectTokenType,
+                ["subjectTokenType"] = BigQueryConstants.AzureSubjectTokenType,
                 ["requestedTokenType"] = BigQueryConstants.EntraRequestedTokenType
             };
 

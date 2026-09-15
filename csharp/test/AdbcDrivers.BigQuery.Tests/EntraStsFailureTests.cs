@@ -38,9 +38,9 @@ namespace AdbcDrivers.BigQuery.Tests
         }
 
         /// <summary>
-        /// Regression guard for the real failure seen when a provider maps google.subject to
-        /// assertion.oid but the connector federates an Entra id_token, which has no oid claim.
-        /// The remediation is only discoverable from the response body.
+        /// Regression guard for the real failure seen when a provider mapped google.subject to
+        /// assertion.oid but the connector federated an Entra id_token, which had no oid claim.
+        /// The remediation was only discoverable from the response body.
         /// </summary>
         [Fact]
         public void StsFailureMessageSurfacesUnmappedSubjectReason()
@@ -64,6 +64,47 @@ namespace AdbcDrivers.BigQuery.Tests
 
             Assert.Contains("403", message);
             Assert.Contains("(no response body)", message);
+        }
+
+        [Fact]
+        public void TokenFailureMessageIncludesStatusCodeAndResponseBody()
+        {
+            const string body = "{\"error\":\"invalid_grant\"}";
+
+            string message = BigQueryConnection.BuildTokenFailureMessage(HttpStatusCode.Unauthorized, body);
+
+            Assert.Contains("401", message);
+            Assert.Contains("Unauthorized", message);
+            Assert.Contains(body, message);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void TokenFailureMessageHandlesMissingResponseBody(string? body)
+        {
+            string message = BigQueryConnection.BuildTokenFailureMessage(HttpStatusCode.BadGateway, body);
+
+            Assert.Contains("502", message);
+            Assert.Contains("no response body", message);
+        }
+
+        /// <summary>
+        /// The connector federates an Entra *access* token, so the subject token type must be the
+        /// generic JWT type. Declaring it as an id_token misrepresents the credential to the
+        /// Security Token Service.
+        /// </summary>
+        [Fact]
+        public void StsRequestBodyDeclaresAccessTokenAsJwt()
+        {
+            string body = BigQueryConnection.CreateEntraStsRequestBody(
+                "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/v",
+                "an.entra.accesstoken",
+                null);
+
+            Assert.Contains(BigQueryConstants.AzureSubjectTokenType, body);
+            Assert.DoesNotContain(BigQueryConstants.EntraSubjectTokenType, body);
         }
     }
 }

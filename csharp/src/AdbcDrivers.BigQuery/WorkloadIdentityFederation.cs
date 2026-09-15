@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -35,10 +36,9 @@ namespace AdbcDrivers.BigQuery
     /// https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds.
     /// </summary>
     /// <remarks>
-    /// An Entra service principal authenticates with the client credentials grant, the resulting
-    /// JWT is exchanged at the Google Security Token Service for a federated access token, and the
-    /// federated token optionally impersonates a Google service account. No long-lived Google
-    /// service account key is involved, and every token produced here is short-lived.
+    /// A Microsoft Entra access token is exchanged at the Google Security Token Service elsewhere,
+    /// and the resulting federated token impersonates a Google service account here. No long-lived
+    /// Google service account key is involved, and every token used here is short-lived.
     /// </remarks>
     internal static class WorkloadIdentityFederation
     {
@@ -53,11 +53,12 @@ namespace AdbcDrivers.BigQuery
         public static string ImpersonateServiceAccount(
             HttpClient httpClient,
             string serviceAccountEmail,
-            string scope,
+            IReadOnlyList<string> scopes,
             string federatedToken,
             Activity? activity = null)
         {
             if (httpClient == null) throw new ArgumentNullException(nameof(httpClient));
+            if (scopes == null || scopes.Count == 0) throw new ArgumentException("At least one scope is required.", nameof(scopes));
 
             if (!IsSafeServiceAccountEmail(serviceAccountEmail))
             {
@@ -65,7 +66,7 @@ namespace AdbcDrivers.BigQuery
                     $"The {BigQueryParameters.ServiceAccountImpersonationEmail} parameter is not a valid service account email address.");
             }
 
-            return ImpersonateServiceAccountAsync(httpClient, serviceAccountEmail, scope, federatedToken, activity, default)
+            return ImpersonateServiceAccountAsync(httpClient, serviceAccountEmail, scopes, federatedToken, activity, default)
                 .GetAwaiter().GetResult();
         }
 
@@ -94,7 +95,7 @@ namespace AdbcDrivers.BigQuery
         private static async Task<string> ImpersonateServiceAccountAsync(
             HttpClient httpClient,
             string serviceAccountEmail,
-            string scope,
+            IReadOnlyList<string> scopes,
             string federatedToken,
             Activity? activity,
             CancellationToken cancellationToken)
@@ -104,7 +105,7 @@ namespace AdbcDrivers.BigQuery
                 BigQueryConstants.ServiceAccountImpersonationUrlFormat,
                 Uri.EscapeDataString(serviceAccountEmail));
 
-            string json = JsonSerializer.Serialize(new ImpersonationRequest { Scope = new[] { scope } });
+            string json = JsonSerializer.Serialize(new ImpersonationRequest { Scope = scopes.ToArray() });
 
             using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, impersonationUrl)
             {
