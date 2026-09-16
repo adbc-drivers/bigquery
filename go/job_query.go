@@ -54,9 +54,11 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnha
 	}
 
 	metadata := make(map[string]string)
-	err = schemaEnhancer.GetMetadata(metadata)
-	if err != nil {
-		return nil, nil, err
+	if schemaEnhancer != nil {
+		err = schemaEnhancer.GetMetadata(metadata)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return rdr, arrow.NewSchema(fields, new(arrow.MetadataFrom(metadata))), nil
 }
@@ -88,16 +90,19 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 			if err != nil {
 				return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "get job from query response")
 			}
+
+			// TODO(lidavidm): it is possible to get an inline response here - we could return it to optimize time-to-first-row
 		} else if resp != nil {
 			if !resp.JobComplete {
-				// TODO: handle this case (I think it means we got an inline response and then need to wait for the rest of the results via the regular path - but it would need to be handled above. Is it possible to get here and not have a job? Maybe, if we get a page token instead (but can the page token path return Arrow?))
-				return nil, enhancer, "", -1, adbc.Error{
+				// TODO: is it possible to get here? It would mean no job was created, but the query is incomplete.
+				// The Python SDK above does not handle this - it only uses the Storage Read API to fetch remaining results
+				return nil, nil, "", -1, adbc.Error{
 					Code: adbc.StatusInternal,
-					Msg:  "[bq] no job but query is not complete",
+					Msg:  "[bq] no job but query is not complete (Google backend error?)",
 				}
 			} else if resp.ArrowSchema == nil || resp.ArrowRecordBatch == nil {
 				// TODO: handle the "struct_encoding" case
-				return nil, enhancer, "", -1, adbc.Error{
+				return nil, nil, "", -1, adbc.Error{
 					Code: adbc.StatusInternal,
 					Msg:  "[bq] no job but query is complete but no results",
 				}
@@ -110,8 +115,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 			}
 			return it, enhancer, "", int64(resp.TotalRows), nil
 		}
-		// TODO: there should be new metadata about whether a job was created
-		// neither job nor iterator => query was not suitable, create a job below
+		// neither job nor API response => query was not suitable, create a job below
 	}
 
 	activeJob := st.beginJob(st.cnxn.client, &query.JobIDConfig)
