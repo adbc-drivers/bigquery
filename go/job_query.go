@@ -20,11 +20,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/flight"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/googleapis/gax-go/v2/apierror"
@@ -35,7 +37,7 @@ import (
 
 // Helpers to manage BigQuery Jobs and query APIs.
 
-func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatistics *bigquery.JobStatistics, jobID string, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
+func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnhancer schemaEnhancer, jobID string, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
 	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
 
@@ -51,19 +53,22 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, jobStatist
 		return nil, nil, err
 	}
 
-	metadata, err := metadataFromJobStatistics(jobStatistics, jobID)
+	metadata := make(map[string]string)
+	err = schemaEnhancer.GetMetadata(metadata)
 	if err != nil {
 		return nil, nil, err
 	}
-	return rdr, arrow.NewSchema(fields, metadata), nil
+	return rdr, arrow.NewSchema(fields, new(arrow.MetadataFrom(metadata))), nil
 }
 
-func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, executeUpdate bool, st *statement) (bigquery.ArrowIterator, *bigquery.JobStatistics, string, int64, error) {
+// post-condition: ArrowIterator and schemaEnhancer are both non-nil if err is nil; other fields may be populated if possible
+func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, executeUpdate bool, st *statement) (bigquery.ArrowIterator, schemaEnhancer, string, int64, error) {
 	// Parameterized execution reuses query, including its job ID policy.
 	jobIDConfig := query.JobIDConfig
 	defer func() { query.JobIDConfig = jobIDConfig }()
 
 	var job *bigquery.Job
+	var enhancer schemaEnhancer
 	var err error
 	if !query.DryRun && query.JobCreationMode != nil && *query.JobCreationMode == bigquery.JobCreationModeOptional {
 		// The behavior here is very muddled; the public API
@@ -71,21 +76,28 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 		// Reference used instead:
 		// https://github.com/googleapis/google-cloud-python/blob/1857302d5c602087b9a782c62694c33013eb77ea/packages/google-cloud-bigquery/google/cloud/bigquery/table.py#L2306
 		var resp *bq.QueryResponse
-		resp, job, _, err := query.TryRead(ctx)
+		resp, err = query.TryRead(ctx)
 		if err != nil {
 			return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "read query")
-		} else if job != nil {
-			// query created a job; fallthrough
+		}
+
+		enhancer = &queryResponseSchemaEnhancer{resp: resp}
+		if jr := resp.JobReference; jr != nil {
+			// query created a job
+			job, err = client.JobFromProject(ctx, jr.ProjectId, jr.JobId, jr.Location)
+			if err != nil {
+				return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "get job from query response")
+			}
 		} else if resp != nil {
 			if !resp.JobComplete {
 				// TODO: handle this case (I think it means we got an inline response and then need to wait for the rest of the results via the regular path - but it would need to be handled above. Is it possible to get here and not have a job? Maybe, if we get a page token instead (but can the page token path return Arrow?))
-				return nil, nil, "", -1, adbc.Error{
+				return nil, enhancer, "", -1, adbc.Error{
 					Code: adbc.StatusInternal,
 					Msg:  "[bq] no job but query is not complete",
 				}
 			} else if resp.ArrowSchema == nil || resp.ArrowRecordBatch == nil {
 				// TODO: handle the "struct_encoding" case
-				return nil, nil, "", -1, adbc.Error{
+				return nil, enhancer, "", -1, adbc.Error{
 					Code: adbc.StatusInternal,
 					Msg:  "[bq] no job but query is complete but no results",
 				}
@@ -96,7 +108,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 			if err != nil {
 				return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "create inline Arrow iterator")
 			}
-			return it, nil, "", int64(resp.TotalRows), nil
+			return it, enhancer, "", int64(resp.TotalRows), nil
 		}
 		// TODO: there should be new metadata about whether a job was created
 		// neither job nor iterator => query was not suitable, create a job below
@@ -151,10 +163,16 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	}
 	activeJob.markFinished()
 
+	if enhancer != nil {
+		enhancer = &compositeSchemaEnhancer{enhancers: []schemaEnhancer{enhancer, &jobStatisticsSchemaEnhancer{stats: js.Statistics, jobID: jobID}}}
+	} else {
+		enhancer = &jobStatisticsSchemaEnhancer{stats: js.Statistics, jobID: jobID}
+	}
+
 	if err := js.Err(); err != nil {
-		return nil, js.Statistics, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "complete job"))
+		return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "complete job"))
 	} else if !js.Done() {
-		return nil, js.Statistics, jobID, -1, wrap(adbc.Error{
+		return nil, enhancer, jobID, -1, wrap(adbc.Error{
 			Code: adbc.StatusInternal,
 			Msg:  "[bq] Query job did not complete",
 		})
@@ -164,11 +182,15 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	stats, statsOk := js.Statistics.Details.(*bigquery.QueryStatistics)
 	if executeUpdate {
 		if statsOk {
-			return nil, js.Statistics, jobID, stats.NumDMLAffectedRows, nil
+			return nil, enhancer, jobID, stats.NumDMLAffectedRows, nil
 		}
-		return nil, js.Statistics, jobID, -1, nil
+		return nil, enhancer, jobID, -1, nil
 	} else if query.DryRun {
-		return nil, js.Statistics, jobID, js.Statistics.TotalBytesProcessed, nil
+		it, err := newDryRunArrowIterator(js.Statistics, jobID)
+		if err != nil {
+			return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "create dry run Arrow iterator"))
+		}
+		return it, enhancer, jobID, js.Statistics.TotalBytesProcessed, nil
 	} else if statsOk {
 		// note that SCRIPT doesn't always have results. we catch this below
 		mayReturnResults = stats.StatementType == "SELECT" || stats.StatementType == "CALL" || stats.StatementType == "SCRIPT"
@@ -178,7 +200,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// mistake with the retry, so we wait for the job above.
 	iter, err := job.Read(ctx)
 	if err != nil {
-		return nil, js.Statistics, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
+		return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
 	}
 
 	var arrowIterator bigquery.ArrowIterator
@@ -200,35 +222,28 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 				// message. readSessionUser may sound
 				// unrelated but creating a "read session" is
 				// the first step of using the Storage API.
-				return nil, js.Statistics, jobID, -1, wrap(adbc.Error{
+				return nil, enhancer, jobID, -1, wrap(adbc.Error{
 					Code: adbc.StatusUnauthorized,
 					Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
 				})
 			} else {
-				return nil, js.Statistics, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
+				return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
 			}
 		}
 	} else {
 		arrowIterator = emptyArrowIterator{iter.Schema}
 	}
 	totalRows := int64(iter.TotalRows)
-	return arrowIterator, js.Statistics, jobID, totalRows, nil
+	return arrowIterator, enhancer, jobID, totalRows, nil
 }
 
-func runPlainQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, st *statement) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
-	arrowIterator, jobStatistics, jobID, totalRows, err := runQuery(ctx, logger, query, false, st)
+func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, alloc memory.Allocator, resultRecordBufferSize int, st *statement) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
+	arrowIterator, schemaEnhancer, jobID, totalRows, err := runQuery(ctx, logger, client, query, false, st)
 	if err != nil {
 		return nil, -1, err
-	} else if query.DryRun || arrowIterator == nil {
-		// Dry run queries don't have an arrow iterator, so return an empty reader
-		rdr, err := makeDryRunReader(jobStatistics, jobID)
-		if err != nil {
-			return nil, -1, err
-		}
-		return rdr, totalRows, nil
 	}
 
-	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatistics, jobID, alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, schemaEnhancer, jobID, alloc)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -323,5 +338,60 @@ func (it *inlineArrowIterator) Schema() bigquery.Schema {
 }
 
 func (it *inlineArrowIterator) SerializedArrowSchema() []byte {
+	return it.arrowSchema
+}
+
+type dryRunArrowIterator struct {
+	schema      bigquery.Schema
+	arrowSchema []byte
+}
+
+var _ bigquery.ArrowIterator = &dryRunArrowIterator{}
+
+func newDryRunArrowIterator(stats *bigquery.JobStatistics, jobID string) (*dryRunArrowIterator, error) {
+	md := make(map[string]string)
+	err := metadataFromJobStatistics(md, stats, jobID)
+	if err != nil {
+		return nil, err
+	}
+	metadata := new(arrow.MetadataFrom(md))
+
+	var arrowSchema *arrow.Schema
+	var schema bigquery.Schema
+	if stats == nil {
+		arrowSchema = arrow.NewSchema([]arrow.Field{}, metadata)
+	} else {
+		statistics, ok := stats.Details.(*bigquery.QueryStatistics)
+		if !ok {
+			// No schema, return an empty schema
+			arrowSchema = arrow.NewSchema([]arrow.Field{}, metadata)
+		} else {
+			schema = statistics.Schema
+			fields := make([]arrow.Field, len(schema))
+			for i, field := range schema {
+				var err error
+				fields[i], err = buildField(field, 0)
+				if err != nil {
+					return nil, err
+				}
+			}
+			arrowSchema = arrow.NewSchema(fields, metadata)
+		}
+	}
+	return &dryRunArrowIterator{
+		schema:      slices.Clone(schema),
+		arrowSchema: flight.SerializeSchema(arrowSchema, memory.DefaultAllocator),
+	}, nil
+}
+
+func (it *dryRunArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
+	return nil, iterator.Done
+}
+
+func (it *dryRunArrowIterator) Schema() bigquery.Schema {
+	return it.schema
+}
+
+func (it *dryRunArrowIterator) SerializedArrowSchema() []byte {
 	return it.arrowSchema
 }

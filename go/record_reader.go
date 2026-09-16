@@ -84,38 +84,7 @@ func getQueryParameter(values arrow.RecordBatch, row int, parameterMode string) 
 	return parameters, nil
 }
 
-func makeDryRunReader(stats *bigquery.JobStatistics, jobID string) (array.RecordReader, error) {
-	metadata, err := metadataFromJobStatistics(stats, jobID)
-	if err != nil {
-		return nil, err
-	}
-
-	var schema *arrow.Schema
-	if stats == nil {
-		schema = arrow.NewSchema([]arrow.Field{}, metadata)
-	} else {
-		statistics, ok := stats.Details.(*bigquery.QueryStatistics)
-		if !ok {
-			// No schema, return an empty schema
-			schema = arrow.NewSchema([]arrow.Field{}, metadata)
-		} else {
-			bqSchema := statistics.Schema
-			fields := make([]arrow.Field, len(bqSchema))
-			for i, field := range bqSchema {
-				var err error
-				fields[i], err = buildField(field, 0)
-				if err != nil {
-					return nil, err
-				}
-			}
-			schema = arrow.NewSchema(fields, metadata)
-		}
-	}
-	rdr, _ := array.NewRecordReader(schema, []arrow.RecordBatch{})
-	return rdr, nil
-}
-
-func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), st *statement) (int64, error) {
+func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, group *errgroup.Group, client *bigquery.Client, query *bigquery.Query, rec arrow.RecordBatch, ch chan arrow.RecordBatch, parameterMode string, alloc memory.Allocator, rdrSchema func(schema *arrow.Schema), st *statement) (int64, error) {
 	totalRows := int64(-1)
 	for i := range int(rec.NumRows()) {
 		parameters, err := getQueryParameter(rec, i, parameterMode)
@@ -126,18 +95,9 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 			query.Parameters = parameters
 		}
 
-		arrowIterator, jobStatistics, jobID, rows, err := runQuery(ctx, logger, query, false, st)
+		arrowIterator, jobStatistics, jobID, rows, err := runQuery(ctx, logger, client, query, false, st)
 		if err != nil {
 			return -1, err
-		} else if arrowIterator == nil {
-			// Dry run
-			rdr, err := makeDryRunReader(jobStatistics, jobID)
-			if err != nil {
-				return -1, err
-			}
-			rdrSchema(rdr.Schema())
-			rdr.Release()
-			continue
 		}
 		totalRows = rows
 		rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, jobStatistics, jobID, alloc)
@@ -165,9 +125,9 @@ func queryRecordWithSchemaCallback(ctx context.Context, logger *slog.Logger, gro
 
 // kicks off a goroutine for each endpoint and returns a reader which
 // gathers all of the records as they come in.
-func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int, st *statement) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
+func newRecordReader(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, boundParameters array.RecordReader, parameterMode string, alloc memory.Allocator, resultRecordBufferSize, prefetchConcurrency int, st *statement) (bigqueryRdr array.RecordReader, totalRows int64, err error) {
 	if boundParameters == nil {
-		return runPlainQuery(ctx, logger, query, alloc, resultRecordBufferSize, st)
+		return runPlainQuery(ctx, logger, client, query, alloc, resultRecordBufferSize, st)
 	}
 	defer boundParameters.Release()
 
@@ -204,7 +164,7 @@ func newRecordReader(ctx context.Context, logger *slog.Logger, query *bigquery.Q
 		// Each call to Record() on the record reader is allowed to release the previous record
 		// and since we're doing this sequentially
 		// we don't need to call rec.Retain() here and call call rec.Release() in queryRecordWithSchemaCallback
-		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
+		batchRows, err := queryRecordWithSchemaCallback(ctx, logger, group, client, query, rec, ch, parameterMode, alloc, func(schema *arrow.Schema) {
 			rdr.schema = schema
 		}, st)
 		if err != nil {

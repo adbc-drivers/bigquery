@@ -1390,6 +1390,8 @@ func (suite *BigQueryTests) TestJobCreationOptional() {
 	suite.Require().NoError(err)
 	defer rdr.Release()
 
+	suite.Equal(-1, rdr.Schema().Metadata().FindKey("BIGQUERY:job_creation_reason"))
+
 	suite.EqualValues(1, n)
 	suite.True(rdr.Next())
 	result := rdr.RecordBatch()
@@ -1406,6 +1408,29 @@ func (suite *BigQueryTests) TestJobCreationOptional() {
 	suite.Truef(array.RecordEqual(expected, result), "expected: %s\ngot: %s", expected, result)
 
 	suite.False(rdr.Next())
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestJobCreationOptionalFallback() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM `bigquery-public-data`.google_books_ngrams_2020.eng_fiction_1 LIMIT 5000"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	// TODO: don't require this option
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.True(ok)
+	suite.T().Log("job creation reason:", reason)
+	suite.NotEmpty(reason)
+
+	suite.EqualValues(5000, n)
+	nrows := 0
+	for rdr.Next() {
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(5000, nrows)
 	suite.Require().NoError(rdr.Err())
 }
 

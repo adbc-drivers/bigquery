@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/apache/arrow-go/v18/arrow/flight"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,9 +64,9 @@ func TestEmptyArrowIteratorSerializedArrowSchema(t *testing.T) {
 func TestMetadataFromJobStatistics(t *testing.T) {
 	stats := sampleJobStatistics()
 
-	md, err := metadataFromJobStatistics(stats, "")
+	metadata := make(map[string]string)
+	err := metadataFromJobStatistics(metadata, stats, "")
 	require.NoError(t, err)
-	metadata := md.ToMap()
 
 	assert.Equal(t, "2026-01-02T03:04:05.000000006Z", metadata["BIGQUERY:statistics:creation_time"])
 	assert.Equal(t, "1024", metadata["BIGQUERY:statistics:total_bytes_processed"])
@@ -148,7 +149,10 @@ func TestIpcReaderFromArrowIteratorAttachesJobStatisticsMetadata(t *testing.T) {
 	iter := emptyArrowIterator{}
 
 	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	rdr, schema, err := ipcReaderFromArrowIterator(iter, sampleJobStatistics(), "job-abc", alloc)
+	rdr, schema, err := ipcReaderFromArrowIterator(iter, &jobStatisticsSchemaEnhancer{
+		stats: sampleJobStatistics(),
+		jobID: "job-abc",
+	}, "job-abc", alloc)
 	require.NoError(t, err)
 	defer rdr.Release()
 
@@ -158,12 +162,14 @@ func TestIpcReaderFromArrowIteratorAttachesJobStatisticsMetadata(t *testing.T) {
 	assert.Equal(t, "job-abc", metadata[MetadataKeyBigqueryQueryID])
 }
 
-func TestMakeDryRunReaderAttachesJobStatisticsMetadata(t *testing.T) {
-	rdr, err := makeDryRunReader(sampleJobStatistics(), "dryrun-job")
+func TestDryRunArrowIteratorAttachesJobStatisticsMetadata(t *testing.T) {
+	it, err := newDryRunArrowIterator(sampleJobStatistics(), "dryrun-job")
 	require.NoError(t, err)
-	defer rdr.Release()
 
-	metadata := rdr.Schema().Metadata().ToMap()
+	schema, err := flight.DeserializeSchema(it.SerializedArrowSchema(), nil)
+	require.NoError(t, err)
+
+	metadata := schema.Metadata().ToMap()
 	assert.Equal(t, "3", metadata["BIGQUERY:statistics:query:billing_tier"])
 	assert.Equal(t, "SELECT", metadata["BIGQUERY:statistics:query:statement_type"])
 	assert.Equal(t, "dryrun-job", metadata[MetadataKeyBigqueryQueryID])

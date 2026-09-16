@@ -84,5 +84,5 @@ require (
 // branch: bigquery/v1.81.0-patch
 // replace cloud.google.com/go/bigquery => github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260826060005-3e667042799f
 
-// branch: arrow-compression
-replace cloud.google.com/go/bigquery => github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260916031248-c6613a24ec31
+// branch: simple-query
+replace cloud.google.com/go/bigquery => github.com/lidavidm/google-cloud-go/bigquery v0.0.0-20260916055234-d7841fc3f7f9
