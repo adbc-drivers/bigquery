@@ -1409,6 +1409,28 @@ func (suite *BigQueryTests) TestJobCreationOptional() {
 	suite.Require().NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestJobCreationOptionalPseudocolumns() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "CREATE TABLE pseudotest (tid INT64) PARTITION BY _PARTITIONDATE"))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT _PARTITIONTIME AS PT FROM pseudotest"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	// TODO: don't require this option
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	// BigQuery doesn't return pseudocolumns in Arrow response
+	expectedSchema := arrow.NewSchema([]arrow.Field{}, nil)
+
+	suite.EqualValues(0, n)
+	suite.Truef(expectedSchema.Equal(rdr.Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+	suite.False(rdr.Next())
+	suite.Require().NoError(rdr.Err())
+}
+
 func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 
 	suite.Require().NoError(suite.Quirks.DropTable(suite.cnxn, "bulk_ingest"))
