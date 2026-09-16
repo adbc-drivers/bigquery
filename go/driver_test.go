@@ -1431,6 +1431,42 @@ func (suite *BigQueryTests) TestJobCreationOptionalPseudocolumns() {
 	suite.Require().NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestQueryOptionInheritance() {
+	for _, tc := range []struct {
+		key, value string
+	}{
+		{driver.OptionQueryResultsFormat, driver.ResultsFormatArrow},
+		{driver.OptionQueryJobCreationMode, driver.JobCreationModeOptional},
+		{driver.OptionQueryArrowResultsCompression, driver.ResultsCompressionLz4},
+	} {
+		suite.Run(tc.key, func() {
+			opts := suite.Quirks.DatabaseOptions()
+			opts[tc.key] = tc.value
+			db, err := suite.driver.NewDatabaseWithContext(suite.ctx, opts)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), db, suite.ctx)
+
+			val, err := db.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
+			suite.Require().NoError(err)
+			suite.Equal(tc.value, val)
+
+			conn, err := db.Open(suite.ctx)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), conn, suite.ctx)
+			val, err = conn.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
+			suite.Require().NoError(err)
+			suite.Equal(tc.value, val)
+
+			stmt, err := conn.NewStatement(suite.ctx)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), stmt, suite.ctx)
+			val, err = stmt.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
+			suite.Require().NoError(err)
+			suite.Equal(tc.value, val)
+		})
+	}
+}
+
 func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 
 	suite.Require().NoError(suite.Quirks.DropTable(suite.cnxn, "bulk_ingest"))

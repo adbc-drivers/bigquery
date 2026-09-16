@@ -238,6 +238,15 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   Allow arbitrarily large query results, at the cost of query performance (even if the result set is not large). For more information, see the [BigQuery documentation](https://cloud.google.com/bigquery/querying-data#largequeryresults).
 
+`bigquery.query.arrow_results_compression`
+: **Values:** (empty string), `lz4`, `zstd`. **Default:** (empty string)
+
+  When `bigquery.query.results_format` is `arrow`, the codec (if any) to use for Arrow IPC compression.
+
+  :::{warning}
+  The option currently has no effect.
+  :::
+
 `bigquery.query.create_disposition`
 : **Values:** `CREATE_IF_NEEDED`, `CREATE_NEVER`. **Default:** `CREATE_IF_NEEDED`
 
@@ -284,6 +293,11 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   This is more easily accessible through ADBC's ExecuteSchema.
 
+`bigquery.query.job_creation_mode`
+: **Values:** `required`, `optional`. **Default:** `required`
+
+  Whether to enable a fast-path that allows BigQuery to skip creating a job in some cases. For small result sets, this can lead to lower end-to-end query time. The default is to always create a job.
+
 `bigquery.query.job_timeout`
 : **Type:** integer. **Default:** 0
 
@@ -318,6 +332,15 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 : **Type:** integer. **Default:** 200
 
   The maximum number of Arrow record batches to buffer in memory.
+
+`bigquery.query.results_format`
+: **Values:** `arrow`, `struct_encoding`. **Default:** `arrow`
+
+  When `bigquery.query.job_creation_mode` is `optional`, the format of query result data.
+
+  :::{note}
+  `arrow` is in Beta on the BigQuery side and requires Google to enable this feature on your Google Cloud project. Also, `arrow` currently does not return pseudocolumns; even when selected, they are silently dropped from the result.
+  :::
 
 `bigquery.query.use_legacy_sql`
 : **Type:** boolean. **Default:** false

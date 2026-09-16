@@ -82,6 +82,8 @@ type connectionImpl struct {
 	resultRecordBufferSize int
 	prefetchConcurrency    int
 
+	queryDefaults queryDefaults
+
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
@@ -567,14 +569,20 @@ func (c *connectionImpl) NewStatement(ctx context.Context) (adbc.StatementWithCo
 		prefetchConcurrency:    c.prefetchConcurrency,
 		ingest:                 driverbase.NewBulkIngestOptions(),
 		queryConfig: bigquery.QueryConfig{
-			DefaultProjectID: c.catalog,
-			DefaultDatasetID: c.dbSchema,
+			JobCreationMode:              c.queryDefaults.config.JobCreationMode,
+			QueryResultsFormat:           c.queryDefaults.config.QueryResultsFormat,
+			QueryResultsCompressionCodec: c.queryDefaults.config.QueryResultsCompressionCodec,
+			DefaultProjectID:             c.catalog,
+			DefaultDatasetID:             c.dbSchema,
 		},
 	}, nil
 }
 
 func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, error) {
 	key = remapOption(key)
+	if handled, value, err := c.queryDefaults.getOption(key); handled {
+		return value, err
+	}
 	switch key {
 	case OptionAuthType:
 		return c.authType, nil
@@ -620,6 +628,9 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 
 func (c *connectionImpl) SetOption(ctx context.Context, key string, value string) error {
 	key = remapOption(key)
+	if handled, err := c.queryDefaults.setOption(key, value); handled {
+		return err
+	}
 	switch key {
 	case OptionAuthType:
 		value = remapOption(value)
