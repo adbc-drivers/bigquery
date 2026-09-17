@@ -188,7 +188,7 @@ This requires:
 
 - `adbc.bigquery.audience_uri` set to a [workload identity pool](https://cloud.google.com/iam/docs/workload-identity-federation) provider, in the form `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID`.
 - The provider configured to accept the Entra application as an audience, with its issuer set to the tenant and an attribute mapping that populates `google.subject`.
-- The target service account granting `roles/iam.workloadIdentityUser` to the pool principal set that matches the caller, for example `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/attribute.NAME/VALUE`.
+- The target service account granting `roles/iam.workloadIdentityUser` to the workload-pool principal whose subject matches the mapped `google.subject`, for example `principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/subject/SUBJECT_VALUE`. To grant access to a set of callers instead, map a custom attribute on the provider and use its `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/attribute.NAME/VALUE` identifier.
 - The service account holding whatever BigQuery roles the queries need, since they now run under its identity.
 
 Scopes come from `adbc.bigquery.scopes` when set, and each comma-separated entry is sent as a separate scope. When it is not set, `https://www.googleapis.com/auth/cloud-platform` is used.
