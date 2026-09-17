@@ -19,19 +19,24 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"slices"
 
 	"cloud.google.com/go/bigquery"
+	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/flight"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/googleapis/gax-go/v2"
 	"github.com/googleapis/gax-go/v2/apierror"
 	bq "google.golang.org/api/bigquery/v2"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
 
@@ -40,6 +45,9 @@ import (
 func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnhancer schemaEnhancer, jobID string, alloc memory.Allocator) (*ipc.Reader, *arrow.Schema, error) {
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
 	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
+	if err != nil {
+		return nil, nil, err
+	}
 
 	fields := make([]arrow.Field, len(arrowIterator.Schema()))
 	for i, field := range arrowIterator.Schema() {
@@ -49,8 +57,9 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnha
 		}
 	}
 
-	if err != nil {
-		return nil, nil, err
+	if len(fields) != rdr.Schema().NumFields() {
+		// XXX: BigQuery doesn't always populate the schema in responses
+		fields = rdr.Schema().Fields()
 	}
 
 	metadata := make(map[string]string)
@@ -72,6 +81,8 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	var job *bigquery.Job
 	var enhancer schemaEnhancer
 	var err error
+	// If we use the optional job creation mode, if it returns a job, we can and should skip creating a read session; instead we directly read from the default stream
+	var readRowsFastPath bool
 	if !query.DryRun && query.JobCreationMode != nil && *query.JobCreationMode == bigquery.JobCreationModeOptional {
 		// The behavior here is very muddled; the public API
 		// documentation doesn't really actually document much.
@@ -92,6 +103,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 			}
 
 			// TODO(lidavidm): it is possible to get an inline response here - we could return it to optimize time-to-first-row
+			readRowsFastPath = true
 		} else if resp != nil {
 			if !resp.JobComplete {
 				// TODO: is it possible to get here? It would mean no job was created, but the query is incomplete.
@@ -108,6 +120,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 				}
 			}
 
+			// XXX: Google doesn't populate this field! This is a footgun!
 			schema := bigquery.BqToSchema(resp.Schema)
 			it, err := newInlineArrowIterator(schema, resp.ArrowSchema, resp.ArrowRecordBatch)
 			if err != nil {
@@ -200,44 +213,61 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 		mayReturnResults = stats.StatementType == "SELECT" || stats.StatementType == "CALL" || stats.StatementType == "SCRIPT"
 	}
 
-	// XXX: the Google SDK badness also applies here; it makes a similar
-	// mistake with the retry, so we wait for the job above.
-	iter, err := job.Read(ctx)
-	if err != nil {
-		return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
-	}
-
 	var arrowIterator bigquery.ArrowIterator
-	// We need to detect if this actually returned data. Originally we
-	// checked for the presence of a schema, but it turns out statements
-	// like CREATE VIEW return a schema! Then we checked if there are
-	// rows, but it turns out that bigquery-emulator returns
-	// iter.TotalRows == 0 (this is valid as per the API: the field is not
-	// _necessarily_ populated until after a call to Next). Finally we use
-	// job statistics instead
-	if mayReturnResults {
-		if arrowIterator, err = iter.ArrowIterator(); err != nil {
-			if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
-				// Script job with no results
-				// N.B. BigQuery SDK doesn't give a structured error - it's a fmt.Errorf
-				arrowIterator = emptyArrowIterator{iter.Schema}
-			} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok && apiErr.GRPCStatus() != nil && apiErr.GRPCStatus().Code() == codes.PermissionDenied {
-				// Preserve the previous error
-				// message. readSessionUser may sound
-				// unrelated but creating a "read session" is
-				// the first step of using the Storage API.
-				return nil, enhancer, jobID, -1, wrap(adbc.Error{
-					Code: adbc.StatusUnauthorized,
-					Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
-				})
-			} else {
-				return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
-			}
+	totalRows := int64(-1)
+
+	if !mayReturnResults && statsOk {
+		arrowIterator = emptyArrowIterator{stats.Schema}
+		// TODO: totalRows
+	} else if mayReturnResults && readRowsFastPath {
+		driverbase.DebugAssert(statsOk, "stats should be available if mayReturnResults is true")
+		arrowIterator, err = newReadRowsArrowIterator(ctx, client, job, stats.Schema)
+		if err != nil {
+			return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read from default stream"))
 		}
 	} else {
-		arrowIterator = emptyArrowIterator{iter.Schema}
+		// XXX: the Google SDK badness also applies here; it makes a similar
+		// mistake with the retry, so we wait for the job above.
+
+		// TODO(lidavidm): can we avoid having to read the job if we
+		// know the job doesn't return results? Maybe the info we're
+		// after is in the statistics already?
+		iter, err := job.Read(ctx)
+		if err != nil {
+			return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read query results"))
+		}
+
+		// We need to detect if this actually returned data. Originally we
+		// checked for the presence of a schema, but it turns out statements
+		// like CREATE VIEW return a schema! Then we checked if there are
+		// rows, but it turns out that bigquery-emulator returns
+		// iter.TotalRows == 0 (this is valid as per the API: the field is not
+		// _necessarily_ populated until after a call to Next). Finally we use
+		// job statistics instead
+		if mayReturnResults {
+			if arrowIterator, err = iter.ArrowIterator(); err != nil {
+				if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
+					// Script job with no results
+					// N.B. BigQuery SDK doesn't give a structured error - it's a fmt.Errorf
+					arrowIterator = emptyArrowIterator{iter.Schema}
+				} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok && apiErr.GRPCStatus() != nil && apiErr.GRPCStatus().Code() == codes.PermissionDenied {
+					// Preserve the previous error
+					// message. readSessionUser may sound
+					// unrelated but creating a "read session" is
+					// the first step of using the Storage API.
+					return nil, enhancer, jobID, -1, wrap(adbc.Error{
+						Code: adbc.StatusUnauthorized,
+						Msg:  fmt.Sprintf("[bq] Could not read Arrow query results: (%s) %s (Arrow reader requires roles/bigquery.readSessionUser, see https://github.com/apache/arrow-adbc/issues/3282)", apiErr.GRPCStatus().Code(), apiErr.GRPCStatus().Message()),
+					})
+				} else {
+					return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
+				}
+			}
+		} else {
+			arrowIterator = emptyArrowIterator{iter.Schema}
+		}
+		totalRows = int64(iter.TotalRows)
 	}
-	totalRows := int64(iter.TotalRows)
 	return arrowIterator, enhancer, jobID, totalRows, nil
 }
 
@@ -397,5 +427,112 @@ func (it *dryRunArrowIterator) Schema() bigquery.Schema {
 }
 
 func (it *dryRunArrowIterator) SerializedArrowSchema() []byte {
+	return it.arrowSchema
+}
+
+type readRowsArrowIterator struct {
+	rows storagepb.BigQueryRead_ReadRowsClient
+	schema bigquery.Schema
+	batchCh chan batchOrError
+	arrowSchema []byte
+}
+
+var _ bigquery.ArrowIterator = &readRowsArrowIterator{}
+
+type batchOrError struct {
+	batch *bigquery.ArrowRecordBatch
+	err error
+}
+
+func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job *bigquery.Job, schema bigquery.Schema) (bigquery.ArrowIterator, error) {
+	rc := client.StorageReadClient()
+	if rc == nil {
+		// TODO(lidavidm): eventually we will need to support disabling this
+		return nil, errors.New("storage read client is not initialized")
+	}
+
+	msgSizeOpt := gax.WithGRPCOptions(
+		// Read API sends up to 128 MiB of data per message; add some padding for the actual Protobuf message etc.
+		// https://cloud.google.com/bigquery/quotas#storage-limits
+		grpc.MaxCallRecvMsgSize(1024 * 1024 * 129),
+	)
+	readStream := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/streams/_default", job.ProjectID(), job.Location(), job.ID())
+	rows, err := rc.ReadRows(ctx, &storagepb.ReadRowsRequest{
+		ReadStream: readStream,
+		// TODO(lidavidm): if we get an inline response, we can use it, then set the offset to skip it
+		Offset: 0,
+		OutputFormatSerializationOptions: &storagepb.ReadRowsRequest_ArrowSerializationOptions{
+			ArrowSerializationOptions: &storagepb.ArrowSerializationOptions{
+				BufferCompression: storagepb.ArrowSerializationOptions_ZSTD,
+				// TODO: hmm, there's a way to get nanos and picos (string) out of BigQuery...
+			},
+		},
+	}, msgSizeOpt)
+	if err != nil {
+		return nil, err
+	}
+
+	// XXX: at some point maybe we ditch the BigQuery interfaces and do this all ourselves...
+	schemaCh := make(chan []byte, 1)
+	batchCh := make(chan batchOrError, 1)
+	go func() {
+		defer close(schemaCh)
+		defer close(batchCh)
+
+		var schema []byte
+
+		for {
+			resp, err := rows.Recv()
+			if err == io.EOF {
+				return
+			} else if err != nil {
+				batchCh <- batchOrError{nil, err}
+				return
+			}
+
+			if schema == nil {
+				// This should be in the first message
+				schema = resp.GetArrowSchema().SerializedSchema
+				schemaCh <- resp.GetArrowSchema().SerializedSchema
+			}
+
+			batchCh <- batchOrError{&bigquery.ArrowRecordBatch{
+				Data: resp.GetArrowRecordBatch().SerializedRecordBatch,
+				Schema: schema,
+				PartitionID: readStream,
+			}, nil}
+		}
+	}()
+
+	arrowSchema, ok := <-schemaCh
+	if !ok {
+		// TODO: get the real error from batchCh
+		return nil, errors.New("failed to receive schema from ReadRows")
+	}
+
+	return &readRowsArrowIterator{
+		rows: rows,
+		schema: schema,
+		batchCh: batchCh,
+		arrowSchema: arrowSchema,
+	}, nil
+}
+
+func (it *readRowsArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
+	batchOrErr, ok := <-it.batchCh
+	if !ok {
+		return nil, iterator.Done
+	}
+	if batchOrErr.err != nil {
+		return nil, batchOrErr.err
+	}
+	return batchOrErr.batch, nil
+}
+
+func (it *readRowsArrowIterator) Schema() bigquery.Schema {
+	return slices.Clone(it.schema)
+}
+
+func (it *readRowsArrowIterator) SerializedArrowSchema() []byte {
 	return it.arrowSchema
 }
