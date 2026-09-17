@@ -72,21 +72,22 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnha
 	return rdr, arrow.NewSchema(fields, new(arrow.MetadataFrom(metadata))), nil
 }
 
+// runQuery executes the given query and returns an iterator over the results (it may be empty/a trivial iterator if the query did not return a result set).
+//
 // post-condition: ArrowIterator and schemaEnhancer are both non-nil if err is nil; other fields may be populated if possible
 func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client, query *bigquery.Query, executeUpdate bool, st *statement) (bigquery.ArrowIterator, schemaEnhancer, string, int64, error) {
-	// Parameterized execution reuses query, including its job ID policy.
+	// Parameterized execution reuses the query struct, including its job ID policy, so reset it
 	jobIDConfig := query.JobIDConfig
 	defer func() { query.JobIDConfig = jobIDConfig }()
 
 	var job *bigquery.Job
 	var enhancer schemaEnhancer
 	var err error
-	// If we use the optional job creation mode, if it returns a job, we can and should skip creating a read session; instead we directly read from the default stream
+	// If we use the optional job creation mode and it returns a job, we can and should skip creating a read session; instead we directly read from the default stream
 	var readRowsFastPath bool
+
 	if !query.DryRun && query.JobCreationMode != nil && *query.JobCreationMode == bigquery.JobCreationModeOptional {
-		// The behavior here is very muddled; the public API
-		// documentation doesn't really actually document much.
-		// Reference used instead:
+		// The behavior here is very muddled; the public API documentation doesn't really actually document much. Reference used instead:
 		// https://github.com/googleapis/google-cloud-python/blob/1857302d5c602087b9a782c62694c33013eb77ea/packages/google-cloud-bigquery/google/cloud/bigquery/table.py#L2306
 		var resp *bq.QueryResponse
 		resp, err = query.TryRead(ctx)
@@ -96,12 +97,11 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 
 		enhancer = &queryResponseSchemaEnhancer{resp: resp}
 		if jr := resp.JobReference; jr != nil {
-			// query created a job
+			// query created a job. we need to materialize the job from the API; the info in the response isn't enough to construct the job object ourselves
 			job, err = client.JobFromProject(ctx, jr.ProjectId, jr.JobId, jr.Location)
 			if err != nil {
 				return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "get job from query response")
 			}
-
 			// TODO(lidavidm): it is possible to get an inline response here - we could return it to optimize time-to-first-row
 			readRowsFastPath = true
 		} else if resp != nil {
@@ -128,9 +128,10 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 			}
 			return it, enhancer, "", int64(resp.TotalRows), nil
 		}
-		// neither job nor API response => query was not suitable, create a job below
+		// no API response => fast path was not attempted, create a job below
 	}
 
+	// N.B. this may assign a job ID. We can't do this above as assigning our own job ID disables the fast path
 	activeJob := st.beginJob(st.cnxn.client, &query.JobIDConfig)
 	defer st.finishJob(ctx, logger, activeJob)
 
@@ -216,6 +217,9 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	var arrowIterator bigquery.ArrowIterator
 	totalRows := int64(-1)
 
+	// TODO(lidavidm): test various types of queries (select, create,
+	// update, script, call) with all the different modes (job, no job,
+	// fallback) and ensure totalRows is always consistent
 	if !mayReturnResults && statsOk {
 		arrowIterator = emptyArrowIterator{stats.Schema}
 		// TODO: totalRows
@@ -344,6 +348,8 @@ func newInlineArrowIterator(bqSchema bigquery.Schema, arrowSchema *bq.ArrowSchem
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode Arrow record batch: %w", err)
 	}
+
+	// XXX: strip weird extension types that Google inserts
 
 	return &inlineArrowIterator{
 		bqSchema:    bqSchema,

@@ -116,9 +116,9 @@ class BigQueryQuirks(model.DriverQuirks):
                                     "bigquery.bulk_ingest.method": {
                                         "apply": "storage_write",
                                         "revert": "load",
-                                    }
-                                }
-                            }
+                                    },
+                                },
+                            },
                         },
                         "tags": {
                             "broken-vendor": None,

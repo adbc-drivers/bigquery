@@ -51,7 +51,7 @@ func (q *queryResponseSchemaEnhancer) GetMetadata(m map[string]string) error {
 	if q.resp.JobCreationReason != nil {
 		m["BIGQUERY:job_creation_reason"] = q.resp.JobCreationReason.Code
 	}
-	// TODO(lidavidm): potentially other fields
+	// TODO(lidavidm): potentially other fields (we don't have job statistics)
 	return nil
 }
 
