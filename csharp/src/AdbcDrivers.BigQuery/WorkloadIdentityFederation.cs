@@ -45,7 +45,9 @@ namespace AdbcDrivers.BigQuery
     {
         internal const string ImpersonationStep = "sa_impersonation";
 
-        private const string TagPrefix = "wif.";
+        internal const string StsExchangeStep = "sts_exchange";
+
+        internal const string TagPrefix = "wif.";
 
         // Guards the value interpolated into the impersonation URL. Deliberately ASCII-only:
         // Google service account emails are, and char.IsLetterOrDigit would accept Unicode letters.
@@ -126,7 +128,7 @@ namespace AdbcDrivers.BigQuery
             return response!.AccessToken!;
         }
 
-        private static async Task<string> SendAsync(
+        internal static async Task<string> SendAsync(
             HttpClient httpClient,
             HttpRequestMessage request,
             string step,

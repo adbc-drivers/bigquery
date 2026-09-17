@@ -14,7 +14,13 @@
 * limitations under the License.
 */
 
+using System;
 using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Apache.Arrow.Adbc;
 using Xunit;
 
 namespace AdbcDrivers.BigQuery.Tests
@@ -25,45 +31,86 @@ namespace AdbcDrivers.BigQuery.Tests
     /// </summary>
     public class EntraStsFailureTests
     {
-        [Fact]
-        public void StsFailureMessageIncludesStatusCodeAndResponseBody()
+        private static string ExchangeFailure(string body, HttpStatusCode statusCode = HttpStatusCode.BadRequest)
         {
-            const string body = "{\"error\":\"invalid_request\"}";
+            using HttpClient httpClient = new HttpClient(new StubHandler(body, statusCode));
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://sts.googleapis.com/v1/token")
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
 
-            string message = BigQueryConnection.BuildStsFailureMessage(HttpStatusCode.BadRequest, body);
+            AdbcException exception = Assert.Throws<AdbcException>(() =>
+                WorkloadIdentityFederation.SendAsync(
+                    httpClient, request, WorkloadIdentityFederation.StsExchangeStep,
+                    "The Google Security Token Service", null, default).GetAwaiter().GetResult());
 
+            return exception.Message;
+        }
+
+        [Fact]
+        public void StsFailureNamesTheEndpointStatusAndStep()
+        {
+            string message = ExchangeFailure("{\"error\":\"invalid_request\"}");
+
+            Assert.Contains("Security Token Service", message);
             Assert.Contains("400", message);
-            Assert.Contains("BadRequest", message);
-            Assert.Contains(body, message);
+            Assert.Contains(WorkloadIdentityFederation.StsExchangeStep, message);
+            Assert.Contains("invalid_request", message);
         }
 
         /// <summary>
         /// Regression guard for the real failure seen when a provider mapped google.subject to
         /// assertion.oid but the connector federated an Entra id_token, which had no oid claim.
-        /// The remediation was only discoverable from the response body.
+        /// The remediation is only discoverable from the response body.
         /// </summary>
         [Fact]
-        public void StsFailureMessageSurfacesUnmappedSubjectReason()
+        public void StsFailureSurfacesUnmappedSubjectReason()
         {
-            const string body =
-                "{\"error\":\"unauthorized_client\",\"error_description\":\"Could not obtain a value for google.subject from the given credential.\"}";
-
-            string message = BigQueryConnection.BuildStsFailureMessage(HttpStatusCode.BadRequest, body);
+            string message = ExchangeFailure(
+                "{\"error\":\"unauthorized_client\",\"error_description\":\"Could not obtain a value for google.subject from the given credential.\"}");
 
             Assert.Contains("google.subject", message);
             Assert.Contains("unauthorized_client", message);
         }
 
+        [Fact]
+        public void StsFailureFallsBackToTheRawBodyWhenItIsNotJson()
+        {
+            string message = ExchangeFailure("<html>502 from a proxy</html>", HttpStatusCode.BadGateway);
+
+            Assert.Contains("502", message);
+            Assert.Contains("proxy", message);
+        }
+
+        private sealed class StubHandler : HttpMessageHandler
+        {
+            private readonly string body;
+            private readonly HttpStatusCode statusCode;
+
+            public StubHandler(string body, HttpStatusCode statusCode)
+            {
+                this.body = body;
+                this.statusCode = statusCode;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                return Task.FromResult(new HttpResponseMessage(this.statusCode)
+                {
+                    Content = new StringContent(this.body, Encoding.UTF8, "application/json")
+                });
+            }
+        }
+
         [Theory]
-        [InlineData(null)]
         [InlineData("")]
         [InlineData("   ")]
-        public void StsFailureMessageHandlesMissingResponseBody(string? body)
+        public void StsFailureStillReportsStatusWhenTheBodyIsEmpty(string body)
         {
-            string message = BigQueryConnection.BuildStsFailureMessage(HttpStatusCode.Forbidden, body);
+            string message = ExchangeFailure(body, HttpStatusCode.Forbidden);
 
             Assert.Contains("403", message);
-            Assert.Contains("(no response body)", message);
+            Assert.Contains(WorkloadIdentityFederation.StsExchangeStep, message);
         }
 
         [Fact]

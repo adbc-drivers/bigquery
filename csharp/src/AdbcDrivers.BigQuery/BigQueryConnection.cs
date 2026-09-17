@@ -546,7 +546,7 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The {BigQueryParameters.AudienceUri} parameter is not present");
 
                     Credential = ApplyScopes(GoogleCredential.FromAccessToken(
-                        ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken), activity)));
+                        ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken, activity), activity)));
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
@@ -2041,30 +2041,39 @@ namespace AdbcDrivers.BigQuery
         }
 
         /// <summary>
-        /// Gets the access token from the sts endpoint.
+        /// Exchanges the Entra token for a federated Google token at the Security Token Service.
         /// </summary>
-        /// <param name="audience"></param>
-        /// <param name="entraAccessToken"></param>
-        /// <returns></returns>
-        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken)
+        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken, Activity? activity)
         {
             try
             {
+                activity?.AddBigQueryTag(
+                    WorkloadIdentityFederation.TagPrefix + WorkloadIdentityFederation.StsExchangeStep + ".audience",
+                    audience);
+
                 string json = CreateEntraStsRequestBody(audience, entraAccessToken);
-                using StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                using HttpResponseMessage response = this.httpClient.PostAsync(BigQueryConstants.EntraStsTokenEndpoint, content).GetAwaiter().GetResult();
-
-                string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-
-                if (!response.IsSuccessStatusCode)
+                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, BigQueryConstants.EntraStsTokenEndpoint)
                 {
-                    throw new HttpRequestException(BuildStsFailureMessage(response.StatusCode, responseBody));
-                }
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                };
+
+                string responseBody = WorkloadIdentityFederation.SendAsync(
+                    this.httpClient,
+                    request,
+                    WorkloadIdentityFederation.StsExchangeStep,
+                    "The Google Security Token Service",
+                    activity,
+                    default).GetAwaiter().GetResult();
 
                 BigQueryStsTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryStsTokenResponse>(responseBody);
 
                 return bigQueryTokenResponse?.AccessToken;
+            }
+            catch (AdbcException)
+            {
+                // SendAsync already reports the endpoint, status, error code and correlation id.
+                throw;
             }
             catch (Exception ex)
             {
@@ -2073,17 +2082,6 @@ namespace AdbcDrivers.BigQuery
                     AdbcStatusCode.Unauthenticated,
                     ex);
             }
-        }
-
-        /// <summary>
-        /// Includes the Security Token Service response body, which carries the actionable reason
-        /// (for example an unmapped google.subject or a rejected audience).
-        /// </summary>
-        internal static string BuildStsFailureMessage(HttpStatusCode statusCode, string? responseBody)
-        {
-            string detail = string.IsNullOrWhiteSpace(responseBody) ? "(no response body)" : responseBody!.Trim();
-
-            return $"The Google Security Token Service returned {(int)statusCode} ({statusCode}): {detail}";
         }
 
         internal static string CreateEntraStsRequestBody(string audience, string entraAccessToken)
