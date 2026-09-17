@@ -1438,7 +1438,7 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallback() {
 	suite.T().Log("job creation reason:", reason)
 	suite.NotEmpty(reason)
 
-	// We don't know how many rows are in the stream
+	// We don't know how many rows are in the stream when we fall back
 	suite.EqualValues(-1, n)
 	nrows := 0
 	for rdr.Next() {
@@ -1446,6 +1446,43 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallback() {
 		nrows += int(rdr.RecordBatch().NumRows())
 	}
 	suite.Equal(5000, nrows)
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestJobCreationOptionalBufferCompression() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM `bigquery-public-data`.google_books_ngrams_2020.eng_fiction_1 LIMIT 50"))
+	// TODO: rename the options to be more principled (bigquery.query.arrow_serialization_options.buffer_compression, IMO)
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.arrow_results_compression", "zstd"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	// TODO: don't require this option
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "term", Type: arrow.BinaryTypes.String, Nullable: true},
+		{Name: "term_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "document_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "tokens", Type: arrow.ListOf(arrow.BinaryTypes.String), Nullable: false},
+		{Name: "has_tag", Type: arrow.FixedWidthTypes.Boolean, Nullable: true},
+		{Name: "years", Type: arrow.ListOf(arrow.StructOf([]arrow.Field{
+			{Name: "year", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			{Name: "term_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			{Name: "document_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		}...)), Nullable: false},
+	}, nil)
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.Falsef(ok, "expected no job creation reason, got: %s", reason)
+
+	suite.EqualValues(50, n)
+	nrows := 0
+	for rdr.Next() {
+		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(50, nrows)
 	suite.Require().NoError(rdr.Err())
 }
 
