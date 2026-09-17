@@ -431,9 +431,9 @@ func (it *dryRunArrowIterator) SerializedArrowSchema() []byte {
 }
 
 type readRowsArrowIterator struct {
-	rows storagepb.BigQueryRead_ReadRowsClient
-	schema bigquery.Schema
-	batchCh chan batchOrError
+	rows        storagepb.BigQueryRead_ReadRowsClient
+	schema      bigquery.Schema
+	batchCh     chan batchOrError
 	arrowSchema []byte
 }
 
@@ -441,7 +441,7 @@ var _ bigquery.ArrowIterator = &readRowsArrowIterator{}
 
 type batchOrError struct {
 	batch *bigquery.ArrowRecordBatch
-	err error
+	err   error
 }
 
 func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job *bigquery.Job, schema bigquery.Schema) (bigquery.ArrowIterator, error) {
@@ -497,8 +497,8 @@ func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job 
 			}
 
 			batchCh <- batchOrError{&bigquery.ArrowRecordBatch{
-				Data: resp.GetArrowRecordBatch().SerializedRecordBatch,
-				Schema: schema,
+				Data:        resp.GetArrowRecordBatch().SerializedRecordBatch,
+				Schema:      schema,
 				PartitionID: readStream,
 			}, nil}
 		}
@@ -511,9 +511,9 @@ func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job 
 	}
 
 	return &readRowsArrowIterator{
-		rows: rows,
-		schema: schema,
-		batchCh: batchCh,
+		rows:        rows,
+		schema:      schema,
+		batchCh:     batchCh,
 		arrowSchema: arrowSchema,
 	}, nil
 }

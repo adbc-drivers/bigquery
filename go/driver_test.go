@@ -1522,6 +1522,44 @@ func (suite *BigQueryTests) TestJobCreationOptionalPseudocolumns() {
 	suite.Require().NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestJobCreationOptionalFallbackPseudocolumns() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "CREATE TABLE pseudotest2 (tid INT64) PARTITION BY _PARTITIONDATE"))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "INSERT INTO pseudotest2 (tid) SELECT tid FROM UNNEST(GENERATE_ARRAY(1, 100000)) AS tid"))
+	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT tid, _PARTITIONTIME AS PT FROM pseudotest2"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	// TODO: don't require this option
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.True(ok)
+	suite.T().Log("job creation reason:", reason)
+	suite.NotEmpty(reason)
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "tid", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "PT", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}, Nullable: true},
+	}, nil)
+
+	suite.EqualValues(-1, n)
+	suite.Truef(expectedSchema.Equal(rdr.Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+	nrows := 0
+	for rdr.Next() {
+		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(100000, nrows)
+	suite.Require().NoError(rdr.Err())
+}
+
 func (suite *BigQueryTests) TestQueryOptionInheritance() {
 	for _, tc := range []struct {
 		key, value string
