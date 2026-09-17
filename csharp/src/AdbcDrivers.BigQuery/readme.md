@@ -225,6 +225,35 @@ Behavior:
   create it. The default table expiration will be set to 1 day. A randomly generated name will be used for the table name.
 - If a destination table and a dataset are not specified, the driver will attempt to use or create the `_bqadbc_temp_tables` dataset using the same defaults and label specified above. A randomly generated name will be used for the table name.
 
+## Proxy
+
+The driver routes its HTTP traffic through a forward proxy when `adbc.bigquery.proxy_host` and `adbc.bigquery.proxy_port` are set, including the Microsoft Entra token exchange and service account impersonation calls. When those parameters are not set, the platform default proxy applies: system settings on .NET Framework, and the `HTTPS_PROXY` and `NO_PROXY` environment variables on .NET.
+
+### Endpoints to allow
+
+Environments that allow outbound hosts explicitly need all of the following reachable. The first three are contacted directly by the driver; the rest are used by the Google client libraries it builds on.
+
+| Host | Used for |
+| --- | --- |
+| `sts.googleapis.com` | Security Token Service exchange, `aad` authentication only |
+| `iamcredentials.googleapis.com` | `generateAccessToken`, only when `adbc.bigquery.service_account_impersonation_email` is set |
+| `accounts.google.com` | OAuth token endpoint for `user` authentication |
+| `www.googleapis.com` | OAuth scope endpoint |
+| `bigquery.googleapis.com` | BigQuery REST API: jobs, metadata and query submission |
+| `bigquerystorage.googleapis.com` | BigQuery Storage Read API, used to read result rows |
+
+`iamcredentials.googleapis.com` is new to service account impersonation. An allow list that already covers the Entra flow will not include it, and the failure appears only after federation has already succeeded.
+
+### SSL inspection and the Storage Read API
+
+`bigquerystorage.googleapis.com` is reached over gRPC, which requires HTTP/2. Proxies that terminate TLS must negotiate ALPN `h2` for that host or the connection is downgraded, and the driver reports:
+
+    Bad gRPC response. Response protocol downgraded to HTTP/1.1.
+
+That message comes from the gRPC client before it inspects the status code, so a proxy block page or a `407 Proxy Authentication Required` surfaces with the same text. Exempting the host from TLS inspection avoids it. The other hosts in the table are plain HTTPS and are unaffected.
+
+On .NET Framework the two legs resolve proxy settings from different places: REST calls follow `WebRequest.DefaultWebProxy`, which reads the system settings, while gRPC uses `WinHttpHandler`, which reads the WinHTTP configuration set by `netsh winhttp`. The two can disagree, so a stale `netsh winhttp` proxy will break result reads while metadata and navigation keep working. `netsh winhttp show proxy` is worth checking when that pattern appears.
+
 ## Permissions
 
 The ADBC driver uses the BigQuery Client APIs to communicate with BigQuery. The following actions are performed in the driver and require the calling user to have the specified permissions. For more details on the permissions, or what roles may already have the permissions required, please see the additional references section below.
