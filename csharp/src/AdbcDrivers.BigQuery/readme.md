@@ -195,7 +195,7 @@ Scopes come from `adbc.bigquery.scopes` when set, and each comma-separated entry
 
 #### Which identity needs which permission
 
-Two identities are involved, and they need different things. The Entra caller needs no Google IAM roles at all - it only needs to be recognised by the pool. The service account needs every permission the queries actually use, because they run under its identity.
+Two identities are involved, and they need different things. The Entra caller needs the service account impersonation grant described below, but it does not need the BigQuery roles used by queries. The service account needs every permission the queries actually use, because they run under its identity.
 
 | Identity | Needs |
 | --- | --- |
