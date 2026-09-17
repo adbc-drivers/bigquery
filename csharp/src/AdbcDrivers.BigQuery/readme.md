@@ -193,6 +193,20 @@ This requires:
 
 Scopes come from `adbc.bigquery.scopes` when set, and each comma-separated entry is sent as a separate scope. When it is not set, `https://www.googleapis.com/auth/cloud-platform` is used.
 
+#### Which identity needs which permission
+
+Two identities are involved, and they need different things. The Entra caller needs no Google IAM roles at all - it only needs to be recognised by the pool. The service account needs every permission the queries actually use, because they run under its identity.
+
+| Identity | Needs |
+| --- | --- |
+| Entra caller | A token from the tenant named as the provider's `issuerUri`, with an audience listed in the provider's allowed audiences. In Entra this means the application exposes a scope and the caller has consent for it. |
+| Entra caller | `roles/iam.workloadIdentityUser` on the target service account, granted to the workload-pool principal matching the mapped `google.subject`. `roles/iam.serviceAccountTokenCreator` also works, as it likewise grants `iam.serviceAccounts.getAccessToken`. |
+| Service account | `roles/bigquery.jobUser` on the project that bills the query, which is `adbc.bigquery.billing_project_id` when set. |
+| Service account | `roles/bigquery.dataViewer` on the data being read, granted at project, dataset or table level. |
+| Service account | `roles/bigquery.readSessionUser`, required because the driver reads results through the BigQuery Storage Read API. |
+
+The project must also have the IAM Service Account Credentials API (`iamcredentials.googleapis.com`) and the Security Token Service API (`sts.googleapis.com`) enabled, in addition to the BigQuery API.
+
 Both the token exchange and the impersonation call are traced. See [Tracing](#tracing) for the `wif.sts_exchange.*` and `wif.sa_impersonation.*` tags, which record the endpoint, status code, duration and Google correlation id for each step.
 
 ## Default Project ID
