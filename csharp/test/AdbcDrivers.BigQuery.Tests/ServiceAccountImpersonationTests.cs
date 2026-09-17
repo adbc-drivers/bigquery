@@ -178,8 +178,48 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Null(handler.Request);
         }
 
-        private sealed class RecordingHandler : HttpMessageHandler
+        /// <summary>
+        /// Only an absent value opts out of impersonation. A whitespace value is a misconfiguration
+        /// and must fail rather than silently running queries as the federated caller.
+        /// </summary>
+        [Theory]
+        [InlineData(" ")]
+        [InlineData("   ")]
+        [InlineData("\t")]
+        public void WhitespaceImpersonationEmailIsRejectedRatherThanIgnored(string configured)
         {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+                [BigQueryParameters.ServiceAccountImpersonationEmail] = configured,
+            };
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+
+            Assert.Throws<ArgumentException>(() => connection.ImpersonateIfRequested("federated-token", null));
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void AbsentImpersonationEmailReturnsTheFederatedToken(string? configured)
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+            };
+
+            if (configured != null)
+            {
+                properties[BigQueryParameters.ServiceAccountImpersonationEmail] = configured;
+            }
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+
+            Assert.Equal("federated-token", connection.ImpersonateIfRequested("federated-token", null));
+        }
+
+        private sealed class RecordingHandler : HttpMessageHandler        {
             private string responseBody = string.Empty;
             private HttpStatusCode statusCode = HttpStatusCode.OK;
 

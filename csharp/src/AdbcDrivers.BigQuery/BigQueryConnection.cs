@@ -625,11 +625,13 @@ namespace AdbcDrivers.BigQuery
         /// Applies service account impersonation to an already-federated token when the caller asked
         /// for it, so BigQuery grants can live on a shared service account rather than each user.
         /// </summary>
-        private string? ImpersonateIfRequested(string? federatedToken, Activity? activity)
+        internal string? ImpersonateIfRequested(string? federatedToken, Activity? activity)
         {
             this.properties.TryGetValue(BigQueryParameters.ServiceAccountImpersonationEmail, out string? impersonationEmail);
 
-            if (string.IsNullOrWhiteSpace(impersonationEmail) || string.IsNullOrEmpty(federatedToken))
+            // Only an absent value is opt-out. A whitespace value is a misconfiguration and must
+            // reach validation rather than silently running as the federated caller.
+            if (string.IsNullOrEmpty(impersonationEmail) || string.IsNullOrEmpty(federatedToken))
             {
                 return federatedToken;
             }
