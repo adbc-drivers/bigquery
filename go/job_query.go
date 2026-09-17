@@ -350,6 +350,27 @@ func newInlineArrowIterator(bqSchema bigquery.Schema, arrowSchema *bq.ArrowSchem
 	}
 
 	// XXX: strip weird extension types that Google inserts
+	schema, err := flight.DeserializeSchema(schemaBytes, memory.DefaultAllocator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize Arrow schema: %w", err)
+	}
+	fields := make([]arrow.Field, len(schema.Fields()))
+	for i, field := range schema.Fields() {
+		m := field.Metadata.ToMap()
+		if m["ARROW:extension:name"] == "google:sqlType:geography" {
+			m["ARROW:extension:name"] = "geoarrow.wkt"
+			// TODO: factor this out
+			m["ARROW:extension:metadata"] = `{"crs": "EPSG:4326", "crs_type": "authority_code", "edges": "spherical"}`
+		} else {
+			delete(m, "ARROW:extension:name")
+			delete(m, "ARROW:extension:metadata")
+		}
+		field.Metadata = arrow.MetadataFrom(m)
+		fields[i] = field
+	}
+	schemaBytes = flight.SerializeSchema(arrow.NewSchema(fields, nil), memory.DefaultAllocator)
+	// strip the IPC end-of-stream
+	schemaBytes = schemaBytes[:len(schemaBytes)-8]
 
 	return &inlineArrowIterator{
 		bqSchema:    bqSchema,
@@ -365,11 +386,9 @@ func (it *inlineArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 
 	data := it.arrowBatch
 	it.arrowBatch = nil
-	schema := it.arrowSchema
-	it.arrowSchema = nil
 	return &bigquery.ArrowRecordBatch{
 		Data:   data,
-		Schema: schema,
+		Schema: it.arrowSchema,
 	}, nil
 }
 

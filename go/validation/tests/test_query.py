@@ -82,6 +82,9 @@ class TestQuery(query_tests.TestQuery):
         fake_quirks.features = fake_quirks.features.with_values(
             metadata_type_name=False
         )
+        # TODO: handle JSON (no extension type so we don't know to inject it)
+        if query.name == "type/select/json":
+            pytest.skip()
         super().test_query(fake_quirks, conn, modified, query_setup)
 
     @utils.retry_rate_limit

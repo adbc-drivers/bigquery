@@ -67,8 +67,8 @@ class BigQueryQuirks(model.DriverQuirks):
     )
     setup = model.DriverSetup(
         database={
-            "adbc.bigquery.sql.project_id": model.FromEnv("GOOGLE_CLOUD_PROJECT"),
-            "adbc.bigquery.sql.dataset_id": model.FromEnv("BIGQUERY_DATASET_ID"),
+            "bigquery.project_id": model.FromEnv("GOOGLE_CLOUD_PROJECT"),
+            "bigquery.dataset_id": model.FromEnv("BIGQUERY_DATASET_ID"),
         },
         connection={},
         statement={},
