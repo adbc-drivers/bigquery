@@ -231,20 +231,21 @@ The driver routes its HTTP traffic through a forward proxy when `adbc.bigquery.p
 
 ### Endpoints to allow
 
-Environments that allow outbound hosts explicitly need all of the following reachable. The first three are contacted directly by the driver; the rest are used by the Google client libraries it builds on.
+Environments that allow outbound hosts explicitly need all of the following reachable. The first three are contacted directly by the driver; the last two are used by the Google client libraries it builds on.
+
+Note that `https://www.googleapis.com/auth/cloud-platform`, the default value of `adbc.bigquery.scopes`, is an OAuth scope identifier rather than a host the driver connects to. It does not need to be allowed.
 
 | Host | Used for |
 | --- | --- |
 | `sts.googleapis.com` | Security Token Service exchange, `aad` authentication only |
 | `iamcredentials.googleapis.com` | `generateAccessToken`, only when `adbc.bigquery.service_account_impersonation_email` is set |
 | `accounts.google.com` | OAuth token endpoint for `user` authentication |
-| `www.googleapis.com` | OAuth scope endpoint |
 | `bigquery.googleapis.com` | BigQuery REST API: jobs, metadata and query submission |
-| `bigquerystorage.googleapis.com` | BigQuery Storage Read API, used to read result rows |
+| `bigquerystorage.googleapis.com` | BigQuery Storage APIs: the Read API for result rows and the Write API for bulk ingestion |
 
 `iamcredentials.googleapis.com` is new to service account impersonation. An allow list that already covers the Entra flow will not include it, and the failure appears only after federation has already succeeded.
 
-### SSL inspection and the Storage Read API
+### SSL inspection and the Storage APIs
 
 `bigquerystorage.googleapis.com` is reached over gRPC, which requires HTTP/2. Proxies that terminate TLS must negotiate ALPN `h2` for that host or the connection is downgraded, and the driver reports:
 
