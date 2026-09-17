@@ -53,6 +53,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.audience_uri**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Sets the audience URI for the authentication token. Currently, this is for Microsoft Entra, but this could be used for other OAuth implementations as well.
 
+**adbc.bigquery.service_account_impersonation_email**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. The Google service account to impersonate after the token exchange, so queries run as that account rather than as the federated caller. Only applies when `adbc.bigquery.auth_type` is `aad`; it is ignored for `user` and `service`. When omitted, the federated token is used directly. The impersonated token is requested for the scopes in `adbc.bigquery.scopes`, defaulting to `https://www.googleapis.com/auth/cloud-platform`. See [Microsoft Entra](#microsoft-entra) for the workload identity prerequisites.
+
 **adbc.bigquery.allow_large_results**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Sets the [AllowLargeResults](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.V2/latest/Google.Cloud.BigQuery.V2.QueryOptions#Google_Cloud_BigQuery_V2_QueryOptions_AllowLargeResults) value of the QueryOptions to `true` if configured; otherwise, the default is `false`.
 
@@ -176,6 +179,21 @@ connection.UpdateToken = () => Task.Run(() =>
 ```
 
 In the sample above, when a new token is needed, the delegate is invoked and updates the `adbc.bigquery.access_token` parameter on the connection object.
+
+### Service account impersonation
+
+Set `adbc.bigquery.service_account_impersonation_email` to run queries as a shared Google service account instead of as the federated caller. The driver exchanges the Entra token at the Google Security Token Service, then calls [generateAccessToken](https://cloud.google.com/iam/docs/reference/credentials/rest/v1/projects.serviceAccounts/generateAccessToken) to obtain a token for that service account.
+
+This requires:
+
+- `adbc.bigquery.audience_uri` set to a [workload identity pool](https://cloud.google.com/iam/docs/workload-identity-federation) provider, in the form `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID`.
+- The provider configured to accept the Entra application as an audience, with its issuer set to the tenant and an attribute mapping that populates `google.subject`.
+- The target service account granting `roles/iam.workloadIdentityUser` to the pool principal set that matches the caller, for example `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/attribute.NAME/VALUE`.
+- The service account holding whatever BigQuery roles the queries need, since they now run under its identity.
+
+Scopes come from `adbc.bigquery.scopes` when set, and each comma-separated entry is sent as a separate scope. When it is not set, `https://www.googleapis.com/auth/cloud-platform` is used.
+
+Both the token exchange and the impersonation call are traced. See [Tracing](#tracing) for the `wif.sts_exchange.*` and `wif.sa_impersonation.*` tags, which record the endpoint, status code, duration and Google correlation id for each step.
 
 ## Default Project ID
 

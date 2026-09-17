@@ -148,7 +148,8 @@ namespace AdbcDrivers.BigQuery.Tests
             string body = BigQueryConnection.CreateEntraStsRequestBody(WorkloadAudience, "an.entra.accesstoken");
 
             Assert.Contains(BigQueryConstants.AzureSubjectTokenType, body);
-            Assert.DoesNotContain(BigQueryConstants.EntraSubjectTokenType, body);
+            // The connector federates an access token, so the id_token type must not reappear.
+            Assert.DoesNotContain("urn:ietf:params:oauth:token-type:id_token", body);
         }
 
         private const string WorkloadAudience =

@@ -123,29 +123,18 @@ namespace AdbcDrivers.BigQuery
 
         // Entra ID / Azure AD constants
         public const string EntraGrantType = "urn:ietf:params:oauth:grant-type:token-exchange";
-        public const string EntraSubjectTokenType = "urn:ietf:params:oauth:token-type:id_token";
         public const string EntraRequestedTokenType = "urn:ietf:params:oauth:token-type:access_token";
         public const string EntraIdScope = "https://www.googleapis.com/auth/cloud-platform";
         public const string EntraStsTokenEndpoint = "https://sts.googleapis.com/v1/token";
 
-        // Workload Identity Federation (service principal) constants
+        // Workload Identity Federation constants
 
         /// <summary>
         /// Google requires OIDC/JWT subject tokens from Azure to be presented as a generic JWT.
         /// See https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds.
         /// </summary>
         public const string AzureSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt";
-        public const string EntraTokenEndpointFormat = "{0}/{1}/oauth2/v2.0/token";
-        public const string EntraDefaultScopeSuffix = "/.default";
         public const string ServiceAccountImpersonationUrlFormat = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{0}:generateAccessToken";
-
-        /// <summary>
-        /// RFC 7523 client authentication, used when a certificate is supplied instead of a secret.
-        /// </summary>
-        public const string ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
-
-        /// <summary>
-        /// </summary>
 
         // default value per https://pkg.go.dev/cloud.google.com/go/bigquery#section-readme
         public const string DetectProjectId = "*detect-project-id*";
