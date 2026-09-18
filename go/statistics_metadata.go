@@ -51,7 +51,19 @@ func (q *queryResponseSchemaEnhancer) GetMetadata(m map[string]string) error {
 	if q.resp.JobCreationReason != nil {
 		m["BIGQUERY:job_creation_reason"] = q.resp.JobCreationReason.Code
 	}
-	// TODO(lidavidm): potentially other fields (we don't have job statistics)
+	addIntMetadata(m, "BIGQUERY:statistics:query:total_bytes_billed", "", q.resp.TotalBytesBilled)
+	addIntMetadata(m, "BIGQUERY:statistics:query:total_bytes_processed", "", q.resp.TotalBytesProcessed)
+	addBoolMetadata(m, "BIGQUERY:statistics:query:cache_hit", "", q.resp.CacheHit)
+	addIntMetadata(m, "BIGQUERY:statistics:query:num_dml_affected_rows", "", q.resp.NumDmlAffectedRows)
+	addTimeMillisMetadata(m, "BIGQUERY:statistics:creation_time", q.resp.CreationTime)
+	addTimeMillisMetadata(m, "BIGQUERY:statistics:start_time", q.resp.StartTime)
+	addTimeMillisMetadata(m, "BIGQUERY:statistics:end_time", q.resp.EndTime)
+	if err := addJSONMetadata(m, "BIGQUERY:statistics:session_info", "", q.resp.SessionInfo); err != nil {
+		return err
+	}
+	if err := addJSONMetadata(m, "BIGQUERY:statistics:dml_stats", "", q.resp.DmlStats); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -148,6 +160,14 @@ func metadataFromJobStatistics(metadata map[string]string, stats *bigquery.JobSt
 		}
 	}
 	return nil
+}
+
+func addTimeMillisMetadata(metadata map[string]string, key string, millis int64) {
+	if millis == 0 {
+		return
+	}
+	time := time.Unix(0, millis*int64(time.Millisecond))
+	addTimeMetadata(metadata, key, "", time)
 }
 
 func addTimeMetadata(metadata map[string]string, key, legacyKey string, value time.Time) {

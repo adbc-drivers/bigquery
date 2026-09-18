@@ -1381,7 +1381,7 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 	suite.Require().NoError(rdr.Err())
 }
 
-func (suite *BigQueryTests) TestJobCreationOptional() {
+func (suite *BigQueryTests) TestJobCreationOptionalQuery() {
 	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT 42 AS THEANSWER"))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
@@ -1402,6 +1402,21 @@ func (suite *BigQueryTests) TestJobCreationOptional() {
 	}, nil)
 	expected := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), expectedSchema, `[{"THEANSWER": 42}]`)
 	defer expected.Release()
+
+	md := rdr.Schema().Metadata().ToMap()
+	suite.T().Logf("schema metadata: %v", md)
+	for _, key := range []string{
+		"BIGQUERY:statistics:creation_time",
+		"BIGQUERY:statistics:start_time",
+		"BIGQUERY:statistics:end_time",
+		"BIGQUERY:statistics:query:total_bytes_billed",
+		"BIGQUERY:statistics:query:total_bytes_processed",
+		"BIGQUERY:statistics:query:cache_hit",
+		"BIGQUERY:statistics:query:num_dml_affected_rows",
+	} {
+		_, ok := md[key]
+		suite.Truef(ok, "expected metadata key %s to be present", key)
+	}
 
 	suite.Truef(array.RecordEqual(expected, result), "expected: %s\ngot: %s", expected, result)
 
