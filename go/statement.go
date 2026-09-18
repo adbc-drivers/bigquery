@@ -419,7 +419,6 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
-	ctx = context.WithValue(ctx, ContextKeyUseStorageApiDisabledClient, st.useStorageApiDisabledClient)
 	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
 	if err != nil {
@@ -440,7 +439,6 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 		return n, err
 	}
 
-	ctx = context.WithValue(ctx, ContextKeyUseStorageApiDisabledClient, st.useStorageApiDisabledClient)
 	if st.params == nil {
 		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
 		if err != nil {
