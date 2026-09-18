@@ -101,13 +101,6 @@ const (
 	// return null over the Storage Read API.
 	OptionQueryUseStorageApiDisabledClient = "bigquery.query.use_storage_api_disabled_client"
 
-	// ContextKeyUseStorageApiDisabledClient signals to runQuery via
-	// context that it should fall back to the row-based iterator
-	// (bigquery.RowIterator + rowsToArrowRecordBatch) instead of the
-	// Storage Read API, so pseudo-columns like _PARTITIONDATE return
-	// values instead of nulls.
-	ContextKeyUseStorageApiDisabledClient = "USE_STORAGE_API_DISABLED_CLIENT"
-
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
