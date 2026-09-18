@@ -142,10 +142,10 @@ def test_link_failed_job(driver, conn) -> None:
     assert "division by zero" in message
 
 
-STORAGE_API_DISABLED = "bigquery.query.use_storage_api_disabled_client"
+STORAGE_API_DISABLED = "bigquery.query.disable_storage_api"
 
 
-def test_use_storage_api_disabled_client_option_roundtrip(driver, conn) -> None:
+def test_disable_storage_api_option_roundtrip(driver, conn) -> None:
     with conn.cursor() as cursor:
         statement = cursor.adbc_statement
         assert statement.get_option(STORAGE_API_DISABLED) == "false"
@@ -153,7 +153,7 @@ def test_use_storage_api_disabled_client_option_roundtrip(driver, conn) -> None:
         assert statement.get_option(STORAGE_API_DISABLED) == "true"
 
 
-def test_use_storage_api_disabled_client_pseudo_columns(driver, conn) -> None:
+def test_disable_storage_api_pseudo_columns(driver, conn) -> None:
     # Ingestion-time partitioning is what exposes _PARTITIONDATE and
     # _PARTITIONTIME. Routing through the row-based reader must return their
     # values rather than nulls.
@@ -184,7 +184,7 @@ def test_use_storage_api_disabled_client_pseudo_columns(driver, conn) -> None:
     reason="the row-based reader emits one IPC stream per 1000-row batch, "
     "so the consumer stops at end-of-stream and later rows are dropped"
 )
-def test_use_storage_api_disabled_client_row_count(driver, conn) -> None:
+def test_disable_storage_api_row_count(driver, conn) -> None:
     with conn.cursor() as cursor:
         cursor.adbc_statement.set_options(**{STORAGE_API_DISABLED: "true"})
         cursor.execute("SELECT x FROM UNNEST(GENERATE_ARRAY(1, 1001)) AS x")
