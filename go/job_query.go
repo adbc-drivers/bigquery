@@ -219,7 +219,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	if !mayReturnResults && statsOk {
 		arrowIterator = emptyArrowIterator{stats.Schema}
 		totalRows = stats.NumDMLAffectedRows
-	} else if mayReturnResults && readRowsFastPath {
+	} else if mayReturnResults && readRowsFastPath && !st.useStorageApiDisabledClient {
 		driverbase.DebugAssert(statsOk, "stats should be available if mayReturnResults is true")
 		arrowIterator, err = newReadRowsArrowIterator(ctx, client, job, stats.Schema)
 		if err != nil {
@@ -245,12 +245,8 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 		// iter.TotalRows == 0 (this is valid as per the API: the field is not
 		// _necessarily_ populated until after a call to Next). Finally we use
 		// job statistics instead
-		useLegacyAPI := false
-		if v, ok := ctx.Value(ContextKeyUseStorageApiDisabledClient).(bool); ok {
-			useLegacyAPI = v
-		}
 		if mayReturnResults {
-			if useLegacyAPI {
+			if st.useStorageApiDisabledClient {
 				arrowIterator = newRowBasedArrowIterator(iter, st.cnxn.Alloc)
 			} else if arrowIterator, err = iter.ArrowIterator(); err != nil {
 				if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
