@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Row-based Arrow iterator used when the caller opts out of the Storage Read
-// API (see OptionQueryUseStorageApiDisabledClient). Pseudo-columns like
+// API (see OptionQueryDisableStorageApi). Pseudo-columns like
 // _PARTITIONDATE and _PARTITIONTIME are silently nulled out by the Storage
 // API, so this path walks bigquery.RowIterator directly, materializing
 // batches of rows into Arrow record batches and re-serializing them through
