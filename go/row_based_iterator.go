@@ -66,7 +66,7 @@ func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	const batchSize = 1000
 	rows := make([][]bigquery.Value, 0, batchSize)
 
-	for i := 0; i < batchSize; i++ {
+	for range batchSize {
 		var row []bigquery.Value
 		err := l.iter.Next(&row)
 		if err == iterator.Done {
