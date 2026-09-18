@@ -59,7 +59,7 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job)
 
 	// dry-run jobs already have a status. as an optimization, poll LastStatus (which is a simple getter)
 	js = job.LastStatus()
-	if js.Err() != nil || js.Done() {
+	if js != nil && (js.Err() != nil || js.Done()) {
 		logger.DebugContext(ctx, "job complete", "id", job.ID())
 		return js, nil
 	}

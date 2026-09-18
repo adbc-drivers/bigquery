@@ -1381,6 +1381,298 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 	suite.Require().NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestJobCreationOptionalQuery() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT 42 AS THEANSWER"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	suite.Equal(-1, rdr.Schema().Metadata().FindKey("BIGQUERY:job_creation_reason"))
+
+	suite.EqualValues(1, n)
+	suite.True(rdr.Next())
+	result := rdr.RecordBatch()
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{
+			Name: "THEANSWER", Type: arrow.PrimitiveTypes.Int64,
+			Nullable: true,
+		},
+	}, nil)
+	expected := testutil.RecordFromJSON(suite.T(), suite.Quirks.Alloc(), expectedSchema, `[{"THEANSWER": 42}]`)
+	defer expected.Release()
+
+	md := rdr.Schema().Metadata().ToMap()
+	suite.T().Logf("schema metadata: %v", md)
+	for _, key := range []string{
+		"BIGQUERY:statistics:creation_time",
+		"BIGQUERY:statistics:start_time",
+		"BIGQUERY:statistics:end_time",
+		"BIGQUERY:statistics:query:total_bytes_billed",
+		"BIGQUERY:statistics:query:total_bytes_processed",
+		"BIGQUERY:statistics:query:cache_hit",
+		"BIGQUERY:statistics:query:num_dml_affected_rows",
+	} {
+		_, ok := md[key]
+		suite.Truef(ok, "expected metadata key %s to be present", key)
+	}
+
+	suite.Truef(array.RecordEqual(expected, result), "expected: %s\ngot: %s", expected, result)
+
+	suite.False(rdr.Next())
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestJobCreationOptionalFallback() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM `bigquery-public-data`.google_books_ngrams_2020.eng_fiction_1 LIMIT 5000"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "term", Type: arrow.BinaryTypes.String, Nullable: true},
+		{Name: "term_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "document_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "tokens", Type: arrow.ListOf(arrow.BinaryTypes.String), Nullable: false},
+		{Name: "has_tag", Type: arrow.FixedWidthTypes.Boolean, Nullable: true},
+		{Name: "years", Type: arrow.ListOf(arrow.StructOf([]arrow.Field{
+			{Name: "year", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			{Name: "term_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			{Name: "document_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		}...)), Nullable: false},
+	}, nil)
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.True(ok)
+	suite.T().Log("job creation reason:", reason)
+	suite.NotEmpty(reason)
+
+	// We don't know how many rows are in the stream when we fall back
+	suite.EqualValues(-1, n)
+	nrows := 0
+	for rdr.Next() {
+		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(5000, nrows)
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestJobCreationOptionalBufferCompression() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM `bigquery-public-data`.google_books_ngrams_2020.eng_fiction_1 LIMIT 50"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.arrow_serialization_options.buffer_compression", "zstd"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "term", Type: arrow.BinaryTypes.String, Nullable: true},
+		{Name: "term_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "document_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "tokens", Type: arrow.ListOf(arrow.BinaryTypes.String), Nullable: false},
+		{Name: "has_tag", Type: arrow.FixedWidthTypes.Boolean, Nullable: true},
+		{Name: "years", Type: arrow.ListOf(arrow.StructOf([]arrow.Field{
+			{Name: "year", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			{Name: "term_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			{Name: "document_frequency", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		}...)), Nullable: false},
+	}, nil)
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.Falsef(ok, "expected no job creation reason, got: %s", reason)
+
+	suite.EqualValues(50, n)
+	nrows := 0
+	for rdr.Next() {
+		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(50, nrows)
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestJobCreationOptionalPseudocolumns() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "CREATE TABLE pseudotest (tid INT64) PARTITION BY _PARTITIONDATE"))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "INSERT INTO pseudotest (tid) SELECT tid FROM UNNEST(GENERATE_ARRAY(1, 1000)) AS tid"))
+	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT tid, _PARTITIONTIME AS PT FROM pseudotest"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.Falsef(ok, "expected no job creation reason, got: %s", reason)
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "tid", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "PT", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}, Nullable: true},
+	}, nil)
+
+	suite.EqualValues(1000, n)
+	suite.Truef(expectedSchema.Equal(rdr.Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+	nrows := 0
+	for rdr.Next() {
+		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(1000, nrows)
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestJobCreationOptionalFallbackPseudocolumns() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "CREATE TABLE pseudotest2 (tid INT64) PARTITION BY _PARTITIONDATE"))
+	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "INSERT INTO pseudotest2 (tid) SELECT tid FROM UNNEST(GENERATE_ARRAY(1, 100000)) AS tid"))
+	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
+	suite.Require().NoError(err)
+
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT tid, _PARTITIONTIME AS PT FROM pseudotest2"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
+	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+	suite.True(ok)
+	suite.T().Log("job creation reason:", reason)
+	suite.NotEmpty(reason)
+
+	expectedSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "tid", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "PT", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}, Nullable: true},
+	}, nil)
+
+	suite.EqualValues(-1, n)
+	suite.Truef(expectedSchema.Equal(rdr.Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+	nrows := 0
+	for rdr.Next() {
+		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
+		nrows += int(rdr.RecordBatch().NumRows())
+	}
+	suite.Equal(100000, nrows)
+	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestQueryOptionInheritance() {
+	for _, tc := range []struct {
+		key, value, expected string
+	}{
+		{driver.OptionQueryResultsFormat, "arrow", driver.ResultsFormatArrow},
+		{driver.OptionQueryResultsFormat, "ARROW", driver.ResultsFormatArrow},
+		{driver.OptionQueryJobCreationMode, "optional", driver.JobCreationModeOptional},
+		{driver.OptionQueryJobCreationMode, "JOB_CREATION_OPTIONAL", driver.JobCreationModeOptional},
+		{driver.OptionQueryArrowSerializationOptionsBufferCompression, "LZ4_FRAME", driver.ResultsCompressionLz4},
+	} {
+		suite.Run(tc.key, func() {
+			opts := suite.Quirks.DatabaseOptions()
+			opts[tc.key] = tc.value
+			db, err := suite.driver.NewDatabaseWithContext(suite.ctx, opts)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), db, suite.ctx)
+
+			val, err := db.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
+			suite.Require().NoError(err)
+			suite.Equal(tc.expected, val)
+
+			conn, err := db.Open(suite.ctx)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), conn, suite.ctx)
+			val, err = conn.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
+			suite.Require().NoError(err)
+			suite.Equal(tc.expected, val)
+
+			stmt, err := conn.NewStatement(suite.ctx)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), stmt, suite.ctx)
+			val, err = stmt.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
+			suite.Require().NoError(err)
+			suite.Equal(tc.expected, val)
+		})
+	}
+}
+
+func (suite *BigQueryTests) TestRowsAffectedJobMode() {
+	type query struct {
+		sql        string
+		affected   int64
+		fallback   bool
+		hasResults bool
+	}
+	for _, jobMode := range []string{"required", "optional"} {
+		tableName := fmt.Sprintf("test_rows_affected_%s", jobMode)
+		for i, query := range []query{
+			{sql: fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName), affected: 0, fallback: true},
+			{sql: fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (id INT64)", tableName), affected: 0, fallback: true},
+			{sql: fmt.Sprintf("INSERT INTO %s (id) VALUES (1), (2), (3)", tableName), affected: 3, fallback: true},
+			{sql: fmt.Sprintf("SELECT * FROM %s", tableName), affected: 3, hasResults: true},
+			{sql: fmt.Sprintf("UPDATE %s SET id = id + 1 WHERE id < 3", tableName), affected: 2, fallback: true},
+			{sql: fmt.Sprintf("DELETE FROM %s WHERE id > 2", tableName), affected: 2, fallback: true},
+			// SCRIPT type
+			// use nonexistent tables to try to avoid rate limit issues
+			{sql: fmt.Sprintf("DROP TABLE IF EXISTS %s_foobaz; DROP TABLE IF EXISTS %s_foobar", tableName, tableName), affected: 0, fallback: true},
+			{sql: "SELECT 1; SELECT 2", affected: 1, fallback: true, hasResults: true},
+		} {
+			suite.Run(fmt.Sprintf("%s_%d_%s", jobMode, i, query.sql), func() {
+				ctx := context.Background()
+				stmt, err := suite.cnxn.NewStatement(ctx)
+				suite.Require().NoError(err)
+				defer testutil.CheckedCloseWithContext(suite.T(), stmt, ctx)
+
+				suite.Require().NoError(suite.stmt.SetSqlQuery(ctx, query.sql))
+				suite.Require().NoError(suite.stmt.SetOption(ctx, "bigquery.query.job_creation_mode", jobMode))
+				rdr, n, err := suite.stmt.ExecuteQuery(ctx)
+
+				if strings.HasPrefix(query.sql, "DROP TABLE IF EXISTS test_rows_affected_optional") {
+					// XXX: Google API badness. BigQuery *always* 500s, then the SDK retries, and then the server gives a 409!
+					// Seems to be an issue inherent to DROP TABLE IF EXISTS?
+					suite.Error(err)
+					return
+				}
+				suite.Require().NoError(err)
+				defer rdr.Release()
+
+				if jobMode == "optional" {
+					reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+					if query.fallback {
+						suite.True(ok)
+					} else {
+						suite.Falsef(ok, "expected no job creation reason, got: %s", reason)
+					}
+				}
+
+				if jobMode == "optional" && query.hasResults && query.fallback {
+					// When we fall back to reading the default stream, the driver has no row count info
+					suite.EqualValues(-1, n)
+				} else {
+					suite.EqualValues(query.affected, n)
+				}
+
+				numRows := int64(0)
+				for rdr.Next() {
+					batch := rdr.RecordBatch()
+					numRows += batch.NumRows()
+				}
+				suite.Require().NoError(rdr.Err())
+				if query.hasResults {
+					suite.EqualValues(query.affected, numRows)
+				} else {
+					suite.EqualValues(0, numRows)
+				}
+			})
+		}
+	}
+}
+
 func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 
 	suite.Require().NoError(suite.Quirks.DropTable(suite.cnxn, "bulk_ingest"))

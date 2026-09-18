@@ -21,8 +21,70 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/apache/arrow-go/v18/arrow"
+	bq "google.golang.org/api/bigquery/v2"
 )
+
+// schemaEnhancer provides Arrow schema metadata based on job/query statistics.
+type schemaEnhancer interface {
+	// GetMetadata constructs Arrow metadata from statistics. Mutates a given map[string]string to make it easier to add additional values at the point of use and compose multiple metadata sets (as arrow.Metadata disallows poking at its internals).
+	GetMetadata(map[string]string) error
+}
+
+type jobStatisticsSchemaEnhancer struct {
+	stats *bigquery.JobStatistics
+	jobID string
+}
+
+var _ schemaEnhancer = (*jobStatisticsSchemaEnhancer)(nil)
+
+func (j *jobStatisticsSchemaEnhancer) GetMetadata(m map[string]string) error {
+	return metadataFromJobStatistics(m, j.stats, j.jobID)
+}
+
+type queryResponseSchemaEnhancer struct {
+	resp *bq.QueryResponse
+}
+
+var _ schemaEnhancer = (*queryResponseSchemaEnhancer)(nil)
+
+func (q *queryResponseSchemaEnhancer) GetMetadata(m map[string]string) error {
+	if q.resp.JobCreationReason != nil {
+		m["BIGQUERY:job_creation_reason"] = q.resp.JobCreationReason.Code
+	}
+	addIntMetadata(m, "BIGQUERY:statistics:query:total_bytes_billed", "", q.resp.TotalBytesBilled)
+	addIntMetadata(m, "BIGQUERY:statistics:query:total_bytes_processed", "", q.resp.TotalBytesProcessed)
+	addBoolMetadata(m, "BIGQUERY:statistics:query:cache_hit", "", q.resp.CacheHit)
+	addIntMetadata(m, "BIGQUERY:statistics:query:num_dml_affected_rows", "", q.resp.NumDmlAffectedRows)
+	addTimeMillisMetadata(m, "BIGQUERY:statistics:creation_time", q.resp.CreationTime)
+	addTimeMillisMetadata(m, "BIGQUERY:statistics:start_time", q.resp.StartTime)
+	addTimeMillisMetadata(m, "BIGQUERY:statistics:end_time", q.resp.EndTime)
+	if err := addJSONMetadata(m, "BIGQUERY:statistics:session_info", "", q.resp.SessionInfo); err != nil {
+		return err
+	}
+	if err := addJSONMetadata(m, "BIGQUERY:statistics:dml_stats", "", q.resp.DmlStats); err != nil {
+		return err
+	}
+	return nil
+}
+
+type compositeSchemaEnhancer struct {
+	enhancers []schemaEnhancer
+}
+
+var _ schemaEnhancer = (*compositeSchemaEnhancer)(nil)
+
+func (c *compositeSchemaEnhancer) GetMetadata(m map[string]string) error {
+	for _, enhancer := range c.enhancers {
+		if enhancer == nil {
+			continue
+		}
+		err := enhancer.GetMetadata(m)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func metadataFromQueryStatistics(metadata map[string]string, queryStatistics *bigquery.QueryStatistics) error {
 	if err := addJSONMetadata(metadata, "BIGQUERY:statistics:query:bi_engine_statistics", "BIGQUERY:Statistics:Query:BIEngineStatistics", queryStatistics.BIEngineStatistics); err != nil {
@@ -58,15 +120,14 @@ func metadataFromQueryStatistics(metadata map[string]string, queryStatistics *bi
 	return nil
 }
 
-func metadataFromJobStatistics(stats *bigquery.JobStatistics, jobID string) (*arrow.Metadata, error) {
+func metadataFromJobStatistics(metadata map[string]string, stats *bigquery.JobStatistics, jobID string) error {
 	if stats == nil && jobID == "" {
-		return nil, nil
+		return nil
 	}
 
-	metadata := make(map[string]string)
 	addStringMetadata(metadata, MetadataKeyBigqueryQueryID, "", jobID)
 	if stats == nil {
-		return new(arrow.MetadataFrom(metadata)), nil
+		return nil
 	}
 	addTimeMetadata(metadata, "BIGQUERY:statistics:creation_time", "BIGQUERY:Statistics:CreationTime", stats.CreationTime)
 	addTimeMetadata(metadata, "BIGQUERY:statistics:start_time", "BIGQUERY:Statistics:StartTime", stats.StartTime)
@@ -74,19 +135,19 @@ func metadataFromJobStatistics(stats *bigquery.JobStatistics, jobID string) (*ar
 	addIntMetadata(metadata, "BIGQUERY:statistics:total_bytes_processed", "BIGQUERY:Statistics:TotalBytesProcessed", stats.TotalBytesProcessed)
 	addDurationMetadata(metadata, "BIGQUERY:statistics:total_slot_duration", "BIGQUERY:Statistics:TotalSlotDuration", stats.TotalSlotDuration)
 	if err := addJSONMetadata(metadata, "BIGQUERY:statistics:reservation_usage", "BIGQUERY:Statistics:ReservationUsage", stats.ReservationUsage); err != nil {
-		return nil, err
+		return err
 	}
 	addStringMetadata(metadata, "BIGQUERY:statistics:reservation_id", "BIGQUERY:Statistics:ReservationID", stats.ReservationID)
 	addIntMetadata(metadata, "BIGQUERY:statistics:num_child_jobs", "BIGQUERY:Statistics:NumChildJobs", stats.NumChildJobs)
 	addStringMetadata(metadata, "BIGQUERY:statistics:parent_job_id", "BIGQUERY:Statistics:ParentJobID", stats.ParentJobID)
 	if err := addJSONMetadata(metadata, "BIGQUERY:statistics:script_statistics", "BIGQUERY:Statistics:ScriptStatistics", stats.ScriptStatistics); err != nil {
-		return nil, err
+		return err
 	}
 	if err := addJSONMetadata(metadata, "BIGQUERY:statistics:transaction_info", "BIGQUERY:Statistics:TransactionInfo", stats.TransactionInfo); err != nil {
-		return nil, err
+		return err
 	}
 	if err := addJSONMetadata(metadata, "BIGQUERY:statistics:session_info", "BIGQUERY:Statistics:SessionInfo", stats.SessionInfo); err != nil {
-		return nil, err
+		return err
 	}
 	addDurationMetadata(metadata, "BIGQUERY:statistics:final_execution_duration", "BIGQUERY:Statistics:FinalExecutionDuration", stats.FinalExecutionDuration)
 	addStringMetadata(metadata, "BIGQUERY:statistics:edition", "BIGQUERY:Statistics:Edition", string(stats.Edition))
@@ -95,10 +156,18 @@ func metadataFromJobStatistics(stats *bigquery.JobStatistics, jobID string) (*ar
 	queryStatistics, ok := stats.Details.(*bigquery.QueryStatistics)
 	if ok && queryStatistics != nil {
 		if err := metadataFromQueryStatistics(metadata, queryStatistics); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return new(arrow.MetadataFrom(metadata)), nil
+	return nil
+}
+
+func addTimeMillisMetadata(metadata map[string]string, key string, millis int64) {
+	if millis == 0 {
+		return
+	}
+	time := time.Unix(0, millis*int64(time.Millisecond))
+	addTimeMetadata(metadata, key, "", time)
 }
 
 func addTimeMetadata(metadata map[string]string, key, legacyKey string, value time.Time) {
