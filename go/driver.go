@@ -96,12 +96,12 @@ const (
 	JobCreationModeRequired    = "required"
 	JobCreationModeOptional    = "optional"
 
-	OptionQueryResultsFormat           = "bigquery.query.results_format"
-	ResultsFormatArrow                 = "arrow"
-	ResultsFormatStructEncoding        = "struct_encoding"
-	OptionQueryArrowResultsCompression = "bigquery.query.arrow_results_compression"
-	ResultsCompressionLz4              = "lz4"
-	ResultsCompressionZstd             = "zstd"
+	OptionQueryResultsFormat                              = "bigquery.query.results_format"
+	ResultsFormatArrow                                    = "arrow"
+	ResultsFormatStructEncoding                           = "struct_encoding"
+	OptionQueryArrowSerializationOptionsBufferCompression = "bigquery.query.arrow_serialization_options.buffer_compression"
+	ResultsCompressionLz4                                 = "lz4"
+	ResultsCompressionZstd                                = "zstd"
 
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
@@ -239,6 +239,7 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 	db := &databaseImpl{
 		DatabaseImplBase: dbBase,
 		authType:         OptionValueAuthTypeDefault,
+		queryDefaults:    newQueryDefaults(),
 	}
 	if err := db.SetOptions(ctx, opts); err != nil {
 		return nil, err

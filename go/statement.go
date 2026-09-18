@@ -171,7 +171,7 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 			return st.bulkIngestCompression, nil
 		}
 		return st.cnxn.GetOption(ctx, key)
-	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowResultsCompression:
+	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
 		return getQueryOption(&st.queryConfig, key)
 	default:
 		val, err := st.cnxn.GetOption(ctx, key)
@@ -343,7 +343,7 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.bulkIngestCompression = v
-	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowResultsCompression:
+	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
 		return setQueryOption(&st.queryConfig, key, v)
 
 	default:

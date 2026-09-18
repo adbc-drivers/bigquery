@@ -116,6 +116,25 @@ Examples:
 
 {{ types|safe }}
 
+### Inline Results/Optional Job Creation
+
+BigQuery can optimize queries that have small result sets by combining two features:
+
+- Instead of creating a job, directly execute the query.
+- Instead of creating a read session, return the result set in the initial response.
+
+This reduces end-to-end query latency. The driver supports this experimentally by setting the following options:
+
+- `bigquery.query.job_creation_mode` to `optional`
+- `bigquery.query.results_format` to `arrow`
+
+If the query result set is too large or the query is not supported, the backend will create a job and the driver will transparently fall back to the normal path. Note these caveats:
+
+- With these options, BigQuery does not tell us the BigQuery result schema:
+  - Field metadata (e.g. `BIGQUERY:type`) will not be present.
+  - Some data types are not mapped properly. (See "Inline Result" in the types tables above.)
+- Similarly, the driver does not get query statistics and schema metadata will be limited.
+
 ### Query Statistics
 
 A selection of query statistics and other metadata is supplied in the metadata of the Arrow schema of the result set.
@@ -238,14 +257,10 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   Allow arbitrarily large query results, at the cost of query performance (even if the result set is not large). For more information, see the [BigQuery documentation](https://cloud.google.com/bigquery/querying-data#largequeryresults).
 
-`bigquery.query.arrow_results_compression`
-: **Values:** (empty string), `lz4`, `zstd`. **Default:** (empty string)
+`bigquery.query.arrow_serialization_options.buffer_compression`
+: **Values:** `lz4`, `zstd`. **Default:** (empty string)
 
   When `bigquery.query.results_format` is `arrow`, the codec (if any) to use for Arrow IPC compression.
-
-  :::{warning}
-  The option currently has no effect.
-  :::
 
 `bigquery.query.create_disposition`
 : **Values:** `CREATE_IF_NEEDED`, `CREATE_NEVER`. **Default:** `CREATE_IF_NEEDED`
@@ -298,6 +313,8 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   Whether to enable a fast-path that allows BigQuery to skip creating a job in some cases. For small result sets, this can lead to lower end-to-end query time. The default is to always create a job.
 
+  See: "Inline Result" in the type mapping table.
+
 `bigquery.query.job_timeout`
 : **Type:** integer. **Default:** 0
 
@@ -334,7 +351,7 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
   The maximum number of Arrow record batches to buffer in memory.
 
 `bigquery.query.results_format`
-: **Values:** `arrow`, `struct_encoding`. **Default:** `arrow`
+: **Values:** `arrow`, `struct_encoding`, `QUERY_RESULTS_FORMAT_UNSPECIFIED` (case-insensitive). **Default:** `arrow`
 
   When `bigquery.query.job_creation_mode` is `optional`, the format of query result data.
 

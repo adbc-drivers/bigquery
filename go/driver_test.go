@@ -1384,8 +1384,6 @@ func (suite *BigQueryTests) TestSqlIngestStructType() {
 func (suite *BigQueryTests) TestJobCreationOptional() {
 	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT 42 AS THEANSWER"))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
-	// TODO: don't require this option
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1414,8 +1412,6 @@ func (suite *BigQueryTests) TestJobCreationOptional() {
 func (suite *BigQueryTests) TestJobCreationOptionalFallback() {
 	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM `bigquery-public-data`.google_books_ngrams_2020.eng_fiction_1 LIMIT 5000"))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
-	// TODO: don't require this option
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1451,11 +1447,7 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallback() {
 
 func (suite *BigQueryTests) TestJobCreationOptionalBufferCompression() {
 	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT * FROM `bigquery-public-data`.google_books_ngrams_2020.eng_fiction_1 LIMIT 50"))
-	// TODO: rename the options to be more principled (bigquery.query.arrow_serialization_options.buffer_compression, IMO)
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.arrow_results_compression", "zstd"))
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
-	// TODO: don't require this option
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
+	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.arrow_serialization_options.buffer_compression", "zstd"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1497,8 +1489,6 @@ func (suite *BigQueryTests) TestJobCreationOptionalPseudocolumns() {
 
 	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT tid, _PARTITIONTIME AS PT FROM pseudotest"))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
-	// TODO: don't require this option
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1533,8 +1523,6 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallbackPseudocolumns() {
 
 	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT tid, _PARTITIONTIME AS PT FROM pseudotest2"))
 	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.job_creation_mode", "optional"))
-	// TODO: don't require this option
-	suite.Require().NoError(suite.stmt.SetOption(suite.ctx, "bigquery.query.results_format", "arrow"))
 	rdr, n, err := suite.stmt.ExecuteQuery(suite.ctx)
 	suite.Require().NoError(err)
 	defer rdr.Release()
@@ -1562,11 +1550,13 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallbackPseudocolumns() {
 
 func (suite *BigQueryTests) TestQueryOptionInheritance() {
 	for _, tc := range []struct {
-		key, value string
+		key, value, expected string
 	}{
-		{driver.OptionQueryResultsFormat, driver.ResultsFormatArrow},
-		{driver.OptionQueryJobCreationMode, driver.JobCreationModeOptional},
-		{driver.OptionQueryArrowResultsCompression, driver.ResultsCompressionLz4},
+		{driver.OptionQueryResultsFormat, "arrow", driver.ResultsFormatArrow},
+		{driver.OptionQueryResultsFormat, "ARROW", driver.ResultsFormatArrow},
+		{driver.OptionQueryJobCreationMode, "optional", driver.JobCreationModeOptional},
+		{driver.OptionQueryJobCreationMode, "JOB_CREATION_OPTIONAL", driver.JobCreationModeOptional},
+		{driver.OptionQueryArrowSerializationOptionsBufferCompression, "LZ4_FRAME", driver.ResultsCompressionLz4},
 	} {
 		suite.Run(tc.key, func() {
 			opts := suite.Quirks.DatabaseOptions()
@@ -1577,21 +1567,21 @@ func (suite *BigQueryTests) TestQueryOptionInheritance() {
 
 			val, err := db.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
 			suite.Require().NoError(err)
-			suite.Equal(tc.value, val)
+			suite.Equal(tc.expected, val)
 
 			conn, err := db.Open(suite.ctx)
 			suite.Require().NoError(err)
 			defer testutil.CheckedCloseWithContext(suite.T(), conn, suite.ctx)
 			val, err = conn.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
 			suite.Require().NoError(err)
-			suite.Equal(tc.value, val)
+			suite.Equal(tc.expected, val)
 
 			stmt, err := conn.NewStatement(suite.ctx)
 			suite.Require().NoError(err)
 			defer testutil.CheckedCloseWithContext(suite.T(), stmt, suite.ctx)
 			val, err = stmt.(adbc.GetSetOptionsWithContext).GetOption(suite.ctx, tc.key)
 			suite.Require().NoError(err)
-			suite.Equal(tc.value, val)
+			suite.Equal(tc.expected, val)
 		})
 	}
 }

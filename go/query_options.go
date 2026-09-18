@@ -16,6 +16,7 @@ package bigquery
 
 import (
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -27,9 +28,15 @@ type queryDefaults struct {
 	config bigquery.QueryConfig
 }
 
+func newQueryDefaults() queryDefaults {
+	return queryDefaults{config: bigquery.QueryConfig{
+		QueryResultsFormat: new(bigquery.QueryResultsFormatArrow),
+	}}
+}
+
 func (qd *queryDefaults) getOption(key string) (bool, string, error) {
 	switch key {
-	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowResultsCompression:
+	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
 		v, err := getQueryOption(&qd.config, key)
 		return true, v, err
 	default:
@@ -39,7 +46,7 @@ func (qd *queryDefaults) getOption(key string) (bool, string, error) {
 
 func (qd *queryDefaults) setOption(key, value string) (bool, error) {
 	switch key {
-	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowResultsCompression:
+	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
 		return true, setQueryOption(&qd.config, key, value)
 	default:
 		return false, nil
@@ -65,7 +72,7 @@ func getQueryOption(config *bigquery.QueryConfig, key string) (string, error) {
 		}
 	case OptionQueryResultsFormat:
 		if config.QueryResultsFormat == nil {
-			return ResultsFormatArrow, nil
+			return ResultsFormatStructEncoding, nil
 		}
 		switch *config.QueryResultsFormat {
 		case bigquery.QueryResultsFormatArrow:
@@ -78,7 +85,7 @@ func getQueryOption(config *bigquery.QueryConfig, key string) (string, error) {
 				Msg:  fmt.Sprintf("[bq] unknown query results format: %v", *config.QueryResultsFormat),
 			}
 		}
-	case OptionQueryArrowResultsCompression:
+	case OptionQueryArrowSerializationOptionsBufferCompression:
 		if config.QueryResultsCompressionCodec == nil {
 			return "", nil
 		}
@@ -101,39 +108,45 @@ func getQueryOption(config *bigquery.QueryConfig, key string) (string, error) {
 func setQueryOption(config *bigquery.QueryConfig, key, v string) error {
 	switch key {
 	case OptionQueryJobCreationMode:
-		switch v {
-		case JobCreationModeRequired:
+		switch strings.ToUpper(v) {
+		case string(bigquery.JobCreationModeUnspecified):
+			config.JobCreationMode = nil
+		case "REQUIRED", string(bigquery.JobCreationModeRequired):
 			config.JobCreationMode = new(bigquery.JobCreationModeRequired)
-		case JobCreationModeOptional:
+		case "OPTIONAL", string(bigquery.JobCreationModeOptional):
 			config.JobCreationMode = new(bigquery.JobCreationModeOptional)
 		default:
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid job creation mode: %s (expected %s or %s)", v, JobCreationModeRequired, JobCreationModeOptional),
+				Msg:  fmt.Sprintf("[bq] invalid job creation mode: %s (expected required, optional, JOB_CREATION_MODE_UNSPECIFIED, JOB_CREATION_REQUIRED, or JOB_CREATION_OPTIONAL; case-insensitive)", v),
 			}
 		}
 	case OptionQueryResultsFormat:
-		switch v {
-		case ResultsFormatArrow:
+		switch strings.ToUpper(v) {
+		case "QUERY_RESULTS_FORMAT_UNSPECIFIED":
+			config.QueryResultsFormat = nil
+		case string(bigquery.QueryResultsFormatArrow):
 			config.QueryResultsFormat = new(bigquery.QueryResultsFormatArrow)
-		case ResultsFormatStructEncoding:
+		case string(bigquery.QueryResultsFormatStructEncoding):
 			config.QueryResultsFormat = new(bigquery.QueryResultsFormatStructEncoding)
 		default:
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid query results format: %s (expected %s or %s)", v, ResultsFormatArrow, ResultsFormatStructEncoding),
+				Msg:  fmt.Sprintf("[bq] invalid query results format: %s (expected ARROW, STRUCT_ENCODING, or QUERY_RESULTS_FORMAT_UNSPECIFIED; case-insensitive)", v),
 			}
 		}
-	case OptionQueryArrowResultsCompression:
-		switch v {
-		case ResultsCompressionLz4:
+	case OptionQueryArrowSerializationOptionsBufferCompression:
+		switch strings.ToUpper(v) {
+		case "COMPRESSION_UNSPECIFIED":
+			config.QueryResultsCompressionCodec = nil
+		case "LZ4", string(bigquery.QueryResultsCompressionCodecLZ4):
 			config.QueryResultsCompressionCodec = new(bigquery.QueryResultsCompressionCodecLZ4)
-		case ResultsCompressionZstd:
+		case string(bigquery.QueryResultsCompressionCodecZSTD):
 			config.QueryResultsCompressionCodec = new(bigquery.QueryResultsCompressionCodecZSTD)
 		default:
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
-				Msg:  fmt.Sprintf("[bq] invalid Arrow results compression: %s (expected %s or %s)", v, ResultsCompressionLz4, ResultsCompressionZstd),
+				Msg:  fmt.Sprintf("[bq] invalid Arrow results compression: %s (expected lz4, LZ4_FRAME, ZSTD, or COMPRESSION_UNSPECIFIED; case-insensitive)", v),
 			}
 		}
 	default:

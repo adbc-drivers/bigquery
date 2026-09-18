@@ -72,7 +72,7 @@ class TestQuery(query_tests.TestQuery):
                     },
                     "tags": {
                         "broken-vendor": None,
-                        "variant": "Job Creation Optional",
+                        "variant": "Inline Result",
                     },
                 },
                 *query.metadata_paths,
