@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Row-based Arrow iterator used when the caller opts out of the Storage Read
-// API (see OptionQueryUseStorageApiDisabledClient). Pseudo-columns like
+// API (see OptionQueryDisableStorageApi). Pseudo-columns like
 // _PARTITIONDATE and _PARTITIONTIME are silently nulled out by the Storage
 // API, so this path walks bigquery.RowIterator directly, materializing
 // batches of rows into Arrow record batches and re-serializing them through
@@ -205,7 +205,7 @@ func rowsToArrowRecordBatch(schema bigquery.Schema, rows [][]bigquery.Value, all
 			// disabled path is intended for pseudo-column queries which are
 			// almost always DATE/TIMESTAMP; extend here if more types come up.
 			default:
-				return nil, fmt.Errorf("USE_STORAGE_API_DISABLED_CLIENT is enabled, unsupported type conversion for column type %s of value %v", builder.Type().String(), val)
+				return nil, fmt.Errorf("storage API is disabled, unsupported type conversion for column type %s of value %v", builder.Type().String(), val)
 			}
 		}
 	}

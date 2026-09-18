@@ -160,7 +160,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// _necessarily_ populated until after a call to Next). Finally we use
 	// job statistics instead
 	if mayReturnResults {
-		if st.useStorageApiDisabledClient {
+		if st.disableStorageApi {
 			arrowIterator = newRowBasedArrowIterator(iter, st.cnxn.Alloc)
 		} else if arrowIterator, err = iter.ArrowIterator(); err != nil {
 			if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {

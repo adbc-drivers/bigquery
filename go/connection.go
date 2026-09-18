@@ -88,7 +88,7 @@ type connectionImpl struct {
 	client *bigquery.Client
 	// clientStorageApiDisabled is a parallel client that does NOT have the
 	// Storage Read API enabled. Used when a statement requests
-	// OptionQueryUseStorageApiDisabledClient, since the Storage API returns
+	// OptionQueryDisableStorageApi, since the Storage API returns
 	// nulls for pseudo-columns like _PARTITIONDATE/_PARTITIONTIME.
 	// Initialized lazily on first use.
 	clientStorageApiDisabled *bigquery.Client

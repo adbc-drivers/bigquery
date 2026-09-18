@@ -73,7 +73,7 @@ type statement struct {
 	// Route through a secondary bigquery.Client whose Storage Read API is
 	// NOT enabled. Required for queries that reference pseudo-columns like
 	// _PARTITIONDATE or _PARTITIONTIME, which return null over Storage.
-	useStorageApiDisabledClient bool
+	disableStorageApi bool
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -164,8 +164,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 		return strconv.FormatBool(st.queryConfig.DryRun), nil
 	case OptionQueryCreateSession:
 		return strconv.FormatBool(st.queryConfig.CreateSession), nil
-	case OptionQueryUseStorageApiDisabledClient:
-		return strconv.FormatBool(st.useStorageApiDisabledClient), nil
+	case OptionQueryDisableStorageApi:
+		return strconv.FormatBool(st.disableStorageApi), nil
 	case OptionBulkIngestMethod:
 		// If set at statement level, return that; otherwise fall back to connection
 		if st.bulkIngestMethod != "" {
@@ -329,12 +329,12 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 		} else {
 			return err
 		}
-	case OptionQueryUseStorageApiDisabledClient:
+	case OptionQueryDisableStorageApi:
 		val, err := strconv.ParseBool(v)
 		if err != nil {
 			return err
 		}
-		st.useStorageApiDisabledClient = val
+		st.disableStorageApi = val
 	case OptionBulkIngestMethod:
 		if v != OptionValueBulkIngestMethodLoad &&
 			v != OptionValueBulkIngestMethodStorageWrite {
@@ -544,7 +544,7 @@ func (st *statement) SetSubstraitPlan(ctx context.Context, plan []byte) error {
 
 func (st *statement) query() *bigquery.Query {
 	var client *bigquery.Client
-	if st.useStorageApiDisabledClient {
+	if st.disableStorageApi {
 		// Lazily create the secondary client. If creation fails for any
 		// reason fall back to the main client; callers that strictly require
 		// pseudo-column support will surface the issue via a subsequent
