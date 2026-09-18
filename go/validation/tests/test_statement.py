@@ -157,9 +157,11 @@ def test_disable_storage_api_pseudo_columns(driver, conn) -> None:
     # Ingestion-time partitioning is what exposes _PARTITIONDATE and
     # _PARTITIONTIME. Routing through the row-based reader must return their
     # values rather than nulls.
-    table = f"validation_pseudo_columns_{uuid.uuid4().hex[:10]}"
+    table = "validation_disable_storage_api_pseudo_columns"
     with conn.cursor() as cursor:
-        cursor.execute(f"CREATE TABLE {table} (a INT64) PARTITION BY _PARTITIONDATE")
+        cursor.execute(
+            f"CREATE OR REPLACE TABLE {table} (a INT64) PARTITION BY _PARTITIONDATE"
+        )
         cursor.execute(f"INSERT INTO {table} (a) VALUES (7)")
 
     try:
