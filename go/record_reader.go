@@ -160,7 +160,9 @@ func runQuery(ctx context.Context, logger *slog.Logger, query *bigquery.Query, e
 	// _necessarily_ populated until after a call to Next). Finally we use
 	// job statistics instead
 	if mayReturnResults {
-		if arrowIterator, err = iter.ArrowIterator(); err != nil {
+		if st.disableStorageApi {
+			arrowIterator = newRowBasedArrowIterator(iter, st.cnxn.Alloc)
+		} else if arrowIterator, err = iter.ArrowIterator(); err != nil {
 			if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
 				// Script job with no results
 				// N.B. BigQuery SDK doesn't give a structured error - it's a fmt.Errorf
