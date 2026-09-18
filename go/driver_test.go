@@ -1586,6 +1586,77 @@ func (suite *BigQueryTests) TestQueryOptionInheritance() {
 	}
 }
 
+func (suite *BigQueryTests) TestRowsAffectedJobMode() {
+	type query struct {
+		sql        string
+		affected   int64
+		fallback   bool
+		hasResults bool
+	}
+	for _, jobMode := range []string{"required", "optional"} {
+		tableName := fmt.Sprintf("test_rows_affected_%s", jobMode)
+		for i, query := range []query{
+			{sql: fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName), affected: 0, fallback: true},
+			{sql: fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (id INT64)", tableName), affected: 0, fallback: true},
+			{sql: fmt.Sprintf("INSERT INTO %s (id) VALUES (1), (2), (3)", tableName), affected: 3, fallback: true},
+			{sql: fmt.Sprintf("SELECT * FROM %s", tableName), affected: 3, hasResults: true},
+			{sql: fmt.Sprintf("UPDATE %s SET id = id + 1 WHERE id < 3", tableName), affected: 2, fallback: true},
+			{sql: fmt.Sprintf("DELETE FROM %s WHERE id > 2", tableName), affected: 2, fallback: true},
+			// SCRIPT type
+			{sql: fmt.Sprintf("DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s_foobar", tableName, tableName), affected: 0, fallback: true},
+			{sql: "SELECT 1; SELECT 2", affected: 1, fallback: true, hasResults: true},
+		} {
+			suite.Run(fmt.Sprintf("%s_%d_%s", jobMode, i, query.sql), func() {
+				ctx := context.Background()
+				stmt, err := suite.cnxn.NewStatement(ctx)
+				suite.Require().NoError(err)
+				defer testutil.CheckedCloseWithContext(suite.T(), stmt, ctx)
+
+				suite.Require().NoError(suite.stmt.SetSqlQuery(ctx, query.sql))
+				suite.Require().NoError(suite.stmt.SetOption(ctx, "bigquery.query.job_creation_mode", jobMode))
+				rdr, n, err := suite.stmt.ExecuteQuery(ctx)
+
+				if strings.HasPrefix(query.sql, "DROP TABLE IF EXISTS test_rows_affected_optional") {
+					// XXX: Google API badness. BigQuery *always* 500s, then the SDK retries, and then the server gives a 409!
+					// Seems to be an issue inherent to DROP TABLE IF EXISTS?
+					suite.Error(err)
+					return
+				}
+				suite.Require().NoError(err)
+				defer rdr.Release()
+
+				if jobMode == "optional" {
+					reason, ok := rdr.Schema().Metadata().GetValue("BIGQUERY:job_creation_reason")
+					if query.fallback {
+						suite.True(ok)
+					} else {
+						suite.Falsef(ok, "expected no job creation reason, got: %s", reason)
+					}
+				}
+
+				if jobMode == "optional" && query.hasResults && query.fallback {
+					// When we fall back to reading the default stream, the driver has no row count info
+					suite.EqualValues(-1, n)
+				} else {
+					suite.EqualValues(query.affected, n)
+				}
+
+				numRows := int64(0)
+				for rdr.Next() {
+					batch := rdr.RecordBatch()
+					numRows += batch.NumRows()
+				}
+				suite.Require().NoError(rdr.Err())
+				if query.hasResults {
+					suite.EqualValues(query.affected, numRows)
+				} else {
+					suite.EqualValues(0, numRows)
+				}
+			})
+		}
+	}
+}
+
 func (suite *BigQueryTests) TestMetadataGetObjectsColumnsXdbc() {
 
 	suite.Require().NoError(suite.Quirks.DropTable(suite.cnxn, "bulk_ingest"))

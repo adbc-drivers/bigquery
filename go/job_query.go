@@ -58,7 +58,7 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnha
 	}
 
 	if len(fields) != rdr.Schema().NumFields() {
-		// XXX: BigQuery doesn't always populate the schema in responses
+		// XXX: BigQuery doesn't always populate the schema in responses; if so, fall back to the Arrow schema
 		fields = rdr.Schema().Fields()
 	}
 
@@ -89,8 +89,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	if !query.DryRun && query.JobCreationMode != nil && *query.JobCreationMode == bigquery.JobCreationModeOptional {
 		// The behavior here is very muddled; the public API documentation doesn't really actually document much. Reference used instead:
 		// https://github.com/googleapis/google-cloud-python/blob/1857302d5c602087b9a782c62694c33013eb77ea/packages/google-cloud-bigquery/google/cloud/bigquery/table.py#L2306
-		var resp *bq.QueryResponse
-		resp, err = query.TryRead(ctx)
+		resp, err := query.TryRead(ctx)
 		if err != nil {
 			return nil, nil, "", -1, errToAdbcErr(adbc.StatusInternal, err, "read query")
 		}
@@ -113,14 +112,13 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 					Msg:  "[bq] no job but query is not complete (Google backend error?)",
 				}
 			} else if resp.ArrowSchema == nil || resp.ArrowRecordBatch == nil {
-				// TODO: handle the "struct_encoding" case
+				// TODO(adbc-drivers/bigquery#280): handle the "struct_encoding" case
 				return nil, nil, "", -1, adbc.Error{
 					Code: adbc.StatusInternal,
 					Msg:  "[bq] no job but query is complete but no results",
 				}
 			}
 
-			// XXX: Google doesn't populate this field! This is a footgun!
 			schema := bigquery.BqToSchema(resp.Schema)
 			it, err := newInlineArrowIterator(schema, resp.ArrowSchema, resp.ArrowRecordBatch)
 			if err != nil {
@@ -217,18 +215,16 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	var arrowIterator bigquery.ArrowIterator
 	totalRows := int64(-1)
 
-	// TODO(lidavidm): test various types of queries (select, create,
-	// update, script, call) with all the different modes (job, no job,
-	// fallback) and ensure totalRows is always consistent
 	if !mayReturnResults && statsOk {
 		arrowIterator = emptyArrowIterator{stats.Schema}
-		// TODO: totalRows
+		totalRows = stats.NumDMLAffectedRows
 	} else if mayReturnResults && readRowsFastPath {
 		driverbase.DebugAssert(statsOk, "stats should be available if mayReturnResults is true")
 		arrowIterator, err = newReadRowsArrowIterator(ctx, client, job, stats.Schema)
 		if err != nil {
 			return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read from default stream"))
 		}
+		// We don't know total rows on this path.
 	} else {
 		// XXX: the Google SDK badness also applies here; it makes a similar
 		// mistake with the retry, so we wait for the job above.
@@ -267,10 +263,13 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 					return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read Arrow query results"))
 				}
 			}
+			totalRows = int64(iter.TotalRows)
+		} else if statsOk {
+			totalRows = stats.NumDMLAffectedRows
 		} else {
 			arrowIterator = emptyArrowIterator{iter.Schema}
+			totalRows = 0
 		}
-		totalRows = int64(iter.TotalRows)
 	}
 	return arrowIterator, enhancer, jobID, totalRows, nil
 }
