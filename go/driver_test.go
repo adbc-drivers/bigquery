@@ -1618,7 +1618,8 @@ func (suite *BigQueryTests) TestRowsAffectedJobMode() {
 			{sql: fmt.Sprintf("UPDATE %s SET id = id + 1 WHERE id < 3", tableName), affected: 2, fallback: true},
 			{sql: fmt.Sprintf("DELETE FROM %s WHERE id > 2", tableName), affected: 2, fallback: true},
 			// SCRIPT type
-			{sql: fmt.Sprintf("DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s_foobar", tableName, tableName), affected: 0, fallback: true},
+			// use nonexistent tables to try to avoid rate limit issues
+			{sql: fmt.Sprintf("DROP TABLE IF EXISTS %s_foobaz; DROP TABLE IF EXISTS %s_foobar", tableName, tableName), affected: 0, fallback: true},
 			{sql: "SELECT 1; SELECT 2", affected: 1, fallback: true, hasResults: true},
 		} {
 			suite.Run(fmt.Sprintf("%s_%d_%s", jobMode, i, query.sql), func() {
