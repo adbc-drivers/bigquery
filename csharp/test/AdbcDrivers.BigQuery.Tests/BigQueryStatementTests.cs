@@ -483,6 +483,36 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.DoesNotContain(BigQueryParameters.UseJobCreationMode, statement.Options!);
         }
 
+        [Theory]
+        [InlineData("true")]
+        [InlineData("false")]
+        [InlineData("TRUE")]
+        public void SetOption_AcceptsBooleanUseLastStatement(string value)
+        {
+            var connection = new BigQueryConnection(new Dictionary<string, string>());
+            var statement = new BigQueryStatement(connection);
+
+            statement.SetOption(BigQueryParameters.UseLastStatement, value);
+
+            Assert.Equal(value, statement.Options![BigQueryParameters.UseLastStatement]);
+        }
+
+        [Theory]
+        [InlineData("1")]
+        [InlineData("")]
+        [InlineData("invalid")]
+        public void SetOption_ThrowsArgumentException_WhenUseLastStatementIsNotBoolean(string value)
+        {
+            var connection = new BigQueryConnection(new Dictionary<string, string>());
+            var statement = new BigQueryStatement(connection);
+
+            ArgumentException exception = Assert.Throws<ArgumentException>(
+                () => statement.SetOption(BigQueryParameters.UseLastStatement, value));
+
+            Assert.Contains(BigQueryParameters.UseLastStatement, exception.Message);
+            Assert.DoesNotContain(BigQueryParameters.UseLastStatement, statement.Options!);
+        }
+
         private static TimeSpan? InvokeGetEffectiveQueryResultsTimeout(BigQueryStatement statement)
         {
             const BindingFlags bindingAttr = BindingFlags.NonPublic | BindingFlags.Instance;
