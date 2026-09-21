@@ -53,6 +53,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.audience_uri**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Sets the audience URI for the authentication token. Currently, this is for Microsoft Entra, but this could be used for other OAuth implementations as well.
 
+**adbc.bigquery.service_account_impersonation_email**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. The Google service account to impersonate after the token exchange, so queries run as that account rather than as the federated caller. Only applies when `adbc.bigquery.auth_type` is `aad`; it is ignored for `user` and `service`. When omitted, the federated token is used directly. The impersonated token is requested for the scopes in `adbc.bigquery.scopes`, defaulting to `https://www.googleapis.com/auth/cloud-platform`. See [Microsoft Entra](#microsoft-entra) for the workload identity prerequisites.
+
 **adbc.bigquery.allow_large_results**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Sets the [AllowLargeResults](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.V2/latest/Google.Cloud.BigQuery.V2.QueryOptions#Google_Cloud_BigQuery_V2_QueryOptions_AllowLargeResults) value of the QueryOptions to `true` if configured; otherwise, the default is `false`.
 
@@ -180,6 +183,35 @@ connection.UpdateToken = () => Task.Run(() =>
 
 In the sample above, when a new token is needed, the delegate is invoked and updates the `adbc.bigquery.access_token` parameter on the connection object.
 
+### Service account impersonation
+
+Set `adbc.bigquery.service_account_impersonation_email` to run queries as a shared Google service account instead of as the federated caller. The driver exchanges the Entra token at the Google Security Token Service, then calls [generateAccessToken](https://cloud.google.com/iam/docs/reference/credentials/rest/v1/projects.serviceAccounts/generateAccessToken) to obtain a token for that service account.
+
+This requires:
+
+- `adbc.bigquery.audience_uri` set to a [workload identity pool](https://cloud.google.com/iam/docs/workload-identity-federation) provider, in the form `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID`.
+- The provider configured to accept the Entra application as an audience, with its issuer set to the tenant and an attribute mapping that populates `google.subject`.
+- The target service account granting `roles/iam.workloadIdentityUser` to the workload-pool principal whose subject matches the mapped `google.subject`, for example `principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/subject/SUBJECT_VALUE`. To grant access to a set of callers instead, map a custom attribute on the provider and use its `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/attribute.NAME/VALUE` identifier.
+- The service account holding whatever BigQuery roles the queries need, since they now run under its identity.
+
+Scopes come from `adbc.bigquery.scopes` when set, and each comma-separated entry is sent as a separate scope. When it is not set, `https://www.googleapis.com/auth/cloud-platform` is used.
+
+#### Which identity needs which permission
+
+Two identities are involved, and they need different things. The Entra caller needs the service account impersonation grant described below, but it does not need the BigQuery roles used by queries. The service account needs every permission the queries actually use, because they run under its identity.
+
+| Identity | Needs |
+| --- | --- |
+| Entra caller | A token from the tenant named as the provider's `issuerUri`, with an audience listed in the provider's allowed audiences. In Entra this means the application exposes a scope and the caller has consent for it. |
+| Entra caller | `roles/iam.workloadIdentityUser` on the target service account, granted to the workload-pool principal matching the mapped `google.subject`. `roles/iam.serviceAccountTokenCreator` also works, as it likewise grants `iam.serviceAccounts.getAccessToken`. |
+| Service account | `roles/bigquery.jobUser` on the project that bills the query, which is `adbc.bigquery.billing_project_id` when set. |
+| Service account | `roles/bigquery.dataViewer` on the data being read, granted at project, dataset or table level. |
+| Service account | `roles/bigquery.readSessionUser`, required because the driver reads results through the BigQuery Storage Read API. |
+
+The project must also have the IAM Service Account Credentials API (`iamcredentials.googleapis.com`) and the Security Token Service API (`sts.googleapis.com`) enabled, in addition to the BigQuery API.
+
+Both the token exchange and the impersonation call are traced. See [Tracing](#tracing) for the `wif.sts_exchange.*` and `wif.sa_impersonation.*` tags, which record the endpoint, status code, duration and Google correlation id for each step.
+
 ## Default Project ID
 
 If a `adbc.bigquery.project_id` is not specified, or if it equals `bigquery-public-data`, the driver will query for the first project ID that is associated with the credentials provided. This will be the project ID that is used to perform queries.
@@ -195,6 +227,36 @@ Behavior:
 - If only a dataset value is set, the driver will attempt to retrieve the dataset. If the dataset does not exist, the driver will attempt to
   create it. The default table expiration will be set to 1 day. A randomly generated name will be used for the table name.
 - If a destination table and a dataset are not specified, the driver will attempt to use or create the `_bqadbc_temp_tables` dataset using the same defaults and label specified above. A randomly generated name will be used for the table name.
+
+## Proxy
+
+The driver routes its HTTP traffic through a forward proxy when `adbc.bigquery.proxy_host` and `adbc.bigquery.proxy_port` are set, including the Microsoft Entra token exchange and service account impersonation calls. When those parameters are not set, the platform default proxy applies: system settings on .NET Framework, and the `HTTPS_PROXY` and `NO_PROXY` environment variables on .NET.
+
+### Endpoints to allow
+
+Environments that allow outbound hosts explicitly need all of the following reachable. The first three are contacted directly by the driver; the last two are used by the Google client libraries it builds on.
+
+Note that `https://www.googleapis.com/auth/cloud-platform`, the default value of `adbc.bigquery.scopes`, is an OAuth scope identifier rather than a host the driver connects to. It does not need to be allowed.
+
+| Host | Used for |
+| --- | --- |
+| `sts.googleapis.com` | Security Token Service exchange, `aad` authentication only |
+| `iamcredentials.googleapis.com` | `generateAccessToken`, only when `adbc.bigquery.service_account_impersonation_email` is set |
+| `accounts.google.com` | OAuth token endpoint for `user` authentication |
+| `bigquery.googleapis.com` | BigQuery REST API: jobs, metadata and query submission |
+| `bigquerystorage.googleapis.com` | BigQuery Storage APIs: the Read API for result rows and the Write API for bulk ingestion |
+
+`iamcredentials.googleapis.com` is new to service account impersonation. An allow list that already covers the Entra flow will not include it, and the failure appears only after federation has already succeeded.
+
+### SSL inspection and the Storage APIs
+
+`bigquerystorage.googleapis.com` is reached over gRPC, which requires HTTP/2. Proxies that terminate TLS must negotiate ALPN `h2` for that host or the connection is downgraded, and the driver reports:
+
+    Bad gRPC response. Response protocol downgraded to HTTP/1.1.
+
+That message comes from the gRPC client before it inspects the status code, so a proxy block page or a `407 Proxy Authentication Required` surfaces with the same text. Exempting the host from TLS inspection avoids it. The other hosts in the table are plain HTTPS and are unaffected.
+
+On .NET Framework the two legs resolve proxy settings from different places: REST calls follow `WebRequest.DefaultWebProxy`, which reads the system settings, while gRPC uses `WinHttpHandler`, which reads the WinHTTP configuration set by `netsh winhttp`. The two can disagree, so a stale `netsh winhttp` proxy will break result reads while metadata and navigation keep working. `netsh winhttp show proxy` is worth checking when that pattern appears.
 
 ## Permissions
 
