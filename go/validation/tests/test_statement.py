@@ -182,12 +182,13 @@ def test_disable_storage_api_pseudo_columns(driver, conn) -> None:
             driver.try_drop_table(cursor, table_name=table)
 
 
-@pytest.mark.xfail(
-    reason="the row-based reader emits one IPC stream per 1000-row batch, "
-    "so the consumer stops at end-of-stream and later rows are dropped"
-)
-def test_disable_storage_api_row_count(driver, conn) -> None:
+def test_disable_storage_api_pagination(driver, conn) -> None:
+    # The row-based iterator paginates every 1000 rows. Ensure iterating over
+    # all batches returns the entire result set
     with conn.cursor() as cursor:
         cursor.adbc_statement.set_options(**{STORAGE_API_DISABLED: "true"})
-        cursor.execute("SELECT x FROM UNNEST(GENERATE_ARRAY(1, 1001)) AS x")
-        assert len(cursor.fetch_arrow_table()) == 1001
+        cursor.execute("SELECT x FROM UNNEST(GENERATE_ARRAY(1, 2000)) AS x")
+        table = cursor.fetch_arrow_table()
+        assert len(table) == 2000
+        assert table["x"][0].as_py() == 1
+        assert table["x"][1999].as_py() == 2000
