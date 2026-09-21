@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
@@ -356,6 +357,11 @@ func newInlineArrowIterator(bqSchema bigquery.Schema, arrowSchema *bq.ArrowSchem
 	fields := make([]arrow.Field, len(schema.Fields()))
 	for i, field := range schema.Fields() {
 		m := field.Metadata.ToMap()
+
+		if ty := guessBigQueryTypeFromArrowType(field.Type, m); ty != "" {
+			m["BIGQUERY:type"] = ty
+		}
+
 		if m["ARROW:extension:name"] == "google:sqlType:geography" {
 			m["ARROW:extension:name"] = "geoarrow.wkt"
 			// TODO: factor this out
@@ -559,4 +565,72 @@ func (it *readRowsArrowIterator) Schema() bigquery.Schema {
 
 func (it *readRowsArrowIterator) SerializedArrowSchema() []byte {
 	return it.arrowSchema
+}
+
+func guessBigQueryTypeFromArrowType(dt arrow.DataType, md map[string]string) string {
+	// Google doesn't want to return the BigQuery schema, so emulate BIGQUERY:type by guessing it from the Arrow type
+
+	switch md["ARROW:extension:name"] {
+	case "google:sqlType:geography":
+		return "GEOGRAPHY"
+	case "google:sqlType:interval":
+		return "INTERVAL"
+	}
+
+	switch ty := dt.(type) {
+	case *arrow.BinaryType:
+		return "BYTES"
+	case *arrow.BooleanType:
+		return "BOOLEAN"
+	case *arrow.Date32Type:
+		return "DATE"
+	case *arrow.Decimal128Type:
+		return "NUMERIC"
+	case *arrow.Decimal256Type:
+		return "BIGNUMERIC"
+	case *arrow.Float64Type:
+		return "FLOAT"
+	case *arrow.Int64Type:
+		return "INTEGER"
+	case *arrow.ListType:
+		field := ty.ElemField()
+		fieldMd := field.Metadata.ToMap()
+		return fmt.Sprintf("ARRAY<%s>", guessBigQueryTypeFromArrowType(field.Type, fieldMd))
+	case *arrow.StringType:
+		return "STRING"
+	case *arrow.StructType:
+		// XXX: this can't differentiate between a STRUCT with these names and an actual RANGE
+		var b strings.Builder
+		fields := ty.Fields()
+
+		if len(fields) == 2 && fields[0].Name == "start" && fields[1].Name == "end" && arrow.TypeEqual(fields[0].Type, fields[1].Type) {
+			b.WriteString("RANGE<")
+			b.WriteString(guessBigQueryTypeFromArrowType(fields[0].Type, fields[0].Metadata.ToMap()))
+			b.WriteString(">")
+			return b.String()
+		}
+
+		b.WriteString("STRUCT<")
+		for i, field := range ty.Fields() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fieldMd := field.Metadata.ToMap()
+			fmt.Fprintf(&b, "%s %s", quoteIdentifier(field.Name), guessBigQueryTypeFromArrowType(field.Type, fieldMd))
+		}
+		b.WriteString(">")
+		return b.String()
+	case *arrow.Time32Type:
+		return "TIME"
+	case *arrow.Time64Type:
+		return "TIME"
+	case *arrow.TimestampType:
+		if ty.TimeZone == "" {
+			return "DATETIME"
+		} else {
+			return "TIMESTAMP"
+		}
+	}
+
+	return ""
 }
