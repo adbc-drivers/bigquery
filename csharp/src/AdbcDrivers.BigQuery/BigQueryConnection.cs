@@ -629,8 +629,7 @@ namespace AdbcDrivers.BigQuery
         {
             this.properties.TryGetValue(BigQueryParameters.ServiceAccountImpersonationEmail, out string? impersonationEmail);
 
-            // Only an absent value is opt-out. A whitespace value is a misconfiguration and must
-            // reach validation rather than silently running as the federated caller.
+            // Deliberately IsNullOrEmpty: a whitespace value must reach validation, not opt out.
             if (string.IsNullOrEmpty(impersonationEmail) || string.IsNullOrEmpty(federatedToken))
             {
                 return federatedToken;
@@ -2028,7 +2027,9 @@ namespace AdbcDrivers.BigQuery
             // body, so surface it instead of collapsing to a bare status code.
             if (!response.IsSuccessStatusCode)
             {
-                throw new HttpRequestException(BuildTokenFailureMessage(response.StatusCode, responseBody));
+                throw new AdbcException(
+                    BuildTokenFailureMessage(response.StatusCode, responseBody),
+                    AdbcStatusCode.Unauthenticated);
             }
 
             BigQueryTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryTokenResponse>(responseBody);
