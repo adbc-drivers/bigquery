@@ -1516,8 +1516,18 @@ func (suite *BigQueryTests) TestJobCreationOptionalPseudocolumns() {
 	suite.Falsef(ok, "expected no job creation reason, got: %s", reason)
 
 	expectedSchema := arrow.NewSchema([]arrow.Field{
-		{Name: "tid", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
-		{Name: "PT", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}, Nullable: true},
+		{
+			Name:     "tid",
+			Type:     arrow.PrimitiveTypes.Int64,
+			Nullable: true,
+			Metadata: arrow.MetadataFrom(map[string]string{"BIGQUERY:type": "INTEGER"}),
+		},
+		{
+			Name:     "PT",
+			Type:     &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"},
+			Nullable: true,
+			Metadata: arrow.MetadataFrom(map[string]string{"BIGQUERY:type": "TIMESTAMP"}),
+		},
 	}, nil)
 
 	suite.EqualValues(1000, n)
