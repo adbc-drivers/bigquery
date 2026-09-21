@@ -45,6 +45,9 @@ type RowBasedArrowIterator struct {
 	schema bigquery.Schema
 	alloc  memory.Allocator
 	done   bool
+
+	buf    bytes.Buffer
+	writer *ipc.Writer
 }
 
 func newRowBasedArrowIterator(iter *bigquery.RowIterator, alloc memory.Allocator) bigquery.ArrowIterator {
@@ -60,7 +63,7 @@ func newRowBasedArrowIterator(iter *bigquery.RowIterator, alloc memory.Allocator
 // bigquery.NewArrowIteratorReader downstream.
 func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	if l.done {
-		return nil, iterator.Done
+		return nil, l.finish()
 	}
 
 	const batchSize = 1000
@@ -80,7 +83,7 @@ func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	}
 
 	if len(rows) == 0 {
-		return nil, iterator.Done
+		return nil, l.finish()
 	}
 
 	batch, err := rowsToArrowRecordBatch(l.schema, rows, l.alloc)
@@ -89,18 +92,43 @@ func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	}
 	defer batch.Release()
 
-	var buf bytes.Buffer
-	writer := ipc.NewWriter(&buf, ipc.WithSchema(batch.Schema()), ipc.WithAllocator(l.alloc))
-	if err := writer.Write(batch); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
+	data, err := l.serialize(batch)
+	if err != nil {
 		return nil, err
 	}
 
 	return &bigquery.ArrowRecordBatch{
-		Data: buf.Bytes(),
+		Data: data,
 	}, nil
+}
+
+func (l *RowBasedArrowIterator) serialize(batch arrow.RecordBatch) ([]byte, error) {
+	if l.writer == nil {
+		l.writer = ipc.NewWriter(&l.buf, ipc.WithSchema(batch.Schema()), ipc.WithAllocator(l.alloc))
+	}
+
+	l.buf.Reset()
+	if err := l.writer.Write(batch); err != nil {
+		return nil, err
+	}
+
+	data := make([]byte, l.buf.Len())
+	copy(data, l.buf.Bytes())
+	return data, nil
+}
+
+func (l *RowBasedArrowIterator) finish() error {
+	if l.writer == nil {
+		return iterator.Done
+	}
+
+	err := l.writer.Close()
+	l.writer = nil
+	l.buf.Reset()
+	if err != nil {
+		return err
+	}
+	return iterator.Done
 }
 
 // Schema returns the BigQuery schema of the underlying row iterator.
