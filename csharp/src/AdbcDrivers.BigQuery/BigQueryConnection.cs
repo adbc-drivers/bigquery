@@ -1918,7 +1918,8 @@ namespace AdbcDrivers.BigQuery
                 BigQueryParameters.MaxFetchConcurrency,
                 BigQueryParameters.StatementType,
                 BigQueryParameters.StatementIndex,
-                BigQueryParameters.EvaluationKind
+                BigQueryParameters.EvaluationKind,
+                BigQueryParameters.UseLastStatement
             };
 
             foreach (string key in statementOptions)

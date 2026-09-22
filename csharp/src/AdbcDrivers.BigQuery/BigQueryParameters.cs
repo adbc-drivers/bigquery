@@ -69,6 +69,7 @@ namespace AdbcDrivers.BigQuery
         public const string Scopes = "adbc.bigquery.scopes";
         public const string StatementIndex = "adbc.bigquery.multiple_statement.statement_index";
         public const string StatementType = "adbc.bigquery.multiple_statement.statement_type";
+        public const string UseLastStatement = "adbc.bigquery.multiple_statement.use_last_statement";
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
         public const string UseJobCreationMode = "adbc.bigquery.statement.use_job_creation_required_mode";
@@ -98,7 +99,7 @@ namespace AdbcDrivers.BigQuery
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,
-            StatementType, UseLegacySQL
+            StatementType, UseLastStatement, UseLegacySQL
         };
 
         public static bool IsSafeToLog(string name)

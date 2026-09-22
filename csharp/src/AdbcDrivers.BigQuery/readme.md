@@ -107,6 +107,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.multiple_statement.statement_index**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. When executing multiple statements, specify the result of the statement to be returned (Minimum value is 1). If not set, the result of the first statement is returned.
 
+**adbc.bigquery.multiple_statement.use_last_statement**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. When set to `"true"`, returns the last statement matching the statement type and evaluation kind filters. Defaults to `"false"`. When enabled, this option takes precedence over `adbc.bigquery.multiple_statement.statement_index`.
+
 **adbc.bigquery.multiple_statement.evaluation_kind**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. When executing multiple statements, limit the evaluation kind returned. If not set, all evaluation kinds are returned.
 

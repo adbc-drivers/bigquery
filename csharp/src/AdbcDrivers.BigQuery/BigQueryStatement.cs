@@ -200,12 +200,32 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.UseJobCreationMode}' is not a valid boolean.");
                     }
                     break;
+                case BigQueryParameters.StatementIndex:
+                    ThrowIfConflictingStatementSelectionOptionIsSet(BigQueryParameters.StatementIndex, BigQueryParameters.UseLastStatement);
+                    break;
+                case BigQueryParameters.UseLastStatement:
+                    if (!bool.TryParse(value, out _))
+                    {
+                        throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.UseLastStatement}' is not a valid boolean.");
+                    }
+                    ThrowIfConflictingStatementSelectionOptionIsSet(BigQueryParameters.UseLastStatement, BigQueryParameters.StatementIndex);
+                    break;
                 default:
                     // TODO: Throw an exception if setting value is unsupported at particular execution states.
                     break;
             }
 
             Options[key] = value;
+        }
+
+        private void ThrowIfConflictingStatementSelectionOptionIsSet(string option, string conflictingOption)
+        {
+            if (Options?.ContainsKey(conflictingOption) == true)
+            {
+                throw new ArgumentException(
+                    $"Parameters '{BigQueryParameters.StatementIndex}' and '{BigQueryParameters.UseLastStatement}' cannot both be specified.",
+                    option);
+            }
         }
 
         public override QueryResult ExecuteQuery()
@@ -340,6 +360,14 @@ namespace AdbcDrivers.BigQuery
                     {
                         statementIndex = statementIndexInt;
                     }
+                    bool useLastStatement = false;
+                    if (Options?.TryGetValue(BigQueryParameters.UseLastStatement, out string? useLastStatementString) == true &&
+                        !bool.TryParse(useLastStatementString, out useLastStatement))
+                    {
+                        throw new AdbcException(
+                            $"The value '{useLastStatementString}' for {BigQueryParameters.UseLastStatement} is not a valid boolean.",
+                            AdbcStatusCode.InvalidArgument);
+                    }
                     string evaluationKind = string.Empty;
                     if (Options?.TryGetValue(BigQueryParameters.EvaluationKind, out string? evaluationKindString) == true)
                     {
@@ -361,6 +389,10 @@ namespace AdbcDrivers.BigQuery
 
                         if (joblist.Count > 0)
                         {
+                            if (useLastStatement)
+                            {
+                                statementIndex = joblist.Count;
+                            }
                             if (statementIndex < 1 || statementIndex > joblist.Count)
                             {
                                 throw new ArgumentOutOfRangeException($"The specified index {statementIndex} is out of range. There are {joblist.Count} jobs available.");
@@ -1426,6 +1458,14 @@ namespace AdbcDrivers.BigQuery
         private QueryOptions ValidateOptions(Activity? activity)
         {
             QueryOptions options = new QueryOptions();
+
+            if (Options?.ContainsKey(BigQueryParameters.StatementIndex) == true &&
+                Options.ContainsKey(BigQueryParameters.UseLastStatement))
+            {
+                throw new AdbcException(
+                    $"Parameters '{BigQueryParameters.StatementIndex}' and '{BigQueryParameters.UseLastStatement}' cannot both be specified.",
+                    AdbcStatusCode.InvalidArgument);
+            }
 
             if (Client.ProjectId == BigQueryConstants.DetectProjectId)
             {
