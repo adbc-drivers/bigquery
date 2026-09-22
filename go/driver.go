@@ -95,6 +95,12 @@ const (
 	OptionQueryResultBufferSize    = "bigquery.query.result_buffer_size"
 	OptionQueryPrefetchConcurrency = "bigquery.query.prefetch_concurrency"
 
+	// OptionQueryDisableStorageApi instructs the driver to use the legacy
+	// RowIterator API instead of the Storage Read API. This is required for queries
+	// that reference pseudo-columns like _PARTITIONDATE and _PARTITIONTIME, which
+	// return null over the Storage Read API.
+	OptionQueryDisableStorageApi = "bigquery.query.disable_storage_api"
+
 	defaultQueryResultBufferSize    = 200
 	defaultQueryPrefetchConcurrency = 10
 
