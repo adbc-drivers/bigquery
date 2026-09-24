@@ -171,6 +171,8 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 			return st.bulkIngestCompression, nil
 		}
 		return st.cnxn.GetOption(ctx, key)
+	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
+		return getQueryOption(&st.queryConfig, key)
 	default:
 		val, err := st.cnxn.GetOption(ctx, key)
 		if err == nil {
@@ -341,6 +343,8 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.bulkIngestCompression = v
+	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
+		return setQueryOption(&st.queryConfig, key, v)
 
 	default:
 		return adbc.Error{
@@ -406,7 +410,7 @@ func (st *statement) ExecuteQuery(ctx context.Context) (array.RecordReader, int6
 		}
 	}
 
-	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
+	rr, totalRows, err := newRecordReader(ctx, st.cnxn.Logger, st.cnxn.client, st.query(), st.params, st.parameterMode, st.cnxn.Alloc, st.resultRecordBufferSize, st.prefetchConcurrency, st)
 	st.params = nil
 	if err != nil {
 		st.endExecution(execution)
@@ -427,7 +431,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 	}
 
 	if st.params == nil {
-		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
+		_, _, _, totalRows, err := runQuery(ctx, st.cnxn.Logger, st.cnxn.client, st.query(), true, st)
 		if err != nil {
 			return -1, err
 		}
@@ -449,7 +453,7 @@ func (st *statement) ExecuteUpdate(ctx context.Context) (int64, error) {
 					st.queryConfig.Parameters = parameters
 				}
 
-				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.query(), true, st)
+				_, _, _, currentRows, err := runQuery(ctx, st.cnxn.Logger, st.cnxn.client, st.query(), true, st)
 				if err != nil {
 					return -1, err
 				}
@@ -493,11 +497,12 @@ func (st *statement) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
 		fields[i] = f
 	}
 
-	metadata, err := metadataFromJobStatistics(status.Statistics, job.ID())
+	metadata := make(map[string]string)
+	err = metadataFromJobStatistics(metadata, status.Statistics, job.ID())
 	if err != nil {
 		return nil, err
 	}
-	return arrow.NewSchema(fields, metadata), nil
+	return arrow.NewSchema(fields, new(arrow.MetadataFrom(metadata))), nil
 }
 
 // Prepare turns this statement into a prepared statement to be executed

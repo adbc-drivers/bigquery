@@ -59,6 +59,8 @@ type databaseImpl struct {
 	endpoint        string
 	storageEndpoint string
 
+	queryDefaults queryDefaults
+
 	bulkIngestMethod      string
 	bulkIngestCompression string
 }
@@ -84,6 +86,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
+		queryDefaults:              d.queryDefaults,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
 	}
@@ -105,6 +108,9 @@ func (d *databaseImpl) Close(ctx context.Context) error { return nil }
 
 func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {
 	key = remapOption(key)
+	if handled, value, err := d.queryDefaults.getOption(key); handled {
+		return value, err
+	}
 	switch key {
 	case OptionAuthType:
 		return d.authType, nil
@@ -183,6 +189,9 @@ func (d *databaseImpl) hasImpersonationOptions() bool {
 
 func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) error {
 	key = remapOption(key)
+	if handled, err := d.queryDefaults.setOption(key, value); handled {
+		return err
+	}
 	switch key {
 	case "uri":
 		params, err := ParseBigQueryURIToParams(value)
