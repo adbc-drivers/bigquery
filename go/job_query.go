@@ -354,24 +354,14 @@ func newInlineArrowIterator(bqSchema bigquery.Schema, arrowSchema *bq.ArrowSchem
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize Arrow schema: %w", err)
 	}
-	fields := make([]arrow.Field, len(schema.Fields()))
-	for i, field := range schema.Fields() {
-		m := field.Metadata.ToMap()
-
-		if ty := guessBigQueryTypeFromArrowType(field.Type, m); ty != "" {
-			m["BIGQUERY:type"] = ty
+	fields := schema.Fields()
+	for i := range schema.Fields() {
+		unmangleBigQueryArrowType(&fields[i])
+		md := fields[i].Metadata.ToMap()
+		if typeName := guessBigQueryTypeFromArrowType(fields[i].Type, md); typeName != "" {
+			md["BIGQUERY:type"] = typeName
+			fields[i].Metadata = arrow.MetadataFrom(md)
 		}
-
-		if m["ARROW:extension:name"] == "google:sqlType:geography" {
-			m["ARROW:extension:name"] = "geoarrow.wkt"
-			// TODO: factor this out
-			m["ARROW:extension:metadata"] = `{"crs": "EPSG:4326", "crs_type": "authority_code", "edges": "spherical"}`
-		} else {
-			delete(m, "ARROW:extension:name")
-			delete(m, "ARROW:extension:metadata")
-		}
-		field.Metadata = arrow.MetadataFrom(m)
-		fields[i] = field
 	}
 	schemaBytes = flight.SerializeSchema(arrow.NewSchema(fields, nil), memory.DefaultAllocator)
 	// strip the IPC end-of-stream
@@ -571,10 +561,10 @@ func guessBigQueryTypeFromArrowType(dt arrow.DataType, md map[string]string) str
 	// Google doesn't want to return the BigQuery schema, so emulate BIGQUERY:type by guessing it from the Arrow type
 
 	switch md["ARROW:extension:name"] {
-	case "google:sqlType:geography":
+	case "arrow.json":
+		return "JSON"
+	case "geoarrow.wkt":
 		return "GEOGRAPHY"
-	case "google:sqlType:interval":
-		return "INTERVAL"
 	}
 
 	switch ty := dt.(type) {
@@ -592,6 +582,8 @@ func guessBigQueryTypeFromArrowType(dt arrow.DataType, md map[string]string) str
 		return "FLOAT"
 	case *arrow.Int64Type:
 		return "INTEGER"
+	case *arrow.MonthDayNanoIntervalType:
+		return "INTERVAL"
 	case *arrow.ListType:
 		field := ty.ElemField()
 		fieldMd := field.Metadata.ToMap()
@@ -633,4 +625,51 @@ func guessBigQueryTypeFromArrowType(dt arrow.DataType, md map[string]string) str
 	}
 
 	return ""
+}
+
+func unmangleBigQueryArrowType(field *arrow.Field) {
+	// BigQuery screws up the Arrow schema in two ways.
+	// - It doesn't use standard extension types. It also injects its own nonstandard types.
+	// - It applies the extension type to the LIST field instead of the inner field, treating it sort of like how Parquet works or how its own schema works (type with repeated field).
+	// Undo those and produce a proper Arrow schema.
+
+	m := field.Metadata.ToMap()
+	switch m["ARROW:extension:name"] {
+	case "google:sqlType:json":
+		m["ARROW:extension:name"] = "arrow.json"
+		delete(m, "ARROW:extension:metadata")
+	case "google:sqlType:geography":
+		m["ARROW:extension:name"] = "geoarrow.wkt"
+		// TODO: factor this out
+		m["ARROW:extension:metadata"] = `{"crs": "EPSG:4326", "crs_type": "authority_code", "edges": "spherical"}`
+	default:
+		delete(m, "ARROW:extension:name")
+		delete(m, "ARROW:extension:metadata")
+	}
+
+	switch childType := field.Type.(type) {
+	case *arrow.ListType:
+		child := childType.ElemField()
+		unmangleBigQueryArrowType(&child)
+
+		childMd := child.Metadata.ToMap()
+		if val, ok := m["ARROW:extension:name"]; ok {
+			childMd["ARROW:extension:name"] = val
+			delete(m, "ARROW:extension:name")
+		}
+		if val, ok := m["ARROW:extension:metadata"]; ok {
+			childMd["ARROW:extension:metadata"] = val
+			delete(m, "ARROW:extension:metadata")
+		}
+		child.Metadata = arrow.MetadataFrom(childMd)
+		field.Type = arrow.ListOfField(child)
+	case *arrow.StructType:
+		children := childType.Fields()
+		for i := range children {
+			unmangleBigQueryArrowType(&children[i])
+		}
+		field.Type = arrow.StructOf(children...)
+	}
+
+	field.Metadata = arrow.MetadataFrom(m)
 }

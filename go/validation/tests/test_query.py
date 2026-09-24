@@ -78,9 +78,6 @@ class TestQuery(query_tests.TestQuery):
                 *query.metadata_paths,
             ],
         )
-        # TODO: handle JSON (no extension type so we don't know to inject it)
-        if query.name == "type/select/json":
-            pytest.skip()
         super().test_query(driver, conn, modified, query_setup)
 
     @utils.retry_rate_limit
