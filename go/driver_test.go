@@ -341,9 +341,9 @@ func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) any {
 	case adbc.InfoDriverVersion:
 		return "(unknown or development build)"
 	case adbc.InfoDriverArrowVersion:
-		return "v18.7.0"
+		return "v18.8.0"
 	case adbc.InfoVendorVersion:
-		return "cloud.google.com/go/bigquery v1.82.0"
+		return "cloud.google.com/go/bigquery v1.84.0"
 	case adbc.InfoVendorArrowVersion:
 		return "(unknown or development build)"
 	case adbc.InfoDriverADBCVersion:
