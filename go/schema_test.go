@@ -15,10 +15,12 @@
 package bigquery
 
 import (
+	"fmt"
 	"testing"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -196,4 +198,203 @@ func (s *SchemaSuite) TestNumeric() {
 	s.Truef(arrow.TypeEqual(expectedType, field.Type), field.Type.String())
 	s.False(field.Nullable)
 	s.Equal("NUMERIC", field.Metadata.ToMap()["BIGQUERY:type"])
+}
+
+func TestUnmangleBigQueryArrowType(t *testing.T) {
+	type testCase struct {
+		before arrow.Field
+		after  arrow.Field
+	}
+
+	geoMeta := arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "geoarrow.wkt", "ARROW:extension:metadata": `{"crs": "EPSG:4326", "crs_type": "authority_code", "edges": "spherical"}`})
+
+	testCases := []testCase{
+		{
+			before: arrow.Field{
+				Name:     "ints",
+				Type:     arrow.PrimitiveTypes.Int64,
+				Nullable: true,
+			},
+			after: arrow.Field{
+				Name:     "ints",
+				Type:     arrow.PrimitiveTypes.Int64,
+				Nullable: true,
+			},
+		},
+		// irrelevant extensions are removed
+		{
+			before: arrow.Field{
+				Name:     "ints",
+				Type:     arrow.PrimitiveTypes.Int64,
+				Nullable: true,
+				Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "irrelevant"}),
+			},
+			after: arrow.Field{
+				Name:     "ints",
+				Type:     arrow.PrimitiveTypes.Int64,
+				Nullable: true,
+			},
+		},
+		// JSON
+		{
+			before: arrow.Field{
+				Name:     "json",
+				Type:     arrow.BinaryTypes.String,
+				Nullable: true,
+				Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:json"}),
+			},
+			after: arrow.Field{
+				Name:     "json",
+				Type:     arrow.BinaryTypes.String,
+				Nullable: true,
+				Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "arrow.json"}),
+			},
+		},
+		// GEOGRAPHY
+		{
+			before: arrow.Field{
+				Name:     "geo",
+				Type:     arrow.BinaryTypes.String,
+				Nullable: true,
+				Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:geography"}),
+			},
+			after: arrow.Field{
+				Name:     "geo",
+				Type:     arrow.BinaryTypes.String,
+				Nullable: true,
+				Metadata: geoMeta,
+			},
+		},
+		// ARRAY<JSON>
+		{
+			before: arrow.Field{
+				Name:     "json",
+				Type:     arrow.ListOf(arrow.BinaryTypes.String),
+				Nullable: true,
+				Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:json"}),
+			},
+			after: arrow.Field{
+				Name: "json",
+				Type: arrow.ListOfField(arrow.Field{
+					Name:     "item",
+					Type:     arrow.BinaryTypes.String,
+					Nullable: true,
+					Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "arrow.json"}),
+				}),
+				Nullable: true,
+			},
+		},
+		// ARRAY<GEOGRAPHY>
+		{
+			before: arrow.Field{
+				Name:     "geo",
+				Type:     arrow.ListOf(arrow.BinaryTypes.String),
+				Nullable: true,
+				Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:geography"}),
+			},
+			after: arrow.Field{
+				Name: "geo",
+				Type: arrow.ListOfField(arrow.Field{
+					Name:     "item",
+					Type:     arrow.BinaryTypes.String,
+					Nullable: true,
+					Metadata: geoMeta,
+				}),
+				Nullable: true,
+			},
+		},
+		// STRUCT<`geo` GEOGRAPHY, `json` JSON>
+		{
+			before: arrow.Field{
+				Name: "geo",
+				Type: arrow.StructOf(
+					arrow.Field{
+						Name:     "geo",
+						Type:     arrow.BinaryTypes.String,
+						Nullable: true,
+						Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:geography"}),
+					},
+					arrow.Field{
+						Name:     "json",
+						Type:     arrow.BinaryTypes.String,
+						Nullable: true,
+						Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:json"}),
+					},
+				),
+				Nullable: true,
+			},
+			after: arrow.Field{
+				Name: "geo",
+				Type: arrow.StructOf(
+					arrow.Field{
+						Name:     "geo",
+						Type:     arrow.BinaryTypes.String,
+						Nullable: true,
+						Metadata: geoMeta,
+					},
+					arrow.Field{
+						Name:     "json",
+						Type:     arrow.BinaryTypes.String,
+						Nullable: true,
+						Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "arrow.json"}),
+					},
+				),
+				Nullable: true,
+			},
+		},
+		// STRUCT<`geo` ARRAY<GEOGRAPHY>, `json` ARRAY<JSON>>
+		{
+			before: arrow.Field{
+				Name: "geo",
+				Type: arrow.StructOf(
+					arrow.Field{
+						Name:     "geo",
+						Type:     arrow.ListOf(arrow.BinaryTypes.String),
+						Nullable: true,
+						Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:geography"}),
+					},
+					arrow.Field{
+						Name:     "json",
+						Type:     arrow.ListOf(arrow.BinaryTypes.String),
+						Nullable: true,
+						Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "google:sqlType:json"}),
+					},
+				),
+				Nullable: true,
+			},
+			after: arrow.Field{
+				Name: "geo",
+				Type: arrow.StructOf(
+					arrow.Field{
+						Name: "geo",
+						Type: arrow.ListOfField(arrow.Field{
+							Name:     "item",
+							Type:     arrow.BinaryTypes.String,
+							Nullable: true,
+							Metadata: geoMeta,
+						}),
+						Nullable: true,
+					},
+					arrow.Field{
+						Name: "json",
+						Type: arrow.ListOfField(arrow.Field{
+							Name:     "item",
+							Type:     arrow.BinaryTypes.String,
+							Nullable: true,
+							Metadata: arrow.MetadataFrom(map[string]string{"ARROW:extension:name": "arrow.json"}),
+						}),
+						Nullable: true,
+					},
+				),
+				Nullable: true,
+			},
+		},
+	}
+
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			unmangleBigQueryArrowType(&tc.before)
+			assert.Truef(t, tc.before.Equal(tc.after), "expected %v, got %v", tc.after, tc.before)
+		})
+	}
 }
