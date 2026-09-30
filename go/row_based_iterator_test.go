@@ -34,7 +34,7 @@ type serializedBatchIterator struct {
 
 func (s *serializedBatchIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	if s.pos >= len(s.batches) {
-		return nil, s.inner.finish()
+		return nil, iterator.Done
 	}
 	data, err := s.inner.serialize(s.batches[s.pos])
 	if err != nil {
@@ -109,7 +109,23 @@ func TestRowBasedArrowIteratorSpansMultipleBatches(t *testing.T) {
 	require.Equal(t, int64(batchSize*numBatches), total)
 }
 
-func TestRowBasedArrowIteratorFinishWithoutBatches(t *testing.T) {
-	it := &RowBasedArrowIterator{alloc: memory.DefaultAllocator}
-	require.Equal(t, iterator.Done, it.finish())
+func TestRowBasedArrowIteratorWithoutBatches(t *testing.T) {
+	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer alloc.AssertSize(t, 0)
+
+	bqSchema := bigquery.Schema{
+		{Name: "x", Type: bigquery.IntegerFieldType},
+	}
+	it := &serializedBatchIterator{
+		inner: &RowBasedArrowIterator{schema: bqSchema, alloc: alloc},
+	}
+
+	rdr, err := ipc.NewReader(bigquery.NewArrowIteratorReader(it), ipc.WithAllocator(alloc))
+	require.NoError(t, err)
+	defer rdr.Release()
+
+	require.Equal(t, 1, rdr.Schema().NumFields())
+	require.Equal(t, "x", rdr.Schema().Field(0).Name)
+	require.False(t, rdr.Next())
+	require.NoError(t, rdr.Err())
 }
