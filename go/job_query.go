@@ -47,13 +47,14 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnha
 	arrowItReader := bigquery.NewArrowIteratorReader(arrowIterator)
 	rdr, err := ipc.NewReader(arrowItReader, ipc.WithAllocator(alloc))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errToAdbcErr(adbc.StatusInternal, err, "read arrow stream")
 	}
 
 	fields := make([]arrow.Field, len(arrowIterator.Schema()))
 	for i, field := range arrowIterator.Schema() {
 		fields[i], err = buildField(field, 0)
 		if err != nil {
+			rdr.Release()
 			return nil, nil, err
 		}
 	}
@@ -67,6 +68,7 @@ func ipcReaderFromArrowIterator(arrowIterator bigquery.ArrowIterator, schemaEnha
 	if schemaEnhancer != nil {
 		err = schemaEnhancer.GetMetadata(metadata)
 		if err != nil {
+			rdr.Release()
 			return nil, nil, err
 		}
 	}
