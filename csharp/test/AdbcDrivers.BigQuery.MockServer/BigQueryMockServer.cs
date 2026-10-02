@@ -138,6 +138,15 @@ namespace AdbcDrivers.BigQuery.MockServer
         public ulong QueryResultTotalRows { get; set; } = 1;
 
         /// <summary>
+        /// Overrides the schema and rows returned by a completed jobs.getQueryResults when set, so a
+        /// test can serve the rows a metadata query (for example INFORMATION_SCHEMA.COLUMNS) reads.
+        /// </summary>
+        public TableSchema? QueryResultSchema { get; set; }
+
+        /// <summary>The rows returned with <see cref="QueryResultSchema"/>.</summary>
+        public IList<TableRow>? QueryResultRows { get; set; }
+
+        /// <summary>
         /// The project ids returned by projects.list. Pre-populated with "mock-project".
         /// </summary>
         public IList<string> Projects => _projects;
@@ -618,14 +627,17 @@ namespace AdbcDrivers.BigQuery.MockServer
                     Kind = "bigquery#getQueryResultsResponse",
                     JobReference = jobReference,
                     JobComplete = true,
-                    TotalRows = OptionalQueryIncludesPagedResults ? 2UL : QueryResultTotalRows,
-                    Schema = new TableSchema
+                    TotalRows = QueryResultSchema != null
+                        ? (ulong)(QueryResultRows?.Count ?? 0)
+                        : OptionalQueryIncludesPagedResults ? 2UL : QueryResultTotalRows,
+                    Schema = QueryResultSchema ?? new TableSchema
                     {
                         Fields = new[]
                         {
                             new TableFieldSchema { Name = "value", Type = "INTEGER", Mode = "NULLABLE" }
                         }
                     },
+                    Rows = QueryResultSchema != null ? QueryResultRows : null,
                 };
 
                 if (mockJob.IsCancelled)

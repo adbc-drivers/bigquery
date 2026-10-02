@@ -1641,10 +1641,11 @@ namespace AdbcDrivers.BigQuery
                     return fieldBuilder.DataType(StringType.Default);
                 case "BYTES":
                     return fieldBuilder.DataType(BinaryType.Default);
+                // Match BigQueryStatement.TranslateType: BigQuery returns both types in microseconds.
                 case "DATETIME":
-                    return fieldBuilder.DataType(TimestampType.Default);
+                    return fieldBuilder.DataType(new TimestampType(TimeUnit.Microsecond, (string?)null));
                 case "TIMESTAMP":
-                    return fieldBuilder.DataType(TimestampType.Default);
+                    return fieldBuilder.DataType(new TimestampType(TimeUnit.Microsecond, "UTC"));
                 case "TIME":
                     return fieldBuilder.DataType(Time64Type.Microsecond);
                 case "DATE":
