@@ -670,6 +670,7 @@ func (suite *BigQueryTests) TestCreateView() {
 func (suite *BigQueryTests) TestNewDatabaseGetSetOptions() {
 	key1, val1 := driver.OptionProjectID, "val1"
 	key2, val2 := driver.OptionDatasetID, "val2"
+	key3, val3 := driver.OptionCustomUserAgent, "MyCustomToken/1.2.3"
 
 	db, err := suite.driver.NewDatabaseWithContext(suite.ctx, map[string]string{
 		key1: val1,
@@ -688,6 +689,10 @@ func (suite *BigQueryTests) TestNewDatabaseGetSetOptions() {
 	optVal2, err := getSetDB.GetOption(suite.ctx, key2)
 	suite.NoError(err)
 	suite.Equal(optVal2, val2)
+
+	optVal3, err := getSetDB.GetOption(suite.ctx, key3)
+	suite.NoError(err)
+	suite.Equal(val3, optVal3)
 }
 
 func (suite *BigQueryTests) TestEmptyResultSet() {

@@ -63,6 +63,8 @@ type databaseImpl struct {
 
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	customUserAgent string
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
@@ -89,6 +91,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		queryDefaults:              d.queryDefaults,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
+		customUserAgent:            d.customUserAgent,
 	}
 
 	err := conn.newClient(ctx)
@@ -155,6 +158,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 			return OptionValueCompressionNone, nil
 		}
 		return d.bulkIngestCompression, nil
+	case OptionCustomUserAgent:
+		return d.customUserAgent, nil
 	default:
 		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
@@ -300,6 +305,8 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			}
 		}
 		d.bulkIngestCompression = value
+	case OptionCustomUserAgent:
+		d.customUserAgent = value
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}

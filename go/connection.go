@@ -87,6 +87,8 @@ type connectionImpl struct {
 	bulkIngestMethod      string
 	bulkIngestCompression string
 
+	customUserAgent string
+
 	client *bigquery.Client
 }
 
@@ -623,6 +625,8 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 			return OptionValueCompressionNone, nil
 		}
 		return c.bulkIngestCompression, nil
+	case OptionCustomUserAgent:
+		return c.customUserAgent, nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -704,6 +708,8 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 			}
 		}
 		c.bulkIngestCompression = value
+	case OptionCustomUserAgent:
+		c.customUserAgent = value
 	default:
 		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
@@ -857,6 +863,9 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		bigQueryAuthOptions = append(bigQueryAuthOptions, option.WithEndpoint(c.endpoint))
 	}
 
+	driverUserAgent := stringToCustomUserAgent(c.customUserAgent)
+	bigQueryAuthOptions = append(bigQueryAuthOptions, option.WithUserAgent(driverUserAgent))
+
 	client, err := bigquery.NewClient(ctx, c.catalog, bigQueryAuthOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create client")
@@ -868,6 +877,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 	// Use original authOptions without custom endpoint for Storage Read API
 	storageAuthOptions := authOptions
+	storageAuthOptions = append(storageAuthOptions, option.WithUserAgent(driverUserAgent))
 	if c.storageEndpoint != "" {
 		storageAuthOptions = append(storageAuthOptions, option.WithEndpoint(c.storageEndpoint))
 		// assume insecure since the purpose of this is to use the emulator, which does not use TLS
