@@ -327,7 +327,7 @@ func stringToCustomUserAgent(value string) string {
 	if version == "" || version == driverbase.UnknownVersion {
 		version = "unknown"
 	}
-	driverUserAgent := fmt.Sprintf("Google-BigQUery-ADBC-Go/%s", version)
+	driverUserAgent := fmt.Sprintf("Google-BigQuery-ADBC-Go/%s", version)
 	if value != "" {
 		driverUserAgent = fmt.Sprintf("%s %s", driverUserAgent, value)
 	}

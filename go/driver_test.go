@@ -675,6 +675,7 @@ func (suite *BigQueryTests) TestNewDatabaseGetSetOptions() {
 	db, err := suite.driver.NewDatabaseWithContext(suite.ctx, map[string]string{
 		key1: val1,
 		key2: val2,
+		key3: val3,
 	})
 	suite.NoError(err)
 	suite.NotNil(db)
