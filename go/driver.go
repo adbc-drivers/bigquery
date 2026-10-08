@@ -142,7 +142,7 @@ const (
 	OptionValueCompressionLZ4   = "lz4"
 	OptionValueCompressionZSTD  = "zstd"
 
-	OptionCustomUserAgent = "custom_user_agent"
+	OptionCustomUserAgent = "bigquery.user_agent"
 )
 
 var (
