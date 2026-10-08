@@ -141,6 +141,8 @@ const (
 	OptionValueCompressionNone  = "none"
 	OptionValueCompressionLZ4   = "lz4"
 	OptionValueCompressionZSTD  = "zstd"
+
+	OptionCustomUserAgent = "bigquery.user_agent"
 )
 
 var (
@@ -318,4 +320,16 @@ func tableToString(value *bigquery.Table) string {
 	} else {
 		return fmt.Sprintf("%s.%s.%s", value.ProjectID, value.DatasetID, value.TableID)
 	}
+}
+
+func stringToCustomUserAgent(value string) string {
+	version := driverbase.DriverVersion()
+	if version == "" || version == driverbase.UnknownVersion {
+		version = "unknown"
+	}
+	driverUserAgent := fmt.Sprintf("Google-BigQuery-ADBC-Go/%s", version)
+	if value != "" {
+		driverUserAgent = fmt.Sprintf("%s %s", driverUserAgent, value)
+	}
+	return driverUserAgent
 }

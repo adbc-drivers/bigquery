@@ -970,12 +970,13 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	if method == OptionValueBulkIngestMethodStorageWrite {
 		logger = st.cnxn.Logger.With("op", "bulkingest-storagewrite")
 		impl = &storageWriteBulkIngestImpl{
-			alloc:       st.alloc,
-			schema:      st.params.Schema(),
-			logger:      logger,
-			options:     st.ingest,
-			queryConfig: st.queryConfig,
-			client:      st.cnxn.client,
+			alloc:           st.alloc,
+			schema:          st.params.Schema(),
+			logger:          logger,
+			options:         st.ingest,
+			queryConfig:     st.queryConfig,
+			client:          st.cnxn.client,
+			customUserAgent: st.cnxn.customUserAgent,
 		}
 	} else {
 		logger = st.cnxn.Logger.With("op", "bulkingest-parquet")
