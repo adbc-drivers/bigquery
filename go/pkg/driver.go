@@ -59,9 +59,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"runtime"
 	"runtime/cgo"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"unsafe"
@@ -87,7 +89,29 @@ const errPrefix = "[bigquery] "
 const logLevelEnvVar = "ADBC_DRIVER_BIGQUERY_LOG_LEVEL"
 const logSinkEnvVar = "ADBC_DRIVER_BIGQUERY_LOG_SINK"
 
-func setErr(err *C.struct_AdbcError, format string, vals ...interface{}) {
+func setErr(err *C.struct_AdbcError, format string) {
+	if err == nil {
+		return
+	}
+
+	if err.release != nil {
+		C.BigQueryerrRelease(err)
+	}
+
+	var msg string
+	if strings.HasPrefix(format, errPrefix) {
+		// If the error message already starts with the prefix, we don't
+		// want to add it again.
+		msg = format
+	} else {
+		// Otherwise, we prepend the prefix to the error message.
+		msg = errPrefix + format
+	}
+	err.message = C.CString(msg)
+	err.release = (*[0]byte)(C.BigQuery_release_error)
+}
+
+func fmtErr(err *C.struct_AdbcError, format string, vals ...interface{}) {
 	if err == nil {
 		return
 	}
@@ -151,6 +175,7 @@ func setErrWithDetails(err *C.struct_AdbcError, adbcError adbc.Error) {
 		cErr.values = (**C.cuint8_t)(C.calloc(C.size_t(numDetails), C.size_t(unsafe.Sizeof((*C.cuint8_t)(nil)))))
 		cErr.lengths = (*C.size_t)(C.calloc(C.size_t(numDetails), C.sizeof_size_t))
 
+		// SAFETY: no copy of fromCArr because these are written to, not read from
 		keys := fromCArr[*C.cchar_t](cErr.keys, numDetails)
 		values := fromCArr[*C.cuint8_t](cErr.values, numDetails)
 		lengths := fromCArr[C.size_t](cErr.lengths, numDetails)
@@ -200,7 +225,7 @@ func poison(err *C.struct_AdbcError, fname string, e interface{}) C.AdbcStatusCo
 		length := runtime.Stack(buf, true)
 		fmt.Fprintf(os.Stderr, "bigquery driver panicked, stack traces:\n%s", buf[:length])
 	}
-	setErr(err, "%s: Go panic in bigquery driver (see stderr): %#v", fname, e)
+	fmtErr(err, "%s: Go panic in bigquery driver (see stderr): %#v", fname, e)
 	return C.ADBC_STATUS_INTERNAL
 }
 
@@ -248,30 +273,31 @@ func initLoggingFromEnv(db adbc.DatabaseLogging) {
 	db.SetLogger(logger)
 }
 
-// Allocate a new cgo.Handle and store its address in a heap-allocated
-// uintptr_t.  Experimentally, this was found to be necessary, else
-// something (the Go runtime?) would corrupt (garbage-collect?) the
-// handle.
+// cgo.Handle is a uintptr integer (not a pointer). Packing it directly into
+// a void* field is safe: the CGO checker only rejects Go heap pointers, and
+// handle values (small non-zero integers from a global counter) never alias
+// Go-allocated memory. The GC does not scan C-managed memory, so it will
+// never misinterpret the stored integer as a live pointer. No C allocation
+// is needed — the handle value itself fits in the pointer-sized field.
 func createHandle(hndl cgo.Handle) unsafe.Pointer {
-	// uintptr_t* hptr = malloc(sizeof(uintptr_t));
-	hptr := (*C.uintptr_t)(C.calloc(C.sizeof_uintptr_t, C.size_t(1)))
-	// *hptr = (uintptr)hndl;
-	*hptr = C.uintptr_t(uintptr(hndl))
-	return unsafe.Pointer(hptr)
+	return unsafe.Pointer(uintptr(hndl))
+}
+
+func handleFromPtr(ptr unsafe.Pointer) cgo.Handle {
+	return cgo.Handle(uintptr(ptr))
 }
 
 func getFromHandle[T any](ptr unsafe.Pointer) *T {
-	// uintptr_t* hptr = (uintptr_t*)ptr;
-	hptr := (*C.uintptr_t)(ptr)
-	return cgo.Handle((uintptr)(*hptr)).Value().(*T)
+	return handleFromPtr(ptr).Value().(*T)
 }
 
 func exportStringOption(val string, out *C.char, length *C.size_t) C.AdbcStatusCode {
 	lenWithTerminator := C.size_t(len(val) + 1)
 	if lenWithTerminator <= *length {
-		sink := fromCArr[byte]((*byte)(unsafe.Pointer(out)), int(*length))
+		// SAFETY: no copy of fromCArr because this is written to, not read from
+		sink := fromCArr[byte]((*byte)(unsafe.Pointer(out)), len(val)+1)
 		copy(sink, val)
-		sink[lenWithTerminator] = 0
+		sink[len(val)] = 0
 	}
 	*length = lenWithTerminator
 	return C.ADBC_STATUS_OK
@@ -279,7 +305,8 @@ func exportStringOption(val string, out *C.char, length *C.size_t) C.AdbcStatusC
 
 func exportBytesOption(val []byte, out *C.uint8_t, length *C.size_t) C.AdbcStatusCode {
 	if C.size_t(len(val)) <= *length {
-		sink := fromCArr[byte]((*byte)(out), int(*length))
+		// SAFETY: no copy of fromCArr because this is written to, not read from
+		sink := fromCArr[byte]((*byte)(out), len(val))
 		copy(sink, val)
 	}
 	*length = C.size_t(len(val))
@@ -288,15 +315,15 @@ func exportBytesOption(val []byte, out *C.uint8_t, length *C.size_t) C.AdbcStatu
 
 func checkDBAlloc(db *C.struct_AdbcDatabase, err *C.struct_AdbcError, fname string) bool {
 	if globalPoison.Load() {
-		setErr(err, "%s: Go panicked, driver is in unknown state", fname)
+		fmtErr(err, "%s: Go panicked, driver is in unknown state", fname)
 		return false
 	}
 	if db == nil {
-		setErr(err, "%s: database not allocated", fname)
+		fmtErr(err, "%s: database not allocated", fname)
 		return false
 	}
 	if db.private_data == nil {
-		setErr(err, "%s: database not allocated", fname)
+		fmtErr(err, "%s: database not allocated", fname)
 		return false
 	}
 	return true
@@ -308,7 +335,7 @@ func checkDBInit(db *C.struct_AdbcDatabase, err *C.struct_AdbcError, fname strin
 	}
 	cdb := getFromHandle[cDatabase](db.private_data)
 	if cdb.db == nil {
-		setErr(err, "%s: database not initialized", fname)
+		fmtErr(err, "%s: database not initialized", fname)
 		return nil
 	}
 
@@ -416,17 +443,16 @@ func BigQueryArrayStreamRelease(stream *C.struct_ArrowArrayStream) {
 	if stream == nil || stream.release != (*[0]byte)(C.BigQueryArrayStreamRelease) || stream.private_data == nil {
 		return
 	}
-	h := (*(*cgo.Handle)(stream.private_data))
+	h := handleFromPtr(stream.private_data)
+	stream.private_data = nil
 
 	cStream := h.Value().(*cArrayStream)
+	h.Delete()
 	cStream.rdr.Release()
 	if cStream.adbcErr != nil {
 		C.BigQueryerrRelease(cStream.adbcErr)
 		C.free(unsafe.Pointer(cStream.adbcErr))
 	}
-	C.free(unsafe.Pointer(stream.private_data))
-	stream.private_data = nil
-	h.Delete()
 	runtime.GC()
 }
 
@@ -453,10 +479,17 @@ func exportRecordReader(rdr array.RecordReader, stream *C.struct_ArrowArrayStrea
 	rdr.Retain()
 }
 
+type unappliedOpt struct {
+	stringVal *string
+	int64Val  *int64
+	byteVal   []byte
+	doubleVal *float64
+}
+
 type cDatabase struct {
 	driverbase.CancellableContext
 
-	opts map[string]string
+	opts map[string]unappliedOpt
 	db   driverbase.Database
 }
 
@@ -561,12 +594,35 @@ func BigQueryDatabaseInit(db *C.struct_AdbcDatabase, err *C.struct_AdbcError) (c
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	adb, aerr := drv.NewDatabaseWithContext(cdb.NewContext(), cdb.opts)
+	stringOpts := map[string]string{}
+	for k, v := range cdb.opts {
+		if v.stringVal != nil {
+			stringOpts[k] = *v.stringVal
+		}
+	}
+	ctx := cdb.NewContext()
+	adb, aerr := drv.NewDatabaseWithContext(ctx, stringOpts)
 	if aerr != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, aerr))
 	}
 
 	cdb.db = adb.(driverbase.Database)
+	for k, v := range cdb.opts {
+		switch {
+		case v.stringVal != nil:
+			continue
+		case v.int64Val != nil:
+			aerr = cdb.db.SetOptionInt(ctx, k, *v.int64Val)
+		case v.byteVal != nil:
+			aerr = cdb.db.SetOptionBytes(ctx, k, v.byteVal)
+		case v.doubleVal != nil:
+			aerr = cdb.db.SetOptionDouble(ctx, k, *v.doubleVal)
+		}
+		if aerr != nil {
+			return C.AdbcStatusCode(errToAdbcErr(err, aerr))
+		}
+	}
+
 	initLoggingFromEnv(cdb.db)
 	return C.ADBC_STATUS_OK
 }
@@ -586,7 +642,7 @@ func BigQueryDatabaseNew(db *C.struct_AdbcDatabase, err *C.struct_AdbcError) (co
 		setErr(err, "AdbcDatabaseNew: database already allocated")
 		return C.ADBC_STATUS_INVALID_STATE
 	}
-	dbobj := &cDatabase{opts: make(map[string]string)}
+	dbobj := &cDatabase{opts: make(map[string]unappliedOpt)}
 	hndl := cgo.NewHandle(dbobj)
 	db.private_data = createHandle(hndl)
 	return C.ADBC_STATUS_OK
@@ -602,19 +658,17 @@ func BigQueryDatabaseRelease(db *C.struct_AdbcDatabase, err *C.struct_AdbcError)
 	if !checkDBAlloc(db, err, "AdbcDatabaseRelease") {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
-	h := (*(*cgo.Handle)(db.private_data))
+	h := handleFromPtr(db.private_data)
+	db.private_data = nil
 
 	cdb := h.Value().(*cDatabase)
+	h.Delete()
 	if cdb.db != nil {
 		cdb.db.Close(cdb.NewContext())
 		cdb.db = nil
 	}
 	cdb.opts = nil
-	if db.private_data != nil {
-		C.free(unsafe.Pointer(db.private_data))
-		db.private_data = nil
-	}
-	h.Delete()
+
 	// manually trigger GC for two reasons:
 	//  1. ASAN expects the release callback to be called before
 	//     the process ends, but GC is not deterministic. So by manually
@@ -642,7 +696,7 @@ func BigQueryDatabaseSetOption(db *C.struct_AdbcDatabase, key, value *C.cchar_t,
 		e := cdb.db.SetOption(cdb.NewContext(), k, v)
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	} else {
-		cdb.opts[k] = v
+		cdb.opts[k] = unappliedOpt{stringVal: new(v)}
 	}
 
 	return C.ADBC_STATUS_OK
@@ -655,13 +709,23 @@ func BigQueryDatabaseSetOptionBytes(db *C.struct_AdbcDatabase, key *C.cchar_t, v
 			code = poison(err, "AdbcDatabaseSetOptionBytes", e)
 		}
 	}()
-	cdb := checkDBInit(db, err, "AdbcDatabaseSetOptionBytes")
-	if cdb == nil {
+	if !checkDBAlloc(db, err, "AdbcDatabaseSetOptionBytes") {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
+	cdb := getFromHandle[cDatabase](db.private_data)
+	k := C.GoString(key)
+	var safeLen int
+	if safeLen, code = checkLengthToInt(length, err); code != C.ADBC_STATUS_OK {
+		return code
+	}
+	v := C.GoBytes(unsafe.Pointer(value), C.int(safeLen))
 
-	e := cdb.db.SetOptionBytes(cdb.NewContext(), C.GoString(key), fromCArr[byte](value, int(length)))
-	return C.AdbcStatusCode(errToAdbcErr(err, e))
+	if cdb.db != nil {
+		e := cdb.db.SetOptionBytes(cdb.NewContext(), k, v)
+		return C.AdbcStatusCode(errToAdbcErr(err, e))
+	}
+	cdb.opts[k] = unappliedOpt{byteVal: v}
+	return C.ADBC_STATUS_OK
 }
 
 //export BigQueryDatabaseSetOptionDouble
@@ -671,13 +735,19 @@ func BigQueryDatabaseSetOptionDouble(db *C.struct_AdbcDatabase, key *C.cchar_t, 
 			code = poison(err, "AdbcDatabaseSetOptionDouble", e)
 		}
 	}()
-	cdb := checkDBInit(db, err, "AdbcDatabaseSetOptionDouble")
-	if cdb == nil {
+	if !checkDBAlloc(db, err, "AdbcDatabaseSetOptionDouble") {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
+	cdb := getFromHandle[cDatabase](db.private_data)
+	k := C.GoString(key)
+	v := float64(value)
 
-	e := cdb.db.SetOptionDouble(cdb.NewContext(), C.GoString(key), float64(value))
-	return C.AdbcStatusCode(errToAdbcErr(err, e))
+	if cdb.db != nil {
+		e := cdb.db.SetOptionDouble(cdb.NewContext(), k, v)
+		return C.AdbcStatusCode(errToAdbcErr(err, e))
+	}
+	cdb.opts[k] = unappliedOpt{doubleVal: new(v)}
+	return C.ADBC_STATUS_OK
 }
 
 //export BigQueryDatabaseSetOptionInt
@@ -687,13 +757,19 @@ func BigQueryDatabaseSetOptionInt(db *C.struct_AdbcDatabase, key *C.cchar_t, val
 			code = poison(err, "AdbcDatabaseSetOptionInt", e)
 		}
 	}()
-	cdb := checkDBInit(db, err, "AdbcDatabaseSetOptionInt")
-	if cdb == nil {
+	if !checkDBAlloc(db, err, "AdbcDatabaseSetOptionInt") {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
+	cdb := getFromHandle[cDatabase](db.private_data)
+	k := C.GoString(key)
+	v := int64(value)
 
-	e := cdb.db.SetOptionInt(cdb.NewContext(), C.GoString(key), int64(value))
-	return C.AdbcStatusCode(errToAdbcErr(err, e))
+	if cdb.db != nil {
+		e := cdb.db.SetOptionInt(cdb.NewContext(), k, v)
+		return C.AdbcStatusCode(errToAdbcErr(err, e))
+	}
+	cdb.opts[k] = unappliedOpt{int64Val: new(v)}
+	return C.ADBC_STATUS_OK
 }
 
 type cConn struct {
@@ -705,15 +781,15 @@ type cConn struct {
 
 func checkConnAlloc(cnxn *C.struct_AdbcConnection, err *C.struct_AdbcError, fname string) bool {
 	if globalPoison.Load() {
-		setErr(err, "%s: Go panicked, driver is in unknown state", fname)
+		fmtErr(err, "%s: Go panicked, driver is in unknown state", fname)
 		return false
 	}
 	if cnxn == nil {
-		setErr(err, "%s: connection not allocated", fname)
+		fmtErr(err, "%s: connection not allocated", fname)
 		return false
 	}
 	if cnxn.private_data == nil {
-		setErr(err, "%s: connection not allocated", fname)
+		fmtErr(err, "%s: connection not allocated", fname)
 		return false
 	}
 	return true
@@ -725,7 +801,7 @@ func checkConnInit(cnxn *C.struct_AdbcConnection, err *C.struct_AdbcError, fname
 	}
 	conn := getFromHandle[cConn](cnxn.private_data)
 	if conn.cnxn == nil {
-		setErr(err, "%s: connection not initialized", fname)
+		fmtErr(err, "%s: connection not initialized", fname)
 		return nil
 	}
 
@@ -863,7 +939,11 @@ func BigQueryConnectionSetOptionBytes(db *C.struct_AdbcConnection, key *C.cchar_
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := conn.cnxn.SetOptionBytes(conn.NewContext(), C.GoString(key), fromCArr[byte](value, int(length)))
+	var safeLen int
+	if safeLen, code = checkLengthToInt(length, err); code != C.ADBC_STATUS_OK {
+		return code
+	}
+	e := conn.cnxn.SetOptionBytes(conn.NewContext(), C.GoString(key), C.GoBytes(unsafe.Pointer(value), C.int(safeLen)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -950,15 +1030,15 @@ func BigQueryConnectionRelease(cnxn *C.struct_AdbcConnection, err *C.struct_Adbc
 	if !checkConnAlloc(cnxn, err, "AdbcConnectionRelease") {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
-	h := (*(*cgo.Handle)(cnxn.private_data))
+	h := handleFromPtr(cnxn.private_data)
+	cnxn.private_data = nil
 
 	conn := h.Value().(*cConn)
+	h.Delete()
 	defer func() {
 		conn.CancelContext()
 		conn.cnxn = nil
-		C.free(cnxn.private_data)
-		cnxn.private_data = nil
-		h.Delete()
+
 		// manually trigger GC for two reasons:
 		//  1. ASAN expects the release callback to be called before
 		//     the process ends, but GC is not deterministic. So by manually
@@ -973,12 +1053,21 @@ func BigQueryConnectionRelease(cnxn *C.struct_AdbcConnection, err *C.struct_Adbc
 	return C.AdbcStatusCode(errToAdbcErr(err, conn.cnxn.Close(conn.NewContext())))
 }
 
+// SAFETY: at each call site, consider whether a copy of the resulting slice must be made
 func fromCArr[T, CType any](ptr *CType, sz int) []T {
 	if ptr == nil || sz == 0 {
 		return nil
 	}
 
 	return unsafe.Slice((*T)(unsafe.Pointer(ptr)), sz)
+}
+
+func checkLengthToInt(length C.size_t, err *C.struct_AdbcError) (int, C.AdbcStatusCode) {
+	if length > C.size_t(math.MaxInt) {
+		fmtErr(err, "Length %d exceeds max Go int %d", length, math.MaxInt)
+		return 0, C.ADBC_STATUS_INVALID_ARGUMENT
+	}
+	return int(length), C.ADBC_STATUS_OK
 }
 
 func toCdataStream(ptr *C.struct_ArrowArrayStream) *cdata.CArrowArrayStream {
@@ -1045,7 +1134,11 @@ func BigQueryConnectionGetInfo(cnxn *C.struct_AdbcConnection, codes *C.cuint32_t
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	infoCodes := fromCArr[adbc.InfoCode](codes, int(len))
+	var safeLen int
+	if safeLen, code = checkLengthToInt(len, err); code != C.ADBC_STATUS_OK {
+		return code
+	}
+	infoCodes := slices.Clone(fromCArr[adbc.InfoCode](codes, safeLen))
 	rdr, e := conn.cnxn.GetInfo(conn.NewContext(), infoCodes)
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
@@ -1186,7 +1279,11 @@ func BigQueryConnectionReadPartition(cnxn *C.struct_AdbcConnection, serialized *
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	rdr, e := conn.cnxn.ReadPartition(conn.NewContext(), fromCArr[byte](serialized, int(serializedLen)))
+	var safeLen int
+	if safeLen, code = checkLengthToInt(serializedLen, err); code != C.ADBC_STATUS_OK {
+		return code
+	}
+	rdr, e := conn.cnxn.ReadPartition(conn.NewContext(), C.GoBytes(unsafe.Pointer(serialized), C.int(safeLen)))
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1236,15 +1333,15 @@ type cStmt struct {
 
 func checkStmtAlloc(stmt *C.struct_AdbcStatement, err *C.struct_AdbcError, fname string) bool {
 	if globalPoison.Load() {
-		setErr(err, "%s: Go panicked, driver is in unknown state", fname)
+		fmtErr(err, "%s: Go panicked, driver is in unknown state", fname)
 		return false
 	}
 	if stmt == nil {
-		setErr(err, "%s: statement not allocated", fname)
+		fmtErr(err, "%s: statement not allocated", fname)
 		return false
 	}
 	if stmt.private_data == nil {
-		setErr(err, "%s: statement not allocated", fname)
+		fmtErr(err, "%s: statement not allocated", fname)
 		return false
 	}
 	return true
@@ -1256,7 +1353,7 @@ func checkStmtInit(stmt *C.struct_AdbcStatement, err *C.struct_AdbcError, fname 
 	}
 	cStmt := getFromHandle[cStmt](stmt.private_data)
 	if cStmt.stmt == nil {
-		setErr(err, "%s: statement not allocated", fname)
+		fmtErr(err, "%s: statement not allocated", fname)
 		return nil
 	}
 	return cStmt
@@ -1401,16 +1498,15 @@ func BigQueryStatementRelease(stmt *C.struct_AdbcStatement, err *C.struct_AdbcEr
 	if !checkStmtAlloc(stmt, err, "AdbcStatementRelease") {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
-	h := (*(*cgo.Handle)(stmt.private_data))
+	h := handleFromPtr(stmt.private_data)
+	stmt.private_data = nil
 
 	st := h.Value().(*cStmt)
+	h.Delete()
 	defer func() {
 		st.CancelContext()
 		st.executionContext.CancelContext()
 		st.stmt = nil
-		C.free(stmt.private_data)
-		stmt.private_data = nil
-		h.Delete()
 		// manually trigger GC for two reasons:
 		//  1. ASAN expects the release callback to be called before
 		//     the process ends, but GC is not deterministic. So by manually
@@ -1568,7 +1664,11 @@ func BigQueryStatementSetSubstraitPlan(stmt *C.struct_AdbcStatement, plan *C.cui
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	e := st.stmt.SetSubstraitPlan(st.NewContext(), fromCArr[byte](plan, int(length)))
+	var safeLen int
+	if safeLen, code = checkLengthToInt(length, err); code != C.ADBC_STATUS_OK {
+		return code
+	}
+	e := st.stmt.SetSubstraitPlan(st.NewContext(), C.GoBytes(unsafe.Pointer(plan), C.int(safeLen)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1669,7 +1769,11 @@ func BigQueryStatementSetOptionBytes(db *C.struct_AdbcStatement, key *C.cchar_t,
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
-	e := opts.SetOptionBytes(st.NewContext(), C.GoString(key), fromCArr[byte](value, int(length)))
+	var safeLen int
+	if safeLen, code = checkLengthToInt(length, err); code != C.ADBC_STATUS_OK {
+		return code
+	}
+	e := opts.SetOptionBytes(st.NewContext(), C.GoString(key), C.GoBytes(unsafe.Pointer(value), C.int(safeLen)))
 	return C.AdbcStatusCode(errToAdbcErr(err, e))
 }
 
@@ -1773,6 +1877,7 @@ func BigQueryStatementExecutePartitions(stmt *C.struct_AdbcStatement, schema *C.
 		totalLen += len(p)
 	}
 	partitions.private_data = C.calloc(C.size_t(totalLen), C.size_t(1))
+	// SAFETY: no copy of fromCArr because this is written to, not read from
 	dst := fromCArr[byte]((*byte)(partitions.private_data), totalLen)
 
 	partIDs := fromCArr[*C.cuint8_t](partitions.partitions, int(partitions.num_partitions))
@@ -1788,19 +1893,21 @@ func BigQueryStatementExecutePartitions(stmt *C.struct_AdbcStatement, schema *C.
 	return C.ADBC_STATUS_OK
 }
 
-//export AdbcDriverBigQueryInit
-func AdbcDriverBigQueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
+//export AdbcDriverBigqueryInit
+func AdbcDriverBigqueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
 	driver := (*C.struct_AdbcDriver)(unsafe.Pointer(rawDriver))
 
 	switch version {
 	case C.ADBC_VERSION_1_0_0:
+		// SAFETY: no copy of fromCArr because this is written to, not read from
 		sink := fromCArr[byte]((*byte)(unsafe.Pointer(driver)), C.ADBC_DRIVER_1_0_0_SIZE)
 		memory.Set(sink, 0)
 	case C.ADBC_VERSION_1_1_0:
+		// SAFETY: no copy of fromCArr because this is written to, not read from
 		sink := fromCArr[byte]((*byte)(unsafe.Pointer(driver)), C.ADBC_DRIVER_1_1_0_SIZE)
 		memory.Set(sink, 0)
 	default:
-		setErr(err, "Only version 1.0.0/1.1.0 supported, got %d", int(version))
+		fmtErr(err, "Only version 1.0.0/1.1.0 supported, got %d", int(version))
 		return C.ADBC_STATUS_NOT_IMPLEMENTED
 	}
 
@@ -1869,6 +1976,12 @@ func AdbcDriverBigQueryInit(version C.int, rawDriver *C.void, err *C.struct_Adbc
 	}
 
 	return C.ADBC_STATUS_OK
+}
+
+//export AdbcDriverBigQueryInit
+func AdbcDriverBigQueryInit(version C.int, rawDriver *C.void, err *C.struct_AdbcError) C.AdbcStatusCode {
+	// Backwards compatibility alias
+	return AdbcDriverBigqueryInit(version, rawDriver, err)
 }
 
 func main() {}

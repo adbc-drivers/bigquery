@@ -52,11 +52,11 @@ To connect, replace `my-gcp-project` and `my-gcp-dataset` below with the appropr
 from adbc_driver_manager import dbapi
 
 conn = dbapi.connect(
-  driver="bigquery",
-  db_kwargs={
-      "adbc.bigquery.sql.project_id": "my-gcp-project",
-      "adbc.bigquery.sql.dataset_id": "my-gcp-dataset"
-  }
+    driver="bigquery",
+    db_kwargs={
+        "adbc.bigquery.sql.project_id": "my-gcp-project",
+        "adbc.bigquery.sql.dataset_id": "my-gcp-dataset",
+    },
 )
 ```
 
