@@ -25,7 +25,7 @@ require (
 	github.com/apache/arrow-adbc/go/adbc v1.12.0
 	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/google/uuid v1.6.0
-	github.com/googleapis/gax-go/v2 v2.26.0
+	github.com/googleapis/gax-go/v2 v2.26.2
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0
