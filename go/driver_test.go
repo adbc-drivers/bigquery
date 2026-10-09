@@ -1552,7 +1552,7 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallbackPseudocolumns() {
 	_, err := suite.stmt.ExecuteUpdate(suite.ctx)
 	suite.Require().NoError(err)
 
-	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "INSERT INTO pseudotest2 (tid) SELECT tid FROM UNNEST(GENERATE_ARRAY(1, 100000)) AS tid"))
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "INSERT INTO pseudotest2 (tid) SELECT tid FROM UNNEST(GENERATE_ARRAY(1, 500000)) AS tid"))
 	_, err = suite.stmt.ExecuteUpdate(suite.ctx)
 	suite.Require().NoError(err)
 
@@ -1579,7 +1579,7 @@ func (suite *BigQueryTests) TestJobCreationOptionalFallbackPseudocolumns() {
 		suite.Truef(expectedSchema.Equal(rdr.RecordBatch().Schema()), "expected: %s\ngot: %s", expectedSchema, rdr.Schema())
 		nrows += int(rdr.RecordBatch().NumRows())
 	}
-	suite.Equal(100000, nrows)
+	suite.Equal(500000, nrows)
 	suite.Require().NoError(rdr.Err())
 }
 
