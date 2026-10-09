@@ -90,6 +90,12 @@ type connectionImpl struct {
 	customUserAgent string
 
 	client *bigquery.Client
+	// clientStorageApiDisabled is a parallel client that does NOT have the
+	// Storage Read API enabled. Used when a statement requests
+	// OptionQueryDisableStorageApi, since the Storage API returns
+	// nulls for pseudo-columns like _PARTITIONDATE/_PARTITIONTIME.
+	// Initialized lazily on first use.
+	clientStorageApiDisabled *bigquery.Client
 }
 
 func (c *connectionImpl) GetCatalogs(ctx context.Context, catalogFilter *string) ([]string, error) {
@@ -447,11 +453,18 @@ func (c *connectionImpl) Rollback(ctx context.Context) error {
 
 // Close closes this connection and releases any associated resources.
 func (c *connectionImpl) Close(ctx context.Context) error {
-	err := c.client.Close()
-	if err != nil {
-		return errToAdbcErr(adbc.StatusIO, err, "close client")
+	var firstErr error
+	if c.client != nil {
+		if err := c.client.Close(); err != nil {
+			firstErr = errToAdbcErr(adbc.StatusIO, err, "close client")
+		}
 	}
-	return nil
+	if c.clientStorageApiDisabled != nil {
+		if err := c.clientStorageApiDisabled.Close(); err != nil && firstErr == nil {
+			firstErr = errToAdbcErr(adbc.StatusIO, err, "close storage-api-disabled client")
+		}
+	}
+	return firstErr
 }
 
 // Metadata methods
@@ -742,14 +755,12 @@ func (c *connectionImpl) SetOptionInt(ctx context.Context, key string, value int
 	}
 }
 
-func (c *connectionImpl) newClient(ctx context.Context) error {
-	if c.catalog == "" {
-		return adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  "[bq] ProjectID is empty",
-		}
-	}
-
+// authOptions builds the slice of google.golang.org/api/option client
+// options reflecting the connection's configured auth type and
+// impersonation/quota settings. Exposed so auxiliary clients (secondary
+// BigQuery client without Storage Read API) can be created with the same
+// credentials.
+func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption, error) {
 	authOptions := []option.ClientOption{}
 
 	// First, establish base authentication
@@ -760,7 +771,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			// Auto-detect credential type from the JSON file
 			detected, err := detectCredentialTypeFromFile(c.credentials)
 			if err != nil {
-				return adbc.Error{
+				return nil, adbc.Error{
 					Code: adbc.StatusInvalidArgument,
 					Msg:  fmt.Sprintf("[bq] failed to detect credential type from file %q: %s", c.credentials, err.Error()),
 				}
@@ -775,7 +786,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		if credType == "" {
 			detected, err := detectCredentialTypeFromJSON([]byte(c.credentials))
 			if err != nil {
-				return adbc.Error{
+				return nil, adbc.Error{
 					Code: adbc.StatusInvalidArgument,
 					Msg:  fmt.Sprintf("[bq] failed to detect credential type from JSON: %s", err.Error()),
 				}
@@ -787,19 +798,19 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		authOptions = append(authOptions, option.WithAuthCredentialsJSON(credType, []byte(c.credentials)))
 	case OptionValueAuthTypeUserAuthentication:
 		if c.clientID == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthClientID),
 			}
 		}
 		if c.clientSecret == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthClientSecret),
 			}
 		}
 		if c.refreshToken == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthRefreshToken),
 			}
@@ -814,7 +825,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		c.Logger.Debug("Using anonymous authentication")
 		authOptions = append(authOptions, option.WithoutAuthentication())
 	default:
-		return adbc.Error{
+		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
 			Msg:  fmt.Sprintf("[bq] unknown auth type: %s", c.authType),
 		}
@@ -828,7 +839,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	// Then, apply impersonation if configured (as a credential transformation layer)
 	if c.hasImpersonationOptions() {
 		if c.impersonateTargetPrincipal == "" {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty for impersonation", OptionImpersonateTargetPrincipal),
 			}
@@ -848,13 +859,29 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impCfg)
 		if err != nil {
-			return adbc.Error{
+			return nil, adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] failed to create impersonated token source: %s", err.Error()),
 			}
 		}
 		// Replace any existing token source with the impersonated one
 		authOptions = []option.ClientOption{option.WithTokenSource(tokenSource)}
+	}
+
+	return authOptions, nil
+}
+
+func (c *connectionImpl) newClient(ctx context.Context) error {
+	if c.catalog == "" {
+		return adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  "[bq] ProjectID is empty",
+		}
+	}
+
+	authOptions, err := c.authOptions(ctx)
+	if err != nil {
+		return err
 	}
 
 	// Add custom endpoint if specified for BigQuery API client
@@ -890,6 +917,32 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 	c.client = client
 	return nil
+}
+
+// getOrCreateStorageApiDisabledClient lazily constructs (and caches) a
+// BigQuery client that has NOT had its Storage Read API enabled. Required by
+// queries that select pseudo-columns like _PARTITIONDATE/_PARTITIONTIME,
+// which return null over the Storage Read API.
+func (c *connectionImpl) getOrCreateStorageApiDisabledClient(ctx context.Context) (*bigquery.Client, error) {
+	if c.clientStorageApiDisabled != nil {
+		return c.clientStorageApiDisabled, nil
+	}
+	authOptions, err := c.authOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c.endpoint != "" {
+		authOptions = append(authOptions, option.WithEndpoint(c.endpoint))
+	}
+	client, err := bigquery.NewClient(ctx, c.catalog, authOptions...)
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusIO, err, "create non-storage-api client")
+	}
+	if c.location != "" {
+		client.Location = c.location
+	}
+	c.clientStorageApiDisabled = client
+	return client, nil
 }
 
 func (c *connectionImpl) hasImpersonationOptions() bool {

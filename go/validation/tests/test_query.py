@@ -22,7 +22,7 @@ from . import bigquery, utils
 def pytest_generate_tests(metafunc) -> None:
     all_quirks = [bigquery.get_quirks(metafunc.config.getoption("vendor_version"))]
 
-    if metafunc.definition.name == "test_query_direct":
+    if metafunc.definition.name in ("test_query_direct", "test_query_no_storage_api"):
         combinations = []
         for quirks in all_quirks:
             driver_param = f"{quirks.name}:{quirks.short_version}"
@@ -73,6 +73,32 @@ class TestQuery(query_tests.TestQuery):
                     "tags": {
                         "broken-vendor": None,
                         "variant": "Inline Result",
+                    },
+                },
+                *query.metadata_paths,
+            ],
+        )
+        super().test_query(driver, conn, modified, query_setup)
+
+    @utils.retry_rate_limit
+    def test_query_no_storage_api(self, driver, conn, query, query_setup) -> None:
+        modified = model.Query(
+            name=f"{query.name}:nostorageapi",
+            query=query.query,
+            metadata_paths=[
+                {
+                    "setup": {
+                        "statement": {
+                            "options": {
+                                "bigquery.query.disable_storage_api": {
+                                    "apply": "true",
+                                    "revert": "false",
+                                },
+                            },
+                        },
+                    },
+                    "tags": {
+                        "variant": "Storage API disabled",
                     },
                 },
                 *query.metadata_paths,
