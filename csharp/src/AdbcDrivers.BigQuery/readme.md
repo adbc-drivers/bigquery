@@ -140,6 +140,9 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.scopes**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. Comma separated list of scopes to include for the credential.
 
+**adbc.bigquery.universe_domain**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. The Google Cloud universe domain to connect to, for example `s3nsapis.fr` for [S3NS](https://www.s3ns.io/). The BigQuery, BigQuery Storage, Security Token Service and IAM Credentials hosts are derived from it (see [Endpoints to allow](#endpoints-to-allow)). Must be a bare domain name, without scheme, port or path. Defaults to `googleapis.com`. Credentials built from an access token (`aad`) are bound to this universe; `service` JSON credentials must have been issued for it, which they record in their `universe_domain` field. `user` authentication always uses `accounts.google.com` and is only supported in the default universe.
+
 **adbc.bigquery.use_legacy_sql**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Sets the [UseLegacySql](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.V2/latest/Google.Cloud.BigQuery.V2.QueryOptions#Google_Cloud_BigQuery_V2_QueryOptions_UseLegacySql) value of the QueryOptions to `true` if configured; otherwise, the default is `false`.
 
@@ -238,6 +241,8 @@ The driver routes its HTTP traffic through a forward proxy when `adbc.bigquery.p
 ### Endpoints to allow
 
 Environments that allow outbound hosts explicitly need all of the following reachable. The first three are contacted directly by the driver; the last two are used by the Google client libraries it builds on.
+
+The hosts below are for the default universe. When `adbc.bigquery.universe_domain` is set, `googleapis.com` is replaced by that domain, for example `sts.s3nsapis.fr`, `iamcredentials.s3nsapis.fr`, `bigquery.s3nsapis.fr` and `bigquerystorage.s3nsapis.fr` for S3NS.
 
 Note that `https://www.googleapis.com/auth/cloud-platform`, the default value of `adbc.bigquery.scopes`, is an OAuth scope identifier rather than a host the driver connects to. It does not need to be allowed.
 

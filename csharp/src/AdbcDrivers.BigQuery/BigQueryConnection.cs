@@ -67,6 +67,12 @@ namespace AdbcDrivers.BigQuery
 
         private readonly string infoDriverArrowVersion = BigQueryUtils.GetAssemblyVersion(typeof(IArrowArray));
 
+        // The universe domain is interpolated into service hostnames, so only accept a bare domain name.
+        private static readonly Regex UniverseDomainPattern = new Regex(
+            @"\A[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+\z",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+
         readonly AdbcInfoCode[] infoSupportedCodes = new[] {
             AdbcInfoCode.DriverName,
             AdbcInfoCode.DriverVersion,
@@ -166,6 +172,17 @@ namespace AdbcDrivers.BigQuery
             {
                 TestStorageEndpoint = storageEndpoint;
             }
+
+            if (this.properties.TryGetValue(BigQueryParameters.UniverseDomain, out string? universeDomain) &&
+                !string.IsNullOrEmpty(universeDomain))
+            {
+                if (!UniverseDomainPattern.IsMatch(universeDomain))
+                {
+                    throw new ArgumentException($"The value '{universeDomain}' for parameter '{BigQueryParameters.UniverseDomain}' is not a valid domain name, such as 'googleapis.com' or 's3nsapis.fr'.");
+                }
+
+                UniverseDomain = universeDomain;
+            }
         }
 
         /// <summary>
@@ -217,6 +234,21 @@ namespace AdbcDrivers.BigQuery
         internal bool IncludePublicProjectIds { get; private set; } = false;
 
         internal string? TestStorageEndpoint { get; private set; }
+
+        /// <summary>
+        /// The universe domain explicitly configured by the caller, or null to use the default.
+        /// </summary>
+        internal string? UniverseDomain { get; private set; }
+
+        internal string EffectiveUniverseDomain => UniverseDomain ?? BigQueryConstants.DefaultUniverseDomain;
+
+        /// <summary>
+        /// The Security Token Service endpoint of the effective universe, e.g. https://sts.s3nsapis.fr/v1/token.
+        /// </summary>
+        internal string StsTokenEndpoint => string.Format(
+            CultureInfo.InvariantCulture,
+            BigQueryConstants.StsTokenEndpointFormat,
+            EffectiveUniverseDomain);
 
         internal ProxyConfiguration? ProxyConfiguration => _proxyConfiguration;
 
@@ -457,6 +489,13 @@ namespace AdbcDrivers.BigQuery
                 {
                     bigQueryClientBuilder.BaseUri = $"http://{testRestEndpoint}/bigquery/v2/";
                 }
+                else if (UniverseDomain != null)
+                {
+                    // Builds the base URI as https://bigquery.{universe}/ and requires the credential
+                    // to belong to the same universe (see SetCredential).
+                    bigQueryClientBuilder.UniverseDomain = UniverseDomain;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.UniverseDomain, UniverseDomain);
+                }
 
                 if (!string.IsNullOrEmpty(DefaultClientLocation))
                 {
@@ -566,6 +605,15 @@ namespace AdbcDrivers.BigQuery
                     throw new ArgumentException($"{authenticationType} is not a valid authenticationType");
                 }
 
+                // The client libraries reject a credential whose universe differs from the client's.
+                // Credentials built from an access token default to googleapis.com, so move them to the
+                // configured universe. JSON credentials issued for that universe already match.
+                if (UniverseDomain != null &&
+                    !string.Equals(Credential.GetUniverseDomain(), UniverseDomain, StringComparison.OrdinalIgnoreCase))
+                {
+                    Credential = Credential.CreateWithUniverseDomain(UniverseDomain);
+                }
+
                 Google.Apis.Http.HttpClientFactory? proxyHttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration);
                 if (proxyHttpClientFactory != null)
                 {
@@ -644,7 +692,7 @@ namespace AdbcDrivers.BigQuery
                 : scopes!.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
 
             return WorkloadIdentityFederation.ImpersonateServiceAccount(
-                this.httpClient, impersonationEmail!, scopeList, federatedToken!, activity);
+                this.httpClient, impersonationEmail!, scopeList, federatedToken!, activity, EffectiveUniverseDomain);
         }
 
         public override IArrowArrayStream GetInfo(IReadOnlyList<AdbcInfoCode> codes)
@@ -2058,7 +2106,7 @@ namespace AdbcDrivers.BigQuery
 
                 string json = CreateEntraStsRequestBody(audience, entraAccessToken);
 
-                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, BigQueryConstants.EntraStsTokenEndpoint)
+                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, StsTokenEndpoint)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };

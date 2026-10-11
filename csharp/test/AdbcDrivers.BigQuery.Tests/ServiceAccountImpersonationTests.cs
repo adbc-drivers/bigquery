@@ -219,6 +219,90 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Equal("federated-token", connection.ImpersonateIfRequested("federated-token", null));
         }
 
+        [Fact]
+        public void ImpersonationUsesTheIamCredentialsEndpointOfTheUniverse()
+        {
+            RecordingHandler handler = RecordingHandler.RespondWith("{\"accessToken\":\"impersonated\"}");
+            using HttpClient httpClient = new HttpClient(handler);
+
+            WorkloadIdentityFederation.ImpersonateServiceAccount(
+                httpClient, ServiceAccount, new[] { BigQueryConstants.EntraIdScope }, FederatedToken, null, "s3nsapis.fr");
+
+            Assert.Equal(
+                "https://iamcredentials.s3nsapis.fr/v1/projects/-/serviceAccounts/" + Uri.EscapeDataString(ServiceAccount) + ":generateAccessToken",
+                handler.Request!.RequestUri!.ToString());
+        }
+
+        [Theory]
+        [InlineData(null, "https://sts.googleapis.com/v1/token")]
+        [InlineData("", "https://sts.googleapis.com/v1/token")]
+        [InlineData("googleapis.com", "https://sts.googleapis.com/v1/token")]
+        [InlineData("s3nsapis.fr", "https://sts.s3nsapis.fr/v1/token")]
+        public void StsTokenEndpointFollowsTheUniverseDomain(string? universeDomain, string expected)
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+            };
+
+            if (universeDomain != null)
+            {
+                properties[BigQueryParameters.UniverseDomain] = universeDomain;
+            }
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+
+            Assert.Equal(expected, connection.StsTokenEndpoint);
+        }
+
+        [Theory]
+        [InlineData("https://s3nsapis.fr")]
+        [InlineData("s3nsapis.fr/")]
+        [InlineData("s3nsapis.fr:443")]
+        [InlineData("googleapis.com/test?")]
+        [InlineData("localhost")]
+        [InlineData("a b.fr")]
+        public void InvalidUniverseDomainIsRejected(string universeDomain)
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+                [BigQueryParameters.UniverseDomain] = universeDomain,
+            };
+
+            Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
+        }
+
+        [Fact]
+        public void AccessTokenCredentialIsMovedToTheConfiguredUniverse()
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.MockAuthenticationType,
+                [BigQueryParameters.UniverseDomain] = "s3nsapis.fr",
+            };
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+            connection.SetCredential();
+
+            Assert.Equal("s3nsapis.fr", connection.Credential!.GetUniverseDomain());
+        }
+
+        [Fact]
+        public void BigQueryClientTargetsTheUniverseHost()
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.MockAuthenticationType,
+                [BigQueryParameters.ProjectId] = "my-project",
+                [BigQueryParameters.UniverseDomain] = "s3nsapis.fr",
+            };
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+
+            Assert.StartsWith("https://bigquery.s3nsapis.fr/", connection.Open().Service.BaseUri);
+        }
+
         private sealed class RecordingHandler : HttpMessageHandler        {
             private string responseBody = string.Empty;
             private HttpStatusCode statusCode = HttpStatusCode.OK;

@@ -338,7 +338,8 @@ namespace AdbcDrivers.BigQuery
                 TokenProtectedReadClientManger clientMgr = new TokenProtectedReadClientManger(
                     Credential,
                     this.bigQueryConnection.TestStorageEndpoint,
-                    this.bigQueryConnection.ProxyConfiguration);
+                    this.bigQueryConnection.ProxyConfiguration,
+                    this.bigQueryConnection.UniverseDomain);
                 clientMgr.UpdateToken = () => Task.Run(() =>
                 {
                     this.bigQueryConnection.SetCredential();
@@ -1364,6 +1365,11 @@ namespace AdbcDrivers.BigQuery
             else
             {
                 builder.GoogleCredential = Credential;
+
+                if (this.bigQueryConnection.UniverseDomain != null)
+                {
+                    builder.UniverseDomain = this.bigQueryConnection.UniverseDomain;
+                }
             }
 
             return builder.Build();
