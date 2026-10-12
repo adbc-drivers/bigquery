@@ -14,7 +14,7 @@
 
 repos:
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: cb8c523fd4835aba42af70f4cad5568db4df0b6c  # frozen: v0.16.0
+  rev: f12be1ebaa5351c1fc76472de98db2c3446c8253  # frozen: v0.16.10
   hooks:
     - id: ruff-check
       name: "ruff check (isort)"
@@ -33,7 +33,7 @@ repos:
         )$
 
 - repo: https://github.com/golangci/golangci-lint
-  rev: 9c5dd448ac26caa35e3faee1e8e94476ae885b0f  # frozen: v2.13.1
+  rev: 793d05316077345337ae9a11ae05ec8f23edfe1b  # frozen: v2.14.0
   hooks:
   - id: golangci-lint
     entry: bash -c 'cd go && golangci-lint run --fix --timeout 5m'
@@ -56,7 +56,7 @@ repos:
   - id: trailing-whitespace
 
 - repo: https://github.com/adbc-drivers/dev
-  rev: f9cc95795485149e339f8474853344e4e6870e93
+  rev: 1c81e4c7cf606de1df44081f394934634a701428
   hooks:
   - id: rat
 
