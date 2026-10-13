@@ -77,7 +77,7 @@ The format follows a similar approach to the [Simba BigQuery JDBC Connection Str
 Components:
 
 - `Scheme`: `bigquery://` (required)
-- `Host`: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`)
+- `Host`: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`, or `bigquery.<UniverseDomain>` when the `UniverseDomain` query parameter is set)
 - `Port`: TCP port (optional, defaults to 443)
 - `ProjectID`: Google Cloud Project ID (required)
 - `OAuthType`: Authentication type number (optional, defaults to `0`)
@@ -107,6 +107,7 @@ Examples:
 - `bigquery:///my-project-123?OAuthType=3&AuthClientId=123.apps.googleusercontent.com&AuthClientSecret=secret&AuthRefreshToken=token`
 - `bigquery://bigquery.googleapis.com/my-project-123?OAuthType=0&DatasetId=analytics&Location=US`
 - `bigquery:///my-project-123?OAuthType=2&AuthCredentials=%7B%22type%22%3A%22service_account%22...%7D&DatasetId=data_warehouse`
+- `bigquery:///my-project-123?OAuthType=1&AuthCredentials=/path/to/s3ns-key.json&UniverseDomain=s3nsapis.fr` (S3NS)
 
 ## Feature & Type Support
 
@@ -230,6 +231,13 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 : **Type:** string. **Default:** (empty)
 
   Override the location of the gRPC API endpoint for BigQuery Storage; this can be used to connect to an emulator instead. It should be a `host:port`.
+
+`bigquery.universe_domain`
+: **Type:** string. **Default:** (empty) **URI Parameter:** `UniverseDomain`
+
+  The Google Cloud universe domain to connect to, for example `s3nsapis.fr` for [S3NS](https://www.s3ns.io/). The BigQuery, BigQuery Storage and IAM Credentials (impersonation) endpoints are derived from it, e.g. `bigquery.s3nsapis.fr`. When empty, the `GOOGLE_CLOUD_UNIVERSE_DOMAIN` environment variable is used if set, otherwise `googleapis.com`.
+
+  The universe domain of the credentials must match. Service account and external account (Workload Identity Federation) JSON files issued for another universe carry a `universe_domain` field and their own token endpoints, so they work unchanged. User authentication (`OAuthType=3`) always uses `accounts.google.com` and is only supported in the default universe.
 
 ### Ingest Options
 

@@ -38,13 +38,13 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/auth/credentials/impersonate"
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
@@ -76,6 +76,8 @@ type connectionImpl struct {
 	// endpoint is the custom BigQuery API endpoint
 	endpoint        string
 	storageEndpoint string
+	// universeDomain is the Google Cloud universe domain, e.g. "s3nsapis.fr"
+	universeDomain string
 
 	sessionID *string
 
@@ -627,6 +629,8 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.bulkIngestCompression, nil
 	case OptionCustomUserAgent:
 		return c.customUserAgent, nil
+	case OptionUniverseDomain:
+		return c.universeDomain, nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -840,21 +844,30 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		// Unset (0) lets the impersonate package refresh 1h tokens; any explicit lifetime yields a static token
 
-		impCfg := impersonate.CredentialsConfig{
+		// cloud.google.com/go/auth derives the IAM Credentials endpoint
+		// (iamcredentials.<universe>) from the base credentials, unlike
+		// google.golang.org/api/impersonate which always uses googleapis.com.
+		impCreds, err := impersonate.NewCredentials(&impersonate.CredentialsOptions{
 			TargetPrincipal: c.impersonateTargetPrincipal,
 			Delegates:       c.impersonateDelegates,
 			Scopes:          c.impersonateScopes,
 			Lifetime:        lifetime,
-		}
-		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impCfg)
+			UniverseDomain:  c.universeDomain,
+		})
 		if err != nil {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
 				Msg:  fmt.Sprintf("[bq] failed to create impersonated token source: %s", err.Error()),
 			}
 		}
-		// Replace any existing token source with the impersonated one
-		authOptions = []option.ClientOption{option.WithTokenSource(tokenSource)}
+		// Replace any existing credentials with the impersonated ones
+		authOptions = []option.ClientOption{option.WithAuthCredentials(impCreds)}
+	}
+
+	// Target a non-default universe (e.g. S3NS). Default endpoints for both
+	// the BigQuery and Storage APIs are derived from it.
+	if c.universeDomain != "" {
+		authOptions = append(authOptions, option.WithUniverseDomain(c.universeDomain))
 	}
 
 	// Add custom endpoint if specified for BigQuery API client

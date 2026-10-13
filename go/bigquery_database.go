@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,7 @@ type databaseImpl struct {
 	quotaProject    string
 	endpoint        string
 	storageEndpoint string
+	universeDomain  string
 
 	queryDefaults queryDefaults
 
@@ -85,6 +87,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		location:                   d.location,
 		endpoint:                   d.endpoint,
 		storageEndpoint:            d.storageEndpoint,
+		universeDomain:             d.universeDomain,
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
@@ -139,6 +142,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.endpoint, nil
 	case OptionStorageEndpoint:
 		return d.storageEndpoint, nil
+	case OptionUniverseDomain:
+		return d.universeDomain, nil
 	case OptionImpersonateLifetime:
 		if d.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
@@ -284,6 +289,11 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.endpoint = value
 	case OptionStorageEndpoint:
 		d.storageEndpoint = value
+	case OptionUniverseDomain:
+		if err := validateUniverseDomain(value); err != nil {
+			return err
+		}
+		d.universeDomain = value
 	case OptionLocation:
 		d.location = value
 	case OptionBulkIngestMethod:
@@ -348,6 +358,16 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	params := make(map[string]string)
 	params[OptionProjectID] = projectID
 
+	// The default BigQuery host follows the universe domain, e.g.
+	// bigquery.s3nsapis.fr for S3NS.
+	defaultHost := "bigquery.googleapis.com"
+	if universeDomain := parsedURI.Query().Get("UniverseDomain"); universeDomain != "" {
+		if err := validateUniverseDomain(universeDomain); err != nil {
+			return nil, err
+		}
+		defaultHost = "bigquery." + universeDomain
+	}
+
 	// Handle host and port
 	var endpoint string
 	if parsedURI.Host != "" && parsedURI.Hostname() != "" {
@@ -359,10 +379,10 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 		}
 	} else if parsedURI.Host != "" && parsedURI.Hostname() == "" && parsedURI.Port() != "" {
 		// Port without hostname. use default host with custom port
-		endpoint = fmt.Sprintf("bigquery.googleapis.com:%s", parsedURI.Port())
+		endpoint = fmt.Sprintf("%s:%s", defaultHost, parsedURI.Port())
 	} else {
 		// No host specified, use default BigQuery endpoint
-		endpoint = "bigquery.googleapis.com:443"
+		endpoint = defaultHost + ":443"
 	}
 
 	// Store endpoint as hostname:port (Google client library handles https:// internally)
@@ -458,6 +478,8 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 		"Location":     OptionLocation,
 		"QuotaProject": OptionAuthQuotaProject,
 
+		"UniverseDomain": OptionUniverseDomain,
+
 		// Auth parameters - processed in OAuthType switch above, here for consistency
 		"AuthCredentials":  OptionAuthCredentials,
 		"AuthClientId":     OptionAuthClientID,
@@ -483,4 +505,19 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	}
 
 	return params, nil
+}
+
+var universeDomainPattern = regexp.MustCompile(`^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$`)
+
+// validateUniverseDomain rejects values that are not a bare domain name, since
+// the value is interpolated into service hostnames. An empty value is allowed
+// and means the client library default.
+func validateUniverseDomain(value string) error {
+	if value == "" || universeDomainPattern.MatchString(value) {
+		return nil
+	}
+	return adbc.Error{
+		Code: adbc.StatusInvalidArgument,
+		Msg:  fmt.Sprintf("[bq] invalid universe domain %q: expected a domain name such as \"googleapis.com\" or \"s3nsapis.fr\"", value),
+	}
 }
