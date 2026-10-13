@@ -54,7 +54,6 @@ type storageWriteBulkIngestImpl struct {
 	appendStream    storagepb.BigQueryWrite_AppendRowsClient
 	offset          int64
 	customUserAgent string
-	universeDomain  string
 }
 
 func appendRowsError(rpcStatus *statuspb.Status) error {
@@ -168,11 +167,7 @@ func (impl *storageWriteBulkIngestImpl) Init(ctx context.Context) error {
 		impl.schema = arrow.NewSchema(fields, &md)
 	}
 	driverUserAgent := stringToCustomUserAgent(impl.customUserAgent)
-	writeOptions := []option.ClientOption{option.WithUserAgent(driverUserAgent)}
-	if impl.universeDomain != "" {
-		writeOptions = append(writeOptions, option.WithUniverseDomain(impl.universeDomain))
-	}
-	writeClient, err := storage.NewBigQueryWriteClient(ctx, writeOptions...)
+	writeClient, err := storage.NewBigQueryWriteClient(ctx, option.WithUserAgent(driverUserAgent))
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create storage write client")
 	}

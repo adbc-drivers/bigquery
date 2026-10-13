@@ -2124,33 +2124,6 @@ func TestBigQueryURIParsing(t *testing.T) {
 			expectedEndpoint:  "bigquery.googleapis.com:443",
 		},
 		{
-			name:              "universe domain sets default endpoint",
-			uri:               "bigquery:///my-project-123?OAuthType=0&UniverseDomain=s3nsapis.fr",
-			expectedProjectID: "my-project-123",
-			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			expectedEndpoint:  "bigquery.s3nsapis.fr:443",
-		},
-		{
-			name:              "universe domain with port only",
-			uri:               "bigquery://:8443/my-project-123?OAuthType=0&UniverseDomain=s3nsapis.fr",
-			expectedProjectID: "my-project-123",
-			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			expectedEndpoint:  "bigquery.s3nsapis.fr:8443",
-		},
-		{
-			name:              "universe domain does not override explicit host",
-			uri:               "bigquery://bigquery.example.com/my-project-123?OAuthType=0&UniverseDomain=s3nsapis.fr",
-			expectedProjectID: "my-project-123",
-			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			expectedEndpoint:  "bigquery.example.com:443",
-		},
-		{
-			name:          "invalid universe domain",
-			uri:           "bigquery:///my-project-123?OAuthType=0&UniverseDomain=googleapis.com/test",
-			shouldError:   true,
-			errorContains: "invalid universe domain",
-		},
-		{
 			name:              "multiple parameters",
 			uri:               "bigquery:///my-project-123?OAuthType=0&DatasetId=analytics&Location=US",
 			expectedProjectID: "my-project-123",
@@ -2715,44 +2688,6 @@ func (suite *BigQueryTests) TestCleanUpOldDatasets() {
 			}
 		}
 	}
-}
-
-func TestUniverseDomainURI(t *testing.T) {
-	params, err := driver.ParseBigQueryURIToParams("bigquery:///my-project-123?UniverseDomain=s3nsapis.fr")
-	require.NoError(t, err)
-	assert.Equal(t, "s3nsapis.fr", params[driver.OptionUniverseDomain])
-	assert.Equal(t, "bigquery.s3nsapis.fr:443", params[driver.OptionEndpoint])
-}
-
-func TestUniverseDomainOption(t *testing.T) {
-	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	defer mem.AssertSize(t, 0)
-
-	ctx := context.Background()
-	db, err := driver.NewDriver(mem).NewDatabaseWithContext(ctx, nil)
-	require.NoError(t, err)
-	defer testutil.CheckedCloseWithContext(t, db, ctx)
-	dbGS := db.(adbc.GetSetOptionsWithContext)
-
-	for _, k := range []string{driver.OptionUniverseDomain, "adbc.bigquery.sql.universe_domain"} {
-		require.NoError(t, dbGS.SetOption(ctx, k, "s3nsapis.fr"))
-		v, err := dbGS.GetOption(ctx, k)
-		require.NoError(t, err)
-		assert.Equal(t, "s3nsapis.fr", v)
-	}
-
-	for _, invalid := range []string{"https://s3nsapis.fr", "s3nsapis.fr/", "s3nsapis.fr:443", "localhost", "a b.fr"} {
-		err := dbGS.SetOption(ctx, driver.OptionUniverseDomain, invalid)
-		var adbcErr adbc.Error
-		require.ErrorAs(t, err, &adbcErr, invalid)
-		assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code, invalid)
-	}
-
-	// Clearing restores the client library default
-	require.NoError(t, dbGS.SetOption(ctx, driver.OptionUniverseDomain, ""))
-	v, err := dbGS.GetOption(ctx, driver.OptionUniverseDomain)
-	require.NoError(t, err)
-	assert.Empty(t, v)
 }
 
 func TestOldOptionNamesURI(t *testing.T) {

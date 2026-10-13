@@ -44,12 +44,6 @@ const (
 	OptionDatasetID           = "bigquery.dataset_id"
 	OptionEndpoint            = "bigquery.endpoint"
 	OptionStorageEndpoint     = "bigquery.storage_endpoint"
-	// OptionUniverseDomain sets the Google Cloud universe domain (for example
-	// "s3nsapis.fr" for S3NS). Default service endpoints and the IAM
-	// credentials endpoint used for impersonation are derived from it. When
-	// unset, the client libraries fall back to GOOGLE_CLOUD_UNIVERSE_DOMAIN,
-	// then to "googleapis.com".
-	OptionUniverseDomain = "bigquery.universe_domain"
 
 	OptionValueAuthTypeDefault              = "auth_bigquery"
 	OptionValueAuthTypeJSONCredentialFile   = "json_credential_file"
@@ -199,7 +193,6 @@ var (
 		"adbc.bigquery.sql.query.use_legacy_sql":              OptionQueryUseLegacySQL,
 		"adbc.bigquery.sql.query.write_disposition":           OptionQueryWriteDisposition,
 		"adbc.bigquery.sql.storage_endpoint":                  OptionStorageEndpoint,
-		"adbc.bigquery.sql.universe_domain":                   OptionUniverseDomain,
 	}
 )
 
