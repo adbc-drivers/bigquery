@@ -219,20 +219,6 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Equal("federated-token", connection.ImpersonateIfRequested("federated-token", null));
         }
 
-        [Fact]
-        public void ImpersonationUsesTheIamCredentialsEndpointOfTheUniverse()
-        {
-            RecordingHandler handler = RecordingHandler.RespondWith("{\"accessToken\":\"impersonated\"}");
-            using HttpClient httpClient = new HttpClient(handler);
-
-            WorkloadIdentityFederation.ImpersonateServiceAccount(
-                httpClient, ServiceAccount, new[] { BigQueryConstants.EntraIdScope }, FederatedToken, null, "s3nsapis.fr");
-
-            Assert.Equal(
-                "https://iamcredentials.s3nsapis.fr/v1/projects/-/serviceAccounts/" + Uri.EscapeDataString(ServiceAccount) + ":generateAccessToken",
-                handler.Request!.RequestUri!.ToString());
-        }
-
         [Theory]
         [InlineData(null, "https://sts.googleapis.com/v1/token")]
         [InlineData("", "https://sts.googleapis.com/v1/token")]
@@ -271,6 +257,59 @@ namespace AdbcDrivers.BigQuery.Tests
             };
 
             Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
+        }
+
+        [Theory]
+        [InlineData("googleapis.com")]
+        [InlineData("s3nsapis.fr")]
+        [InlineData("S3NSAPIS.FR")]
+        public void KnownUniverseDomainIsAccepted(string universeDomain)
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+                [BigQueryParameters.UniverseDomain] = universeDomain,
+            };
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+
+            Assert.Equal(universeDomain, connection.UniverseDomain);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("false")]
+        [InlineData("yes")]
+        public void UnknownUniverseDomainIsRejectedUnlessAllowed(string? allowUnknown)
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+                [BigQueryParameters.UniverseDomain] = "attacker.example",
+            };
+
+            if (allowUnknown != null)
+            {
+                properties[BigQueryParameters.AllowUnknownUniverseDomain] = allowUnknown;
+            }
+
+            ArgumentException exception = Assert.Throws<ArgumentException>(() => new BigQueryConnection(properties));
+            Assert.Contains(BigQueryParameters.AllowUnknownUniverseDomain, exception.Message);
+        }
+
+        [Fact]
+        public void UnknownUniverseDomainIsAcceptedWhenAllowed()
+        {
+            Dictionary<string, string> properties = new Dictionary<string, string>
+            {
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.EntraIdAuthenticationType,
+                [BigQueryParameters.UniverseDomain] = "example.goog",
+                [BigQueryParameters.AllowUnknownUniverseDomain] = "true",
+            };
+
+            using BigQueryConnection connection = new BigQueryConnection(properties);
+
+            Assert.Equal("https://sts.example.goog/v1/token", connection.StsTokenEndpoint);
         }
 
         [Fact]

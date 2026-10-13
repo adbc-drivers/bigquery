@@ -67,8 +67,7 @@ namespace AdbcDrivers.BigQuery
             string serviceAccountEmail,
             IReadOnlyList<string> scopes,
             string federatedToken,
-            Activity? activity = null,
-            string universeDomain = BigQueryConstants.DefaultUniverseDomain)
+            Activity? activity = null)
         {
             if (httpClient == null) throw new ArgumentNullException(nameof(httpClient));
             if (scopes == null || scopes.Count == 0) throw new ArgumentException("At least one scope is required.", nameof(scopes));
@@ -79,7 +78,7 @@ namespace AdbcDrivers.BigQuery
                     $"The {BigQueryParameters.ServiceAccountImpersonationEmail} parameter is not a valid service account email address.");
             }
 
-            return ImpersonateServiceAccountAsync(httpClient, serviceAccountEmail, scopes, federatedToken, universeDomain, activity, default)
+            return ImpersonateServiceAccountAsync(httpClient, serviceAccountEmail, scopes, federatedToken, activity, default)
                 .GetAwaiter().GetResult();
         }
 
@@ -96,14 +95,12 @@ namespace AdbcDrivers.BigQuery
             string serviceAccountEmail,
             IReadOnlyList<string> scopes,
             string federatedToken,
-            string universeDomain,
             Activity? activity,
             CancellationToken cancellationToken)
         {
             string impersonationUrl = string.Format(
                 CultureInfo.InvariantCulture,
                 BigQueryConstants.ServiceAccountImpersonationUrlFormat,
-                universeDomain,
                 Uri.EscapeDataString(serviceAccountEmail));
 
             string json = JsonSerializer.Serialize(new ImpersonationRequest { Scope = scopes.ToArray() });
