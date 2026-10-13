@@ -26,6 +26,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +61,9 @@ type databaseImpl struct {
 	quotaProject    string
 	endpoint        string
 	storageEndpoint string
+	universeDomain  string
+
+	allowUnknownUniverseDomain bool
 
 	queryDefaults queryDefaults
 
@@ -68,6 +74,11 @@ type databaseImpl struct {
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
+	// Checked here rather than in SetOption so that options can be set in any order
+	if err := checkUniverseDomainAllowed(d.universeDomain, d.allowUnknownUniverseDomain); err != nil {
+		return nil, err
+	}
+
 	conn := &connectionImpl{
 		ConnectionImplBase:         driverbase.NewConnectionImplBase(&d.DatabaseImplBase),
 		authType:                   d.authType,
@@ -85,6 +96,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		location:                   d.location,
 		endpoint:                   d.endpoint,
 		storageEndpoint:            d.storageEndpoint,
+		universeDomain:             d.universeDomain,
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
@@ -139,6 +151,10 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.endpoint, nil
 	case OptionStorageEndpoint:
 		return d.storageEndpoint, nil
+	case OptionUniverseDomain:
+		return d.universeDomain, nil
+	case OptionAllowUnknownUniverseDomain:
+		return strconv.FormatBool(d.allowUnknownUniverseDomain), nil
 	case OptionImpersonateLifetime:
 		if d.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
@@ -284,6 +300,20 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.endpoint = value
 	case OptionStorageEndpoint:
 		d.storageEndpoint = value
+	case OptionUniverseDomain:
+		if err := validateUniverseDomain(value); err != nil {
+			return err
+		}
+		d.universeDomain = value
+	case OptionAllowUnknownUniverseDomain:
+		val, err := strconv.ParseBool(value)
+		if err != nil {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] invalid value for %s: %q", OptionAllowUnknownUniverseDomain, value),
+			}
+		}
+		d.allowUnknownUniverseDomain = val
 	case OptionLocation:
 		d.location = value
 	case OptionBulkIngestMethod:
@@ -348,25 +378,33 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	params := make(map[string]string)
 	params[OptionProjectID] = projectID
 
-	// Handle host and port
-	var endpoint string
+	universeDomain := parsedURI.Query().Get("UniverseDomain")
+	if err := validateUniverseDomain(universeDomain); err != nil {
+		return nil, err
+	}
+
+	// Handle host and port. The endpoint is stored as hostname:port (Google
+	// client library handles https:// internally).
 	if parsedURI.Host != "" && parsedURI.Hostname() != "" {
 		// Custom endpoint specified with valid hostname
 		if parsedURI.Port() != "" {
-			endpoint = parsedURI.Host
+			params[OptionEndpoint] = parsedURI.Host
 		} else {
-			endpoint = fmt.Sprintf("%s:443", parsedURI.Hostname())
+			params[OptionEndpoint] = fmt.Sprintf("%s:443", parsedURI.Hostname())
 		}
 	} else if parsedURI.Host != "" && parsedURI.Hostname() == "" && parsedURI.Port() != "" {
-		// Port without hostname. use default host with custom port
-		endpoint = fmt.Sprintf("bigquery.googleapis.com:%s", parsedURI.Port())
-	} else {
-		// No host specified, use default BigQuery endpoint
-		endpoint = "bigquery.googleapis.com:443"
+		// Port without hostname. use the default host of the universe, e.g.
+		// bigquery.s3nsapis.fr for S3NS, with the custom port
+		if universeDomain == "" {
+			universeDomain = os.Getenv(universeDomainEnvVar)
+		}
+		if universeDomain == "" {
+			universeDomain = defaultUniverseDomain
+		}
+		params[OptionEndpoint] = fmt.Sprintf("bigquery.%s:%s", universeDomain, parsedURI.Port())
 	}
-
-	// Store endpoint as hostname:port (Google client library handles https:// internally)
-	params[OptionEndpoint] = endpoint
+	// Otherwise leave the endpoint unset so that the client library derives it
+	// from the universe domain (option or GOOGLE_CLOUD_UNIVERSE_DOMAIN).
 
 	queryParams := parsedURI.Query()
 
@@ -458,6 +496,9 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 		"Location":     OptionLocation,
 		"QuotaProject": OptionAuthQuotaProject,
 
+		"UniverseDomain":             OptionUniverseDomain,
+		"AllowUnknownUniverseDomain": OptionAllowUnknownUniverseDomain,
+
 		// Auth parameters - processed in OAuthType switch above, here for consistency
 		"AuthCredentials":  OptionAuthCredentials,
 		"AuthClientId":     OptionAuthClientID,
@@ -483,4 +524,44 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	}
 
 	return params, nil
+}
+
+const (
+	defaultUniverseDomain = "googleapis.com"
+	universeDomainEnvVar  = "GOOGLE_CLOUD_UNIVERSE_DOMAIN"
+)
+
+// knownUniverseDomains are the universe domains accepted without
+// OptionAllowUnknownUniverseDomain.
+var knownUniverseDomains = []string{defaultUniverseDomain, "googleapis.de", "s3nsapis.fr"}
+
+var universeDomainPattern = regexp.MustCompile(`^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$`)
+
+// checkUniverseDomainAllowed rejects a universe domain that is not known
+// unless allowUnknown is set. Credentials are sent to hosts under the universe
+// domain, so a spoofed domain would capture them.
+func checkUniverseDomainAllowed(value string, allowUnknown bool) error {
+	if value == "" || allowUnknown || slices.ContainsFunc(knownUniverseDomains, func(known string) bool {
+		return strings.EqualFold(known, value)
+	}) {
+		return nil
+	}
+	return adbc.Error{
+		Code: adbc.StatusInvalidArgument,
+		Msg: fmt.Sprintf("[bq] universe domain %q is not a known universe (%s); set %s to true to use it anyway",
+			value, strings.Join(knownUniverseDomains, ", "), OptionAllowUnknownUniverseDomain),
+	}
+}
+
+// validateUniverseDomain rejects values that are not a bare domain name, since
+// the value is interpolated into service hostnames. An empty value is allowed
+// and means the client library default.
+func validateUniverseDomain(value string) error {
+	if value == "" || universeDomainPattern.MatchString(value) {
+		return nil
+	}
+	return adbc.Error{
+		Code: adbc.StatusInvalidArgument,
+		Msg:  fmt.Sprintf("[bq] invalid universe domain %q: expected a domain name such as \"googleapis.com\" or \"s3nsapis.fr\"", value),
+	}
 }

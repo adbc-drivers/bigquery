@@ -2019,6 +2019,7 @@ func TestBigQueryURIParsing(t *testing.T) {
 		expectedRefreshToken         string
 		expectedLocation             string
 		expectedEndpoint             string
+		expectNoEndpoint             bool
 		expectedQuotaProject         string
 		expectedImpersonateTarget    string
 		expectedImpersonateLifetime  string
@@ -2116,12 +2117,40 @@ func TestBigQueryURIParsing(t *testing.T) {
 			expectedEndpoint:  "bigquery.googleapis.com:443",
 		},
 		{
+			// The client library derives the endpoint from the universe domain
 			name:              "default endpoint no host specified",
 			uri:               "bigquery:///my-project-123?OAuthType=0&DatasetId=test",
 			expectedProjectID: "my-project-123",
 			expectedDatasetID: "test",
 			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
-			expectedEndpoint:  "bigquery.googleapis.com:443",
+			expectNoEndpoint:  true,
+		},
+		{
+			name:              "universe domain leaves endpoint to the client library",
+			uri:               "bigquery:///my-project-123?OAuthType=0&UniverseDomain=s3nsapis.fr",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			expectNoEndpoint:  true,
+		},
+		{
+			name:              "universe domain with port only",
+			uri:               "bigquery://:8443/my-project-123?OAuthType=0&UniverseDomain=s3nsapis.fr",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			expectedEndpoint:  "bigquery.s3nsapis.fr:8443",
+		},
+		{
+			name:              "universe domain does not override explicit host",
+			uri:               "bigquery://bigquery.example.com/my-project-123?OAuthType=0&UniverseDomain=s3nsapis.fr",
+			expectedProjectID: "my-project-123",
+			expectedAuthType:  driver.OptionValueAuthTypeAppDefaultCredentials,
+			expectedEndpoint:  "bigquery.example.com:443",
+		},
+		{
+			name:          "invalid universe domain",
+			uri:           "bigquery:///my-project-123?OAuthType=0&UniverseDomain=googleapis.com/test",
+			shouldError:   true,
+			errorContains: "invalid universe domain",
 		},
 		{
 			name:              "multiple parameters",
@@ -2292,6 +2321,9 @@ func TestBigQueryURIParsing(t *testing.T) {
 			}
 			if tt.expectedEndpoint != "" {
 				assert.Equal(t, tt.expectedEndpoint, params[driver.OptionEndpoint], "endpoint mismatch")
+			}
+			if tt.expectNoEndpoint {
+				assert.NotContains(t, params, driver.OptionEndpoint, "endpoint should be unset")
 			}
 			if tt.expectedQuotaProject != "" {
 				assert.Equal(t, tt.expectedQuotaProject, params[driver.OptionAuthQuotaProject], "quota project mismatch")
@@ -2688,6 +2720,100 @@ func (suite *BigQueryTests) TestCleanUpOldDatasets() {
 			}
 		}
 	}
+}
+
+func TestUniverseDomainURI(t *testing.T) {
+	params, err := driver.ParseBigQueryURIToParams("bigquery:///my-project-123?UniverseDomain=example.goog&AllowUnknownUniverseDomain=true")
+	require.NoError(t, err)
+	assert.Equal(t, "example.goog", params[driver.OptionUniverseDomain])
+	assert.Equal(t, "true", params[driver.OptionAllowUnknownUniverseDomain])
+	assert.NotContains(t, params, driver.OptionEndpoint)
+}
+
+func TestUniverseDomainPortOnlyURIUsesEnvironment(t *testing.T) {
+	t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", "s3nsapis.fr")
+	params, err := driver.ParseBigQueryURIToParams("bigquery://:8443/my-project-123")
+	require.NoError(t, err)
+	assert.Equal(t, "bigquery.s3nsapis.fr:8443", params[driver.OptionEndpoint])
+}
+
+func TestUniverseDomainAllowList(t *testing.T) {
+	ctx := context.Background()
+	open := func(t *testing.T, opts map[string]string) error {
+		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		defer mem.AssertSize(t, 0)
+		opts[driver.OptionProjectID] = "my-project"
+		opts[driver.OptionAuthType] = driver.OptionValueAuthTypeAnonymous
+		db, err := driver.NewDriver(mem).NewDatabaseWithContext(ctx, opts)
+		require.NoError(t, err)
+		defer testutil.CheckedCloseWithContext(t, db, ctx)
+		cnxn, err := db.Open(ctx)
+		if err == nil {
+			require.NoError(t, cnxn.Close(ctx))
+		}
+		return err
+	}
+
+	for _, known := range []string{"googleapis.com", "googleapis.de", "s3nsapis.fr", "S3NSAPIS.FR"} {
+		t.Run("known "+known, func(t *testing.T) {
+			assert.NoError(t, open(t, map[string]string{driver.OptionUniverseDomain: known}))
+		})
+	}
+
+	t.Run("unknown rejected", func(t *testing.T) {
+		err := open(t, map[string]string{driver.OptionUniverseDomain: "attacker.example"})
+		var adbcErr adbc.Error
+		require.ErrorAs(t, err, &adbcErr)
+		assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code)
+		assert.Contains(t, adbcErr.Msg, driver.OptionAllowUnknownUniverseDomain)
+	})
+
+	t.Run("unknown allowed", func(t *testing.T) {
+		assert.NoError(t, open(t, map[string]string{
+			driver.OptionUniverseDomain:             "example.goog",
+			driver.OptionAllowUnknownUniverseDomain: "true",
+		}))
+	})
+
+	t.Run("invalid allow value", func(t *testing.T) {
+		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		defer mem.AssertSize(t, 0)
+		_, err := driver.NewDriver(mem).NewDatabaseWithContext(ctx, map[string]string{
+			driver.OptionAllowUnknownUniverseDomain: "yes",
+		})
+		assert.Error(t, err)
+	})
+}
+
+func TestUniverseDomainOption(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	ctx := context.Background()
+	db, err := driver.NewDriver(mem).NewDatabaseWithContext(ctx, nil)
+	require.NoError(t, err)
+	defer testutil.CheckedCloseWithContext(t, db, ctx)
+	dbGS := db.(adbc.GetSetOptionsWithContext)
+
+	for _, k := range []string{driver.OptionUniverseDomain, "adbc.bigquery.sql.universe_domain"} {
+		require.NoError(t, dbGS.SetOption(ctx, k, "s3nsapis.fr"))
+		v, err := dbGS.GetOption(ctx, k)
+		require.NoError(t, err)
+		assert.Equal(t, "s3nsapis.fr", v)
+	}
+
+	for _, invalid := range []string{"https://s3nsapis.fr", "s3nsapis.fr/", "s3nsapis.fr:443", "localhost", "a b.fr"} {
+		err := dbGS.SetOption(ctx, driver.OptionUniverseDomain, invalid)
+		var adbcErr adbc.Error
+		require.ErrorAs(t, err, &adbcErr, invalid)
+		assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code, invalid)
+	}
+
+	// Clearing restores the client library default
+	require.NoError(t, dbGS.SetOption(ctx, driver.OptionUniverseDomain, ""))
+	v, err := dbGS.GetOption(ctx, driver.OptionUniverseDomain)
+	require.NoError(t, err)
+	assert.Empty(t, v)
 }
 
 func TestOldOptionNamesURI(t *testing.T) {

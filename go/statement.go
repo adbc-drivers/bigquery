@@ -977,6 +977,7 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 			queryConfig:     st.queryConfig,
 			client:          st.cnxn.client,
 			customUserAgent: st.cnxn.customUserAgent,
+			authOptions:     st.cnxn.authOptions,
 		}
 	} else {
 		logger = st.cnxn.Logger.With("op", "bulkingest-parquet")
