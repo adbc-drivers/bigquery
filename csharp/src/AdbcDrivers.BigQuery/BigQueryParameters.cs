@@ -74,10 +74,16 @@ namespace AdbcDrivers.BigQuery
 
         /// <summary>
         /// The Google Cloud universe domain to connect to (e.g. "s3nsapis.fr" for S3NS).
-        /// The BigQuery, BigQuery Storage, Security Token Service and IAM Credentials endpoints
-        /// are derived from it. Defaults to "googleapis.com".
+        /// The BigQuery, BigQuery Storage and Security Token Service endpoints are derived from it.
+        /// Defaults to "googleapis.com". Only the domains in <see cref="BigQueryConstants.KnownUniverseDomains"/>
+        /// are accepted unless <see cref="AllowUnknownUniverseDomain"/> is set.
         /// </summary>
         public const string UniverseDomain = "adbc.bigquery.universe_domain";
+
+        /// <summary>
+        /// Set to "true" to accept a <see cref="UniverseDomain"/> that is not a known universe.
+        /// </summary>
+        public const string AllowUnknownUniverseDomain = "adbc.bigquery.allow_unknown_universe_domain";
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
         public const string UseJobCreationMode = "adbc.bigquery.statement.use_job_creation_required_mode";
 
@@ -106,7 +112,7 @@ namespace AdbcDrivers.BigQuery
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,
-            StatementType, UniverseDomain, UseLastStatement, UseLegacySQL
+            StatementType, UniverseDomain, AllowUnknownUniverseDomain, UseLastStatement, UseLegacySQL
         };
 
         public static bool IsSafeToLog(string name)
@@ -144,6 +150,11 @@ namespace AdbcDrivers.BigQuery
         public const string DefaultUniverseDomain = "googleapis.com";
 
         /// <summary>
+        /// The universe domains accepted without <see cref="BigQueryParameters.AllowUnknownUniverseDomain"/>.
+        /// </summary>
+        public static readonly IReadOnlyList<string> KnownUniverseDomains = new[] { DefaultUniverseDomain, "s3nsapis.fr" };
+
+        /// <summary>
         /// The Security Token Service endpoint; {0} is the universe domain.
         /// </summary>
         public const string StsTokenEndpointFormat = "https://sts.{0}/v1/token";
@@ -157,9 +168,10 @@ namespace AdbcDrivers.BigQuery
         public const string AzureSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt";
 
         /// <summary>
-        /// The IAM Credentials generateAccessToken endpoint; {0} is the universe domain and {1} the escaped service account email.
+        /// The IAM Credentials generateAccessToken endpoint; {0} is the escaped service account email.
+        /// IAM Credentials stays on googleapis.com in every universe, including S3NS.
         /// </summary>
-        public const string ServiceAccountImpersonationUrlFormat = "https://iamcredentials.{0}/v1/projects/-/serviceAccounts/{1}:generateAccessToken";
+        public const string ServiceAccountImpersonationUrlFormat = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{0}:generateAccessToken";
 
         // default value per https://pkg.go.dev/cloud.google.com/go/bigquery#section-readme
         public const string DetectProjectId = "*detect-project-id*";

@@ -68,7 +68,7 @@ namespace AdbcDrivers.BigQuery
         private readonly string infoDriverArrowVersion = BigQueryUtils.GetAssemblyVersion(typeof(IArrowArray));
 
         // The universe domain is interpolated into service hostnames, so only accept a bare domain name.
-private static readonly Regex UniverseDomainPattern = new Regex(
+        private static readonly Regex UniverseDomainPattern = new Regex(
             @"\A(?=.{1,253}\z)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+\z",
             RegexOptions.CultureInvariant,
             TimeSpan.FromMilliseconds(100));
@@ -179,6 +179,15 @@ private static readonly Regex UniverseDomainPattern = new Regex(
                 if (!UniverseDomainPattern.IsMatch(universeDomain))
                 {
                     throw new ArgumentException($"The value '{universeDomain}' for parameter '{BigQueryParameters.UniverseDomain}' is not a valid domain name, such as 'googleapis.com' or 's3nsapis.fr'.");
+                }
+
+                // Credentials are sent to hosts under the universe domain, so a spoofed domain would
+                // capture them. Unknown domains have to be allowed explicitly by a second parameter.
+                if (!BigQueryConstants.KnownUniverseDomains.Contains(universeDomain, StringComparer.OrdinalIgnoreCase) &&
+                    !(this.properties.TryGetValue(BigQueryParameters.AllowUnknownUniverseDomain, out string? sAllowUnknown) &&
+                      bool.TryParse(sAllowUnknown, out bool allowUnknown) && allowUnknown))
+                {
+                    throw new ArgumentException($"The value '{universeDomain}' for parameter '{BigQueryParameters.UniverseDomain}' is not a known universe domain ({string.Join(", ", BigQueryConstants.KnownUniverseDomains)}). Set '{BigQueryParameters.AllowUnknownUniverseDomain}' to 'true' to use it anyway.");
                 }
 
                 UniverseDomain = universeDomain;
@@ -692,7 +701,7 @@ private static readonly Regex UniverseDomainPattern = new Regex(
                 : scopes!.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
 
             return WorkloadIdentityFederation.ImpersonateServiceAccount(
-                this.httpClient, impersonationEmail!, scopeList, federatedToken!, activity, EffectiveUniverseDomain);
+                this.httpClient, impersonationEmail!, scopeList, federatedToken!, activity);
         }
 
         public override IArrowArrayStream GetInfo(IReadOnlyList<AdbcInfoCode> codes)
