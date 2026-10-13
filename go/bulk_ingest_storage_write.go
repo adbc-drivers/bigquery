@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -54,7 +55,8 @@ type storageWriteBulkIngestImpl struct {
 	appendStream    storagepb.BigQueryWrite_AppendRowsClient
 	offset          int64
 	customUserAgent string
-	universeDomain  string
+	// authOptions carry the connection's credentials and universe domain
+	authOptions []option.ClientOption
 }
 
 func appendRowsError(rpcStatus *statuspb.Status) error {
@@ -168,10 +170,7 @@ func (impl *storageWriteBulkIngestImpl) Init(ctx context.Context) error {
 		impl.schema = arrow.NewSchema(fields, &md)
 	}
 	driverUserAgent := stringToCustomUserAgent(impl.customUserAgent)
-	writeOptions := []option.ClientOption{option.WithUserAgent(driverUserAgent)}
-	if impl.universeDomain != "" {
-		writeOptions = append(writeOptions, option.WithUniverseDomain(impl.universeDomain))
-	}
+	writeOptions := append(slices.Clone(impl.authOptions), option.WithUserAgent(driverUserAgent))
 	writeClient, err := storage.NewBigQueryWriteClient(ctx, writeOptions...)
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create storage write client")

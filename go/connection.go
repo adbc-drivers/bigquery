@@ -38,7 +38,10 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/auth"
+	"cloud.google.com/go/auth/credentials"
 	"cloud.google.com/go/auth/credentials/impersonate"
+	"cloud.google.com/go/auth/httptransport"
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -78,6 +81,9 @@ type connectionImpl struct {
 	storageEndpoint string
 	// universeDomain is the Google Cloud universe domain, e.g. "s3nsapis.fr"
 	universeDomain string
+	// authOptions are the resolved credential, quota project and universe
+	// options, without endpoint or user agent
+	authOptions []option.ClientOption
 
 	sessionID *string
 
@@ -844,16 +850,12 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		// Unset (0) lets the impersonate package refresh 1h tokens; any explicit lifetime yields a static token
 
-		// cloud.google.com/go/auth derives the IAM Credentials endpoint
-		// (iamcredentials.<universe>) from the base credentials, unlike
-		// google.golang.org/api/impersonate which always uses googleapis.com.
-		impCreds, err := impersonate.NewCredentials(&impersonate.CredentialsOptions{
+		impCreds, err := newImpersonatedCredentials(&impersonate.CredentialsOptions{
 			TargetPrincipal: c.impersonateTargetPrincipal,
 			Delegates:       c.impersonateDelegates,
 			Scopes:          c.impersonateScopes,
 			Lifetime:        lifetime,
-			UniverseDomain:  c.universeDomain,
-		})
+		}, c.universeDomain, nil)
 		if err != nil {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
@@ -869,6 +871,8 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	if c.universeDomain != "" {
 		authOptions = append(authOptions, option.WithUniverseDomain(c.universeDomain))
 	}
+	// Kept so that other clients (e.g. Storage Write) use the same credentials
+	c.authOptions = authOptions
 
 	// Add custom endpoint if specified for BigQuery API client
 	bigQueryAuthOptions := authOptions
@@ -903,6 +907,54 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 	c.client = client
 	return nil
+}
+
+// iamCredentialsScope is the scope requested for the base credentials of
+// impersonation, as in cloud.google.com/go/auth/credentials/impersonate.
+const iamCredentialsScope = "https://www.googleapis.com/auth/cloud-platform"
+
+// newImpersonatedCredentials creates impersonated credentials for the given
+// universe domain. IAM Credentials is not universe-specific: it is served from
+// iamcredentials.googleapis.com in every universe, including S3NS. The
+// impersonate package derives that host from its base credentials instead, so
+// for another universe it is given an HTTP client (the host then defaults to
+// googleapis.com) and the result is rebound to the universe so that it matches
+// the BigQuery clients. transport overrides the HTTP transport, for tests.
+func newImpersonatedCredentials(opts *impersonate.CredentialsOptions, universeDomain string, transport http.RoundTripper) (*auth.Credentials, error) {
+	if universeDomain == "" {
+		return impersonate.NewCredentials(opts)
+	}
+
+	tOpts := &httptransport.Options{UniverseDomain: universeDomain, BaseRoundTripper: transport}
+	if transport == nil {
+		baseCreds, err := credentials.DetectDefault(&credentials.DetectOptions{
+			Scopes:           []string{iamCredentialsScope},
+			UseSelfSignedJWT: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		tOpts.Credentials = baseCreds
+	} else {
+		tOpts.DisableAuthentication = true
+	}
+	client, err := httptransport.NewClient(tOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	withClient := *opts
+	withClient.Client = client
+	impCreds, err := impersonate.NewCredentials(&withClient)
+	if err != nil {
+		return nil, err
+	}
+	return auth.NewCredentials(&auth.CredentialsOptions{
+		TokenProvider: impCreds,
+		UniverseDomainProvider: auth.CredentialsPropertyFunc(func(context.Context) (string, error) {
+			return universeDomain, nil
+		}),
+	}), nil
 }
 
 func (c *connectionImpl) hasImpersonationOptions() bool {

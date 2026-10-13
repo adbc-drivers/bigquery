@@ -77,7 +77,7 @@ The format follows a similar approach to the [Simba BigQuery JDBC Connection Str
 Components:
 
 - `Scheme`: `bigquery://` (required)
-- `Host`: BigQuery API endpoint (optional, defaults to `bigquery.googleapis.com`, or `bigquery.<UniverseDomain>` when the `UniverseDomain` query parameter is set)
+- `Host`: BigQuery API endpoint (optional, defaults to `bigquery.<universe domain>`, i.e. `bigquery.googleapis.com` unless `UniverseDomain` or the `GOOGLE_CLOUD_UNIVERSE_DOMAIN` environment variable says otherwise)
 - `Port`: TCP port (optional, defaults to 443)
 - `ProjectID`: Google Cloud Project ID (required)
 - `OAuthType`: Authentication type number (optional, defaults to `0`)
@@ -235,9 +235,16 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 `bigquery.universe_domain`
 : **Type:** string. **Default:** (empty) **URI Parameter:** `UniverseDomain`
 
-  The Google Cloud universe domain to connect to, for example `s3nsapis.fr` for [S3NS](https://www.s3ns.io/). The BigQuery, BigQuery Storage and IAM Credentials (impersonation) endpoints are derived from it, e.g. `bigquery.s3nsapis.fr`. When empty, the `GOOGLE_CLOUD_UNIVERSE_DOMAIN` environment variable is used if set, otherwise `googleapis.com`.
+  The Google Cloud universe domain to connect to, for example `s3nsapis.fr` for [S3NS](https://www.s3ns.io/). The BigQuery and BigQuery Storage endpoints are derived from it, e.g. `bigquery.s3nsapis.fr`. IAM Credentials, used for impersonation, is not universe-specific and stays on `iamcredentials.googleapis.com` in every universe, so that host must remain reachable. When empty, the `GOOGLE_CLOUD_UNIVERSE_DOMAIN` environment variable is used if set, otherwise `googleapis.com`.
+
+  Because credentials are sent to hosts under this domain, only the known universes `googleapis.com`, `googleapis.de` and `s3nsapis.fr` are accepted unless `bigquery.allow_unknown_universe_domain` is set.
 
   The universe domain of the credentials must match. Service account and external account (Workload Identity Federation) JSON files issued for another universe carry a `universe_domain` field and their own token endpoints, so they work unchanged. User authentication (`OAuthType=3`) always uses `accounts.google.com` and is only supported in the default universe.
+
+`bigquery.allow_unknown_universe_domain`
+: **Type:** boolean. **Default:** `false` **URI Parameter:** `AllowUnknownUniverseDomain`
+
+  Accept a `bigquery.universe_domain` that is not one of the known universes. Applications that let end users supply connection options should not pass this one through, so that credentials cannot be redirected to an arbitrary domain.
 
 ### Ingest Options
 
