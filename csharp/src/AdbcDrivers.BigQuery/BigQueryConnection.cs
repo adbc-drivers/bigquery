@@ -68,8 +68,8 @@ namespace AdbcDrivers.BigQuery
         private readonly string infoDriverArrowVersion = BigQueryUtils.GetAssemblyVersion(typeof(IArrowArray));
 
         // The universe domain is interpolated into service hostnames, so only accept a bare domain name.
-        private static readonly Regex UniverseDomainPattern = new Regex(
-            @"\A[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+\z",
+private static readonly Regex UniverseDomainPattern = new Regex(
+            @"\A(?=.{1,253}\z)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+\z",
             RegexOptions.CultureInvariant,
             TimeSpan.FromMilliseconds(100));
 
