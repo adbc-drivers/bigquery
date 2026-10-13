@@ -152,7 +152,7 @@ namespace AdbcDrivers.BigQuery
         /// <summary>
         /// The universe domains accepted without <see cref="BigQueryParameters.AllowUnknownUniverseDomain"/>.
         /// </summary>
-        public static readonly IReadOnlyList<string> KnownUniverseDomains = new[] { DefaultUniverseDomain, "s3nsapis.fr" };
+        public static readonly IReadOnlyList<string> KnownUniverseDomains = new[] { DefaultUniverseDomain, "s3nsapis.fr", "googleapis.de" };
 
         /// <summary>
         /// The Security Token Service endpoint; {0} is the universe domain.
