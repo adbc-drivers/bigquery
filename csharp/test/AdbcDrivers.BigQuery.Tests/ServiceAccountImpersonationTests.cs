@@ -261,6 +261,7 @@ namespace AdbcDrivers.BigQuery.Tests
 
         [Theory]
         [InlineData("googleapis.com")]
+        [InlineData("googleapis.de")]
         [InlineData("s3nsapis.fr")]
         [InlineData("S3NSAPIS.FR")]
         public void KnownUniverseDomainIsAccepted(string universeDomain)
