@@ -1651,13 +1651,6 @@ func (suite *BigQueryTests) TestRowsAffectedJobMode() {
 				suite.Require().NoError(suite.stmt.SetSqlQuery(ctx, query.sql))
 				suite.Require().NoError(suite.stmt.SetOption(ctx, "bigquery.query.job_creation_mode", jobMode))
 				rdr, n, err := suite.stmt.ExecuteQuery(ctx)
-
-				if strings.HasPrefix(query.sql, "DROP TABLE IF EXISTS test_rows_affected_optional") {
-					// XXX: Google API badness. BigQuery *always* 500s, then the SDK retries, and then the server gives a 409!
-					// Seems to be an issue inherent to DROP TABLE IF EXISTS?
-					suite.Error(err)
-					return
-				}
 				suite.Require().NoError(err)
 				defer rdr.Release()
 
