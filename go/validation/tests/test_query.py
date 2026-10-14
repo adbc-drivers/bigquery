@@ -55,6 +55,20 @@ class TestQuery(query_tests.TestQuery):
     def test_query(self, driver, conn, query, query_setup) -> None:
         super().test_query(driver, conn, query, query_setup)
 
+    @pytest.mark.parametrize(
+        "batch_size,empty_batches",
+        [
+            pytest.param(None, False, id="single_batch"),
+            pytest.param(2, False, id="multiple_batches"),
+            pytest.param(2, True, id="multiple_batches_with_empty"),
+        ],
+    )
+    @utils.retry_rate_limit
+    def test_query_bind_stream(
+        self, driver, conn, query, batch_size, empty_batches
+    ) -> None:
+        super().test_query_bind_stream(driver, conn, query, batch_size, empty_batches)
+
     @utils.retry_rate_limit
     def test_query_direct(self, driver, conn, query, query_setup) -> None:
         modified = model.Query(
