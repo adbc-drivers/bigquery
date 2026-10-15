@@ -231,6 +231,11 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   Override the location of the gRPC API endpoint for BigQuery Storage; this can be used to connect to an emulator instead. It should be a `host:port`.
 
+`bigquery.user_agent`
+: **Type:** string. **Default:** (empty)
+
+  Additional user agent text, such as `my-app/1.0`, appended to `Google-BigQuery-ADBC-Go/<version>` for BigQuery and Storage Read/Write API requests. Set this when creating the database, before opening a connection.
+
 ### Ingest Options
 
 `bigquery.bulk_ingest.compression`
