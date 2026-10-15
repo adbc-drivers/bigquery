@@ -27,9 +27,35 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"github.com/adbc-drivers/driverbase-go/testutil"
+	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
+
+func TestErrToAdbcErrMapsRestForbidden(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		want   adbc.Status
+	}{
+		{"accessDenied", adbc.StatusUnauthorized},
+		{"billingNotEnabled", adbc.StatusUnauthorized},
+		{"blocked", adbc.StatusUnauthorized},
+		{"rateLimitExceeded", adbc.StatusInternal},
+		{"quotaExceeded", adbc.StatusInternal},
+		{"", adbc.StatusInternal},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			apiErr := &googleapi.Error{Code: http.StatusForbidden}
+			if tc.reason != "" {
+				apiErr.Errors = []googleapi.ErrorItem{{Reason: tc.reason}}
+			}
+			var adbcErr adbc.Error
+			require.ErrorAs(t, errToAdbcErr(adbc.StatusInternal, apiErr, "run query"), &adbcErr)
+			require.Equal(t, tc.want, adbcErr.Code, adbcErr.Msg)
+		})
+	}
+}
 
 // A job that never finishes: safeWaitForJob must back off between polls
 // rather than re-requesting the status as fast as the API answers.
