@@ -234,7 +234,7 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 `bigquery.user_agent`
 : **Type:** string. **Default:** (empty)
 
-  Additional user agent text, such as `my-app/1.0`, appended to `Google-BigQuery-ADBC-Go/<version>` for BigQuery and Storage Read/Write API requests. Set this when creating the database, before opening a connection.
+  Additional user agent text, such as `my-app/1.0`, appended to the user agent (`Google-BigQuery-ADBC-Go/<version>`).
 
 ### Ingest Options
 
