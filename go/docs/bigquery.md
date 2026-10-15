@@ -361,7 +361,7 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
   When `bigquery.query.job_creation_mode` is `optional`, the format of query result data.
 
   :::{note}
-  `arrow` is in Beta on the BigQuery side and requires Google to enable this feature on your Google Cloud project. Also, `arrow` currently does not return pseudocolumns; even when selected, they are silently dropped from the result.
+  `arrow` is in Beta on the BigQuery side and requires Google to enable this feature on your Google Cloud project.
   :::
 
 `bigquery.query.use_legacy_sql`
