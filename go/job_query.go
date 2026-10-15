@@ -222,11 +222,14 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	} else if mayReturnResults && readRowsFastPath {
 		driverbase.DebugAssert(statsOk, "stats should be available if mayReturnResults is true")
 		arrowIterator, err = newReadRowsArrowIterator(ctx, client, job, stats.Schema)
-		if err != nil {
+		if err != nil && (stats.StatementType != "SCRIPT" || !errors.Is(err, io.EOF)) {
 			return nil, enhancer, jobID, -1, wrap(errToAdbcErr(adbc.StatusInternal, err, "read from default stream"))
 		}
 		// We don't know total rows on this path.
-	} else {
+	}
+	if arrowIterator == nil {
+		// A script can end its default stream before returning a schema. Use the
+		// SDK to resolve its results, including the no-results case handled below.
 		// XXX: the Google SDK badness also applies here; it makes a similar
 		// mistake with the retry, so we wait for the job above.
 
@@ -526,8 +529,10 @@ func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job 
 
 	arrowSchema, ok := <-schemaCh
 	if !ok {
-		// TODO: get the real error from batchCh
-		return nil, errors.New("failed to receive schema from ReadRows")
+		if result, ok := <-batchCh; ok && result.err != nil {
+			return nil, fmt.Errorf("failed to receive schema from ReadRows: %w", result.err)
+		}
+		return nil, fmt.Errorf("failed to receive schema from ReadRows: %w", io.EOF)
 	}
 
 	return &readRowsArrowIterator{
