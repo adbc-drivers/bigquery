@@ -2783,6 +2783,46 @@ func TestUniverseDomainAllowList(t *testing.T) {
 		})
 		assert.Error(t, err)
 	})
+
+	t.Run("unknown from environment rejected", func(t *testing.T) {
+		t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", "attacker.example")
+		err := open(t, map[string]string{})
+		var adbcErr adbc.Error
+		require.ErrorAs(t, err, &adbcErr)
+		assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code)
+		assert.Contains(t, adbcErr.Msg, "attacker.example")
+	})
+
+	t.Run("invalid from environment rejected", func(t *testing.T) {
+		t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", "googleapis.com/test")
+		err := open(t, map[string]string{driver.OptionAllowUnknownUniverseDomain: "true"})
+		var adbcErr adbc.Error
+		require.ErrorAs(t, err, &adbcErr)
+		assert.Contains(t, adbcErr.Msg, "invalid universe domain")
+	})
+
+	t.Run("option takes precedence over environment", func(t *testing.T) {
+		t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", "attacker.example")
+		assert.NoError(t, open(t, map[string]string{driver.OptionUniverseDomain: "s3nsapis.fr"}))
+	})
+
+	t.Run("connection reports environment value", func(t *testing.T) {
+		t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", "s3nsapis.fr")
+		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		defer mem.AssertSize(t, 0)
+		db, err := driver.NewDriver(mem).NewDatabaseWithContext(ctx, map[string]string{
+			driver.OptionProjectID: "my-project",
+			driver.OptionAuthType:  driver.OptionValueAuthTypeAnonymous,
+		})
+		require.NoError(t, err)
+		defer testutil.CheckedCloseWithContext(t, db, ctx)
+		cnxn, err := db.Open(ctx)
+		require.NoError(t, err)
+		defer testutil.CheckedCloseWithContext(t, cnxn, ctx)
+		v, err := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, driver.OptionUniverseDomain)
+		require.NoError(t, err)
+		assert.Equal(t, "s3nsapis.fr", v)
+	})
 }
 
 func TestUniverseDomainOption(t *testing.T) {

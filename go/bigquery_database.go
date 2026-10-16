@@ -74,8 +74,14 @@ type databaseImpl struct {
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
-	// Checked here rather than in SetOption so that options can be set in any order
-	if err := checkUniverseDomainAllowed(d.universeDomain, d.allowUnknownUniverseDomain); err != nil {
+	// Checked here rather than in SetOption so that options can be set in any
+	// order, and on the effective value so that the environment variable cannot
+	// bypass the allow-list
+	universeDomain, err := effectiveUniverseDomain(d.universeDomain)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkUniverseDomainAllowed(universeDomain, d.allowUnknownUniverseDomain); err != nil {
 		return nil, err
 	}
 
@@ -96,7 +102,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		location:                   d.location,
 		endpoint:                   d.endpoint,
 		storageEndpoint:            d.storageEndpoint,
-		universeDomain:             d.universeDomain,
+		universeDomain:             universeDomain,
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
@@ -106,8 +112,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		customUserAgent:            d.customUserAgent,
 	}
 
-	err := conn.newClient(ctx)
-	if err != nil {
+	if err := conn.newClient(ctx); err != nil {
 		return nil, err
 	}
 
@@ -395,8 +400,9 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 	} else if parsedURI.Host != "" && parsedURI.Hostname() == "" && parsedURI.Port() != "" {
 		// Port without hostname. use the default host of the universe, e.g.
 		// bigquery.s3nsapis.fr for S3NS, with the custom port
-		if universeDomain == "" {
-			universeDomain = os.Getenv(universeDomainEnvVar)
+		universeDomain, err := effectiveUniverseDomain(universeDomain)
+		if err != nil {
+			return nil, err
 		}
 		if universeDomain == "" {
 			universeDomain = defaultUniverseDomain
@@ -551,6 +557,21 @@ func checkUniverseDomainAllowed(value string, allowUnknown bool) error {
 		Msg: fmt.Sprintf("[bq] universe domain %q is not a known universe (%s); set %s to true to use it anyway",
 			value, strings.Join(knownUniverseDomains, ", "), OptionAllowUnknownUniverseDomain),
 	}
+}
+
+// effectiveUniverseDomain returns the universe domain the client libraries
+// will use: the option if set, otherwise GOOGLE_CLOUD_UNIVERSE_DOMAIN. An empty
+// result means the default universe. The environment value is validated here
+// since it does not go through SetOption.
+func effectiveUniverseDomain(option string) (string, error) {
+	if option != "" {
+		return option, nil
+	}
+	value := os.Getenv(universeDomainEnvVar)
+	if err := validateUniverseDomain(value); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 // validateUniverseDomain rejects values that are not a bare domain name, since
