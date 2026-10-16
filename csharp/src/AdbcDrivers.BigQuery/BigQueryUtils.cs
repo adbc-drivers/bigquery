@@ -1,4 +1,4 @@
-﻿/*
+/*
 * Copyright (c) 2025 ADBC Drivers Contributors
 *
 * This file has been modified from its original version, which is
@@ -139,6 +139,23 @@ namespace AdbcDrivers.BigQuery
         internal static string GetAssemblyName(Type type) => type.Assembly.GetName().Name!;
 
         internal static string GetAssemblyVersion(Type type) => FileVersionInfo.GetVersionInfo(type.Assembly.Location).ProductVersion ?? string.Empty;
+
+        internal static string GetDriverVersion()
+        {
+            return string.IsNullOrWhiteSpace(BigQueryAssemblyVersion)
+                ? "unknown"
+                : BigQueryAssemblyVersion;
+        }
+
+        internal static string GetDriverUserAgent(string? customUserAgent = null)
+        {
+            string driverUserAgent = $"Google-BigQuery-ADBC-CSharp/{GetDriverVersion()}";
+            if (!string.IsNullOrWhiteSpace(customUserAgent))
+            {
+                driverUserAgent = $"{driverUserAgent} {customUserAgent!.Trim()}";
+            }
+            return driverUserAgent;
+        }
 
         public static bool ContainsException<T>(Exception exception, out T? containedException) where T : Exception
         {

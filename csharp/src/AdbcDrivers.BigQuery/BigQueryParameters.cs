@@ -73,6 +73,7 @@ namespace AdbcDrivers.BigQuery
         public const string UseLegacySQL = "adbc.bigquery.use_legacy_sql";
         public const string IsMetadataCommand = "adbc.bigquery.statement.is_metadata_command";
         public const string UseJobCreationMode = "adbc.bigquery.statement.use_job_creation_required_mode";
+        public const string CustomUserAgent = "adbc.bigquery.custom_user_agent";
 
         /// <summary>
         /// Overrides the BigQuery REST API endpoint for testing (e.g. "localhost:1234").
@@ -95,7 +96,7 @@ namespace AdbcDrivers.BigQuery
         // these values are safe to log any time
         private static HashSet<string> safeToLog = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
+            AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, CustomUserAgent, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
             MaxFetchConcurrency, MaximumRetryAttempts, UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,

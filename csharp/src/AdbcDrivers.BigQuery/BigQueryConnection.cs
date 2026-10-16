@@ -90,6 +90,13 @@ namespace AdbcDrivers.BigQuery
             _proxyConfiguration = ProxyManager.CreateProxyConfiguration(this.properties);
             this.httpClient = ProxyManager.CreateHttpClient(_proxyConfiguration);
 
+            this.properties.TryGetValue(BigQueryParameters.CustomUserAgent, out string? customUserAgent);
+            DriverUserAgent = BigQueryUtils.GetDriverUserAgent(customUserAgent);
+            if (!this.httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd(DriverUserAgent))
+            {
+                this.httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", DriverUserAgent);
+            }
+
             if (this.properties.TryGetValue(AdbcOptions.Telemetry.TraceParent, out string? traceParent) &&
                 !string.IsNullOrWhiteSpace(traceParent))
             {
@@ -219,6 +226,8 @@ namespace AdbcDrivers.BigQuery
         internal string? TestStorageEndpoint { get; private set; }
 
         internal ProxyConfiguration? ProxyConfiguration => _proxyConfiguration;
+
+        internal string DriverUserAgent { get; private set; }
 
         internal string? ProjectId
         {
@@ -447,7 +456,8 @@ namespace AdbcDrivers.BigQuery
                 {
                     QuotaProject = billingProjectId,
                     GoogleCredential = modifiedCredential,
-                    HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration)
+                    HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration),
+                    ApplicationName = DriverUserAgent
                 };
 
                 bigQueryClientBuilder.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
