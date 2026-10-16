@@ -38,11 +38,13 @@ namespace AdbcDrivers.BigQuery
         BigQueryReadClient bigQueryReadClient;
         readonly string? endpoint;
         readonly ProxyConfiguration? proxyConfiguration;
+        readonly string? userAgent;
 
-        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null, ProxyConfiguration? proxyConfiguration = null)
+        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null, ProxyConfiguration? proxyConfiguration = null, string? userAgent = null)
         {
             this.endpoint = testEndpoint;
             this.proxyConfiguration = proxyConfiguration;
+            this.userAgent = userAgent;
             UpdateCredential(credential);
 
             if (bigQueryReadClient == null)
@@ -62,7 +64,7 @@ namespace AdbcDrivers.BigQuery
 
             BigQueryReadClientBuilder readClientBuilder = new BigQueryReadClientBuilder();
 
-            GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(proxyConfiguration);
+            GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(proxyConfiguration, userAgent);
             if (grpcAdapter != null)
             {
                 readClientBuilder.GrpcAdapter = grpcAdapter;
