@@ -663,6 +663,62 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             }
         }
 
+        [Theory]
+        [InlineData(null)]
+        [InlineData("MyCustomApp/2.0")]
+        public async Task SendsDriverUserAgentOnRestAndStorageReadWriteRequests(string? customUserAgent)
+        {
+            using var mockServer = new BigQueryMockServer();
+            ConfigureSingleRowStorageResults(mockServer);
+
+            var parameters = CreateParameters(mockServer);
+            if (customUserAgent != null)
+            {
+                parameters[BigQueryParameters.CustomUserAgent] = customUserAgent;
+            }
+
+            string expectedDriverToken = $"Google-BigQuery-ADBC-CSharp/{BigQueryUtils.GetDriverVersion()}";
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+
+            // 1. ExecuteQuery exercises both REST (Jobs) and gRPC (Storage Read)
+            using (AdbcStatement queryStmt = connection.CreateStatement())
+            {
+                queryStmt.SqlQuery = "SELECT 42 AS value";
+                QueryResult result = queryStmt.ExecuteQuery();
+                await AssertSingleRowAsync(result);
+            }
+Console.WriteLine($"[REST User-Agent]:         {mockServer.LastRestUserAgent}");
+Console.WriteLine($"[gRPC Read User-Agent]:    {mockServer.LastGrpcUserAgent}");
+            Assert.Contains(expectedDriverToken, mockServer.LastRestUserAgent);
+            Assert.Contains("google-api-dotnet-client/", mockServer.LastRestUserAgent);
+            Assert.Contains(expectedDriverToken, mockServer.LastGrpcUserAgent);
+            Assert.Contains("grpc-dotnet/", mockServer.LastGrpcUserAgent);
+
+            if (customUserAgent != null)
+            {
+                Assert.Contains(customUserAgent, mockServer.LastRestUserAgent);
+                Assert.Contains(customUserAgent, mockServer.LastGrpcUserAgent);
+            }
+
+            // 2. BulkIngest exercises gRPC (Storage Write)
+            using RecordBatch batch = CreateBatch();
+            using (AdbcStatement ingestStmt = connection.BulkIngest("mock-project", "test_dataset", "ua_ingest_table", BulkIngestMode.CreateAppend, false))
+            {
+                ingestStmt.Bind(batch, batch.Schema);
+                ingestStmt.ExecuteUpdate();
+            }
+Console.WriteLine($"[gRPC Write User-Agent]:   {mockServer.LastGrpcUserAgent}");
+            Assert.Contains(expectedDriverToken, mockServer.LastGrpcUserAgent);
+            Assert.Contains("grpc-dotnet/", mockServer.LastGrpcUserAgent);
+            if (customUserAgent != null)
+            {
+                Assert.Contains(customUserAgent, mockServer.LastGrpcUserAgent);
+            }
+        }
+
     }
 }
 

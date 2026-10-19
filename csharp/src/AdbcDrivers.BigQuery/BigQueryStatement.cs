@@ -1350,8 +1350,12 @@ namespace AdbcDrivers.BigQuery
         private BigQueryWriteClient CreateBigQueryWriteClient()
         {
             var builder = new BigQueryWriteClientBuilder();
+            builder.Settings = new BigQueryWriteSettings
+            {
+                CallSettings = Google.Api.Gax.Grpc.CallSettings.FromHeader("user-agent", this.bigQueryConnection.DriverUserAgent)
+            };
             string? endpoint = this.bigQueryConnection.TestStorageEndpoint;
-            Google.Api.Gax.Grpc.GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(this.bigQueryConnection.ProxyConfiguration, this.bigQueryConnection.DriverUserAgent);
+            Google.Api.Gax.Grpc.GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(this.bigQueryConnection.ProxyConfiguration);
 
             if (grpcAdapter != null)
             {

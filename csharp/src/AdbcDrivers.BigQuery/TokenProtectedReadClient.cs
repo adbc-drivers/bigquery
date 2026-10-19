@@ -66,7 +66,17 @@ namespace AdbcDrivers.BigQuery
 
             BigQueryReadClientBuilder readClientBuilder = new BigQueryReadClientBuilder();
 
-            GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(proxyConfiguration, userAgent);
+            if (!string.IsNullOrWhiteSpace(userAgent))
+            {
+                // Use CallSettings instead of readClientBuilder.UserAgent because GAX's
+                // GrpcNetClientAdapter ignores ClientBuilderBase.UserAgent (PrimaryUserAgent).
+                readClientBuilder.Settings = new BigQueryReadSettings
+                {
+                    CallSettings = CallSettings.FromHeader("user-agent", userAgent)
+                };
+            }
+
+            GrpcAdapter? grpcAdapter = ProxyManager.CreateGrpcAdapter(proxyConfiguration);
             if (grpcAdapter != null)
             {
                 readClientBuilder.GrpcAdapter = grpcAdapter;

@@ -197,6 +197,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// </summary>
         public TimeSpan IncompleteQueryResultsDelay { get; set; } = TimeSpan.FromMilliseconds(100);
 
+        public string? LastRestUserAgent { get; private set; }
+        public string? LastGrpcUserAgent { get; private set; }
+
         /// <summary>
         /// The mock gRPC service for configuring Storage Read API responses.
         /// </summary>
@@ -334,6 +337,11 @@ namespace AdbcDrivers.BigQuery.MockServer
             });
 
             var app = builder.Build();
+            app.Use(async (ctx, next) =>
+            {
+                LastRestUserAgent = ctx.Request.Headers.UserAgent.ToString();
+                await next();
+            });
             MapRestRoutes(app);
             return app;
         }
@@ -354,6 +362,11 @@ namespace AdbcDrivers.BigQuery.MockServer
             });
 
             var app = builder.Build();
+            app.Use(async (ctx, next) =>
+            {
+                LastGrpcUserAgent = ctx.Request.Headers.UserAgent.ToString();
+                await next();
+            });
             app.MapGrpcService<MockBigQueryReadService>();
             app.MapGrpcService<MockBigQueryWriteService>();
             return app;

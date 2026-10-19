@@ -18,8 +18,6 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
 using Google.Api.Gax.Grpc;
 using Google.Apis.Http;
 
@@ -94,16 +92,16 @@ namespace AdbcDrivers.BigQuery
                 : HttpClientFactory.ForProxy(CreateWebProxy(proxy));
         }
 
-        internal static GrpcAdapter? CreateGrpcAdapter(ProxyConfiguration? proxy, string? userAgent = null)
+        internal static GrpcAdapter? CreateGrpcAdapter(ProxyConfiguration? proxy)
         {
-            if (proxy == null && string.IsNullOrWhiteSpace(userAgent))
+            if (proxy == null)
             {
                 return null;
             }
 
             return GrpcNetClientAdapter.Default.WithAdditionalOptions(options =>
             {
-                options.HttpHandler = CreateGrpcHttpHandler(proxy, userAgent);
+                options.HttpHandler = CreateGrpcHttpHandler(proxy);
                 options.DisposeHttpClient = true;
             });
         }
@@ -117,59 +115,23 @@ namespace AdbcDrivers.BigQuery
             };
         }
 
-        internal static HttpMessageHandler CreateGrpcHttpHandler(ProxyConfiguration? proxy, string? userAgent = null)
+        internal static HttpMessageHandler CreateGrpcHttpHandler(ProxyConfiguration proxy)
         {
 #if NET6_0_OR_GREATER
-            HttpMessageHandler innerHandler = proxy == null
-                ? new HttpClientHandler()
-                : new HttpClientHandler
-                {
-                    Proxy = CreateWebProxy(proxy),
-                    UseProxy = true
-                };
+            return new HttpClientHandler
+            {
+                Proxy = CreateWebProxy(proxy),
+                UseProxy = true
+            };
 #else
             // WinHttpHandler throws at send time if a custom Proxy is set without this policy.
-            HttpMessageHandler innerHandler = proxy == null
-                ? new WinHttpHandler
-                {
-                    EnableMultipleHttp2Connections = true
-                }
-                : new WinHttpHandler
-                {
-                    EnableMultipleHttp2Connections = true,
-                    WindowsProxyUsePolicy = WindowsProxyUsePolicy.UseCustomProxy,
-                    Proxy = CreateWebProxy(proxy)
-                };
+            return new WinHttpHandler
+            {
+                EnableMultipleHttp2Connections = true,
+                WindowsProxyUsePolicy = WindowsProxyUsePolicy.UseCustomProxy,
+                Proxy = CreateWebProxy(proxy)
+            };
 #endif
-            if (!string.IsNullOrWhiteSpace(userAgent))
-            {
-                return new UserAgentDelegatingHandler(userAgent!, innerHandler);
-            }
-
-            return innerHandler;
-        }
-
-        private sealed class UserAgentDelegatingHandler : DelegatingHandler
-        {
-            private readonly string _userAgent;
-
-            public UserAgentDelegatingHandler(string userAgent, HttpMessageHandler innerHandler)
-                : base(innerHandler)
-            {
-                _userAgent = userAgent;
-            }
-
-            protected override Task<HttpResponseMessage> SendAsync(
-                HttpRequestMessage request,
-                CancellationToken cancellationToken)
-            {
-                if (!request.Headers.UserAgent.TryParseAdd(_userAgent))
-                {
-                    request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
-                }
-
-                return base.SendAsync(request, cancellationToken);
-            }
         }
 
         private static WebProxy CreateWebProxy(ProxyConfiguration proxy)
