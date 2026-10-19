@@ -143,7 +143,7 @@ namespace AdbcDrivers.BigQuery
         internal static string GetDriverVersion()
         {
             return string.IsNullOrWhiteSpace(BigQueryAssemblyVersion)
-                ? "unknown"
+                ? "0.0.0"
                 : BigQueryAssemblyVersion;
         }
 

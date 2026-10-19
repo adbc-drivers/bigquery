@@ -690,8 +690,6 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 QueryResult result = queryStmt.ExecuteQuery();
                 await AssertSingleRowAsync(result);
             }
-Console.WriteLine($"[REST User-Agent]:         {mockServer.LastRestUserAgent}");
-Console.WriteLine($"[gRPC Read User-Agent]:    {mockServer.LastGrpcUserAgent}");
             Assert.Contains(expectedDriverToken, mockServer.LastRestUserAgent);
             Assert.Contains("google-api-dotnet-client/", mockServer.LastRestUserAgent);
             Assert.Contains(expectedDriverToken, mockServer.LastGrpcUserAgent);
@@ -710,7 +708,6 @@ Console.WriteLine($"[gRPC Read User-Agent]:    {mockServer.LastGrpcUserAgent}");
                 ingestStmt.Bind(batch, batch.Schema);
                 ingestStmt.ExecuteUpdate();
             }
-Console.WriteLine($"[gRPC Write User-Agent]:   {mockServer.LastGrpcUserAgent}");
             Assert.Contains(expectedDriverToken, mockServer.LastGrpcUserAgent);
             Assert.Contains("grpc-dotnet/", mockServer.LastGrpcUserAgent);
             if (customUserAgent != null)
