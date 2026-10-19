@@ -38,12 +38,14 @@ namespace AdbcDrivers.BigQuery
         BigQueryReadClient bigQueryReadClient;
         readonly string? endpoint;
         readonly ProxyConfiguration? proxyConfiguration;
+        readonly string? universeDomain;
         readonly string? userAgent;
 
-        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null, ProxyConfiguration? proxyConfiguration = null, string? userAgent = null)
+        public TokenProtectedReadClientManger(GoogleCredential credential, string? testEndpoint = null, ProxyConfiguration? proxyConfiguration = null, string? universeDomain = null, string? userAgent = null)
         {
             this.endpoint = testEndpoint;
             this.proxyConfiguration = proxyConfiguration;
+            this.universeDomain = universeDomain;
             this.userAgent = userAgent;
             UpdateCredential(credential);
 
@@ -78,6 +80,12 @@ namespace AdbcDrivers.BigQuery
             else
             {
                 readClientBuilder.Credential = credential;
+
+                if (universeDomain != null)
+                {
+                    // Connects to bigquerystorage.{universe} instead of the googleapis.com default.
+                    readClientBuilder.UniverseDomain = universeDomain;
+                }
             }
 
             this.bigQueryReadClient = readClientBuilder.Build();

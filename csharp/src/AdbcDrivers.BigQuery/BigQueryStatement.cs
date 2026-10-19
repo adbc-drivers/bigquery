@@ -339,6 +339,7 @@ namespace AdbcDrivers.BigQuery
                     Credential,
                     this.bigQueryConnection.TestStorageEndpoint,
                     this.bigQueryConnection.ProxyConfiguration,
+                    this.bigQueryConnection.UniverseDomain,
                     this.bigQueryConnection.DriverUserAgent);
                 clientMgr.UpdateToken = () => Task.Run(() =>
                 {
@@ -1365,6 +1366,11 @@ namespace AdbcDrivers.BigQuery
             else
             {
                 builder.GoogleCredential = Credential;
+
+                if (this.bigQueryConnection.UniverseDomain != null)
+                {
+                    builder.UniverseDomain = this.bigQueryConnection.UniverseDomain;
+                }
             }
 
             return builder.Build();
