@@ -187,6 +187,14 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.GetQueryResultsOptionsTimeout}' is not a valid positive integer.");
                     }
                     break;
+                case BigQueryParameters.IngestMaxInFlightBatches:
+                    if (!int.TryParse(value, out int maxInFlightBatches) || maxInFlightBatches <= 0)
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' is not a valid positive integer.");
+                    break;
+                case BigQueryParameters.IngestGrpcCompression:
+                    if (value != "none" && value != "gzip")
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'none' or 'gzip'.");
+                    break;
                 default:
                     // TODO: Throw an exception if setting value is unsupported at particular execution states.
                     break;
@@ -954,6 +962,10 @@ namespace AdbcDrivers.BigQuery
 
         private async Task<UpdateResult> ExecuteBulkIngestAsync()
         {
+            int maxInFlightBatches = Options?.TryGetValue(BigQueryParameters.IngestMaxInFlightBatches, out string? value) == true
+                ? int.Parse(value!) : BigQueryConstants.DefaultIngestMaxInFlightBatches;
+            string compression = Options?.TryGetValue(BigQueryParameters.IngestGrpcCompression, out string? encoding) == true
+                ? encoding! : "none";
             var writeClient = CreateBigQueryWriteClient();
             var ingest = new BigQueryBulkIngest(Client, writeClient, this.bigQueryConnection.ProjectId!);
             return await ingest.ExecuteAsync(
@@ -962,7 +974,9 @@ namespace AdbcDrivers.BigQuery
                 _ingestTargetTable!,
                 _ingestMode,
                 _boundBatch,
-                _boundStream).ConfigureAwait(false);
+                _boundStream,
+                maxInFlightBatches,
+                compression).ConfigureAwait(false);
         }
 
         private BigQueryWriteClient CreateBigQueryWriteClient()

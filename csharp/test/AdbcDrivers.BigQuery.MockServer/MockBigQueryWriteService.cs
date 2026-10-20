@@ -17,6 +17,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Protobuf.WellKnownTypes;
@@ -43,6 +45,17 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// </summary>
         public ConcurrentBag<string> CommittedStreams { get; } = new();
 
+        /// <summary>
+        /// Overrides append responses for tests. Returning null closes the RPC without an acknowledgment.
+        /// </summary>
+        public Func<AppendRowsRequest, Task<AppendRowsResponse?>>? AppendResponseFactory { get; set; }
+
+        /// <summary>Observes incoming requests independently of response generation.</summary>
+        public Action<AppendRowsRequest>? AppendRequestReceived { get; set; }
+
+        /// <summary>Optional final RPC failure after all append requests have been read.</summary>
+        public RpcException? AppendCompletionError { get; set; }
+
         public override Task<WriteStream> CreateWriteStream(CreateWriteStreamRequest request, ServerCallContext context)
         {
             int id = System.Threading.Interlocked.Increment(ref _streamCounter);
@@ -65,55 +78,97 @@ namespace AdbcDrivers.BigQuery.MockServer
             ServerCallContext context)
         {
             long offset = 0;
-
-            while (await requestStream.MoveNext())
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+            var requests = Channel.CreateUnbounded<AppendRowsRequest>(new UnboundedChannelOptions
             {
-                var request = requestStream.Current;
+                SingleReader = true,
+                SingleWriter = true,
+            });
+            Task reader = ReadRequestsAsync();
 
-                if (_streams.TryGetValue(request.WriteStream, out var streamInfo))
+            try
+            {
+                await foreach (var request in requests.Reader.ReadAllAsync(cancellation.Token))
                 {
-                    if (request.ArrowRows != null)
+                    if (_streams.TryGetValue(request.WriteStream, out var streamInfo))
                     {
-                        if (request.ArrowRows.WriterSchema?.SerializedSchema != null)
+                        if (request.ArrowRows != null)
                         {
-                            streamInfo.SchemaBytes = request.ArrowRows.WriterSchema.SerializedSchema.ToByteArray();
-                        }
-
-                        if (request.ArrowRows.Rows?.SerializedRecordBatch != null)
-                        {
-                            byte[] batchBytes = request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray();
-                            streamInfo.RecordBatches.Add(batchBytes);
-
-                            // Deserialize to count actual rows
-                            try
+                            if (request.ArrowRows.WriterSchema?.SerializedSchema != null)
                             {
-                                using var stream = new System.IO.MemoryStream(batchBytes);
-                                using var reader = new Apache.Arrow.Ipc.ArrowStreamReader(stream);
-                                var batch = reader.ReadNextRecordBatch();
-                                if (batch != null)
+                                streamInfo.SchemaBytes = request.ArrowRows.WriterSchema.SerializedSchema.ToByteArray();
+                            }
+
+                            if (request.ArrowRows.Rows?.SerializedRecordBatch != null)
+                            {
+                                byte[] batchBytes = request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray();
+                                streamInfo.RecordBatches.Add(batchBytes);
+
+                                // Deserialize to count actual rows
+                                try
                                 {
-                                    streamInfo.RowCount += batch.Length;
+                                    using var stream = new System.IO.MemoryStream(batchBytes);
+                                    using var arrowReader = new Apache.Arrow.Ipc.ArrowStreamReader(stream);
+                                    var batch = arrowReader.ReadNextRecordBatch();
+                                    if (batch != null)
+                                    {
+                                        streamInfo.RowCount += batch.Length;
+                                    }
+                                }
+                                catch
+                                {
+                                    // If deserialization fails, fall back to counting batches
+                                    streamInfo.RowCount++;
                                 }
                             }
-                            catch
-                            {
-                                // If deserialization fails, fall back to counting batches
-                                streamInfo.RowCount++;
-                            }
                         }
                     }
-                }
 
-                var response = new AppendRowsResponse
-                {
-                    AppendResult = new AppendRowsResponse.Types.AppendResult
+                    AppendRowsResponse? response;
+                    if (AppendResponseFactory != null)
                     {
-                        Offset = offset
+                        response = await AppendResponseFactory(request).WaitAsync(cancellation.Token);
+                        if (response == null) return;
                     }
-                };
+                    else
+                    {
+                        response = new AppendRowsResponse
+                        {
+                            AppendResult = new AppendRowsResponse.Types.AppendResult
+                            {
+                                Offset = offset
+                            }
+                        };
+                    }
 
-                await responseStream.WriteAsync(response);
-                offset++;
+                    await responseStream.WriteAsync(response);
+                    offset++;
+                }
+                if (AppendCompletionError != null)
+                    throw AppendCompletionError;
+            }
+            finally
+            {
+                cancellation.Cancel();
+                await reader;
+            }
+
+            async Task ReadRequestsAsync()
+            {
+                try
+                {
+                    while (await requestStream.MoveNext(cancellation.Token))
+                    {
+                        AppendRowsRequest request = requestStream.Current;
+                        AppendRequestReceived?.Invoke(request);
+                        await requests.Writer.WriteAsync(request, cancellation.Token);
+                    }
+                    requests.Writer.TryComplete();
+                }
+                catch (Exception error)
+                {
+                    requests.Writer.TryComplete(error);
+                }
             }
         }
 
