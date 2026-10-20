@@ -965,7 +965,7 @@ namespace AdbcDrivers.BigQuery
             int maxInFlightBatches = Options?.TryGetValue(BigQueryParameters.IngestMaxInFlightBatches, out string? value) == true
                 ? int.Parse(value!) : BigQueryConstants.DefaultIngestMaxInFlightBatches;
             string compression = Options?.TryGetValue(BigQueryParameters.IngestGrpcCompression, out string? encoding) == true
-                ? encoding! : "none";
+                ? encoding! : BigQueryConstants.DefaultIngestGrpcCompression;
             var writeClient = CreateBigQueryWriteClient();
             var ingest = new BigQueryBulkIngest(Client, writeClient, this.bigQueryConnection.ProjectId!);
             return await ingest.ExecuteAsync(

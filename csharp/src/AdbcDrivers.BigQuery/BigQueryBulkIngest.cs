@@ -64,7 +64,7 @@ namespace AdbcDrivers.BigQuery
             RecordBatch? boundBatch,
             IArrowArrayStream? boundStream,
             int maxInFlightBatches = BigQueryConstants.DefaultIngestMaxInFlightBatches,
-            string grpcCompression = "none",
+            string grpcCompression = BigQueryConstants.DefaultIngestGrpcCompression,
             CancellationToken cancellationToken = default)
         {
             if (maxInFlightBatches <= 0)

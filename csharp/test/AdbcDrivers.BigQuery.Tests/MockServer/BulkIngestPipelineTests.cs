@@ -36,10 +36,10 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
     public class BulkIngestPipelineTests
     {
         [Theory]
-        [InlineData(null)]
-        [InlineData("none")]
-        [InlineData("gzip")]
-        public async Task CompressionChangesGrpcFramingButNotArrowPayload(string? compression)
+        [InlineData(null, true)]
+        [InlineData("none", false)]
+        [InlineData("gzip", true)]
+        public async Task CompressionChangesGrpcFramingButNotArrowPayload(string? compression, bool expectCompressed)
         {
             using var server = new BigQueryMockServer();
             var requests = new ConcurrentQueue<AppendRowsRequest>();
@@ -62,8 +62,8 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             byte[] expected = ArrowSerializationHelpers.SerializeRecordBatch(batch);
             Assert.All(requests, request => Assert.Equal(expected, request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray()));
             var wire = Assert.Single(server.AppendTransportRequests);
-            Assert.Equal(compression == "gzip", wire.Compressed);
-            if (compression == "gzip")
+            Assert.Equal(expectCompressed, wire.Compressed);
+            if (expectCompressed)
             {
                 Assert.Equal("gzip", wire.Encoding);
                 Assert.True(wire.MessageBytes < requests.First().CalculateSize(), "The gRPC message must actually be compressed, not just labeled gzip.");

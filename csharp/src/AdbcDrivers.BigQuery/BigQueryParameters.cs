@@ -112,6 +112,7 @@ namespace AdbcDrivers.BigQuery
     internal class BigQueryConstants
     {
         public const int DefaultIngestMaxInFlightBatches = 4;
+        public const string DefaultIngestGrpcCompression = "gzip";
         public const string UserAuthenticationType = "user";
         public const string EntraIdAuthenticationType = "aad";
         public const string ServiceAccountAuthenticationType = "service";
