@@ -26,6 +26,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// <summary>POST projects/{projectId}/jobs</summary>
         JobInsert,
 
+        /// <summary>POST projects/{projectId}/queries</summary>
+        JobQuery,
+
         /// <summary>GET projects/{projectId}/jobs/{jobId}</summary>
         JobGet,
 

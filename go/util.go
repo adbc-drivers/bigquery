@@ -59,7 +59,7 @@ func safeWaitForJob(ctx context.Context, logger *slog.Logger, job *bigquery.Job)
 
 	// dry-run jobs already have a status. as an optimization, poll LastStatus (which is a simple getter)
 	js = job.LastStatus()
-	if js.Err() != nil || js.Done() {
+	if js != nil && (js.Err() != nil || js.Done()) {
 		logger.DebugContext(ctx, "job complete", "id", job.ID())
 		return js, nil
 	}
@@ -181,6 +181,14 @@ func errToAdbcErr(defaultStatus adbc.Status, err error, errContext string, conte
 	if httpErr, ok := errors.AsType[*googleapi.Error](err); ok {
 		statusCode = httpErr.Code
 		fmt.Fprintf(&msg, "%d %s: %s", httpErr.Code, http.StatusText(httpErr.Code), httpErr.Message)
+		if httpErr.Code == http.StatusForbidden {
+			for _, item := range httpErr.Errors {
+				switch item.Reason {
+				case "accessDenied", "billingNotEnabled", "blocked":
+					adbcErr.Code = adbc.StatusUnauthorized
+				}
+			}
+		}
 	} else if apiErr, ok := errors.AsType[*apierror.APIError](err); ok {
 		// Despite all the structure inside the error, there isn't a great way to
 		// extract or map it onto anything (e.g. there are two types of errors

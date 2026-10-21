@@ -58,6 +58,12 @@ namespace AdbcDrivers.BigQuery.Tests
         [JsonPropertyName("audience")]
         public string Audience { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Optional Google service account to impersonate after the token exchange.
+        /// </summary>
+        [JsonPropertyName("serviceAccountImpersonationEmail")]
+        public string ServiceAccountImpersonationEmail { get; set; } = string.Empty;
+
         [JsonPropertyName("billingProjectId")]
         public string? BillingProjectId { get; set; }
 

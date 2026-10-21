@@ -114,6 +114,11 @@ namespace AdbcDrivers.BigQuery.Tests
                     }
 
                     parameters.Add(BigQueryParameters.AudienceUri, testEnvironment.Audience);
+
+                    if (!string.IsNullOrEmpty(testEnvironment.ServiceAccountImpersonationEmail))
+                    {
+                        parameters.Add(BigQueryParameters.ServiceAccountImpersonationEmail, testEnvironment.ServiceAccountImpersonationEmail);
+                    }
                 }
                 else
                 {

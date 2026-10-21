@@ -33,6 +33,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/googleapis/gax-go/v2/apierror"
+	"google.golang.org/api/option"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -46,12 +47,13 @@ type storageWriteBulkIngestImpl struct {
 	queryConfig bigquery.QueryConfig
 	client      *bigquery.Client
 
-	casts          []*compute.CastOptions
-	writeClient    *storage.BigQueryWriteClient
-	tableReference string
-	streamName     string
-	appendStream   storagepb.BigQueryWrite_AppendRowsClient
-	offset         int64
+	casts           []*compute.CastOptions
+	writeClient     *storage.BigQueryWriteClient
+	tableReference  string
+	streamName      string
+	appendStream    storagepb.BigQueryWrite_AppendRowsClient
+	offset          int64
+	customUserAgent string
 }
 
 func appendRowsError(rpcStatus *statuspb.Status) error {
@@ -164,8 +166,8 @@ func (impl *storageWriteBulkIngestImpl) Init(ctx context.Context) error {
 		md := impl.schema.Metadata()
 		impl.schema = arrow.NewSchema(fields, &md)
 	}
-
-	writeClient, err := storage.NewBigQueryWriteClient(ctx)
+	driverUserAgent := stringToCustomUserAgent(impl.customUserAgent)
+	writeClient, err := storage.NewBigQueryWriteClient(ctx, option.WithUserAgent(driverUserAgent))
 	if err != nil {
 		return errToAdbcErr(adbc.StatusIO, err, "create storage write client")
 	}

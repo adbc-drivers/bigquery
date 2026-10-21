@@ -59,8 +59,12 @@ type databaseImpl struct {
 	endpoint        string
 	storageEndpoint string
 
+	queryDefaults queryDefaults
+
 	bulkIngestMethod      string
 	bulkIngestCompression string
+
+	customUserAgent string
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
@@ -84,8 +88,10 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		resultRecordBufferSize:     defaultQueryResultBufferSize,
 		prefetchConcurrency:        defaultQueryPrefetchConcurrency,
 		quotaProject:               d.quotaProject,
+		queryDefaults:              d.queryDefaults,
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
+		customUserAgent:            d.customUserAgent,
 	}
 
 	err := conn.newClient(ctx)
@@ -105,6 +111,9 @@ func (d *databaseImpl) Close(ctx context.Context) error { return nil }
 
 func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {
 	key = remapOption(key)
+	if handled, value, err := d.queryDefaults.getOption(key); handled {
+		return value, err
+	}
 	switch key {
 	case OptionAuthType:
 		return d.authType, nil
@@ -149,6 +158,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 			return OptionValueCompressionNone, nil
 		}
 		return d.bulkIngestCompression, nil
+	case OptionCustomUserAgent:
+		return d.customUserAgent, nil
 	default:
 		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
@@ -183,6 +194,9 @@ func (d *databaseImpl) hasImpersonationOptions() bool {
 
 func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) error {
 	key = remapOption(key)
+	if handled, err := d.queryDefaults.setOption(key, value); handled {
+		return err
+	}
 	switch key {
 	case "uri":
 		params, err := ParseBigQueryURIToParams(value)
@@ -291,6 +305,8 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			}
 		}
 		d.bulkIngestCompression = value
+	case OptionCustomUserAgent:
+		d.customUserAgent = value
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}

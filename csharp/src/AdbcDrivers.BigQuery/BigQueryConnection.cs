@@ -26,6 +26,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -65,6 +66,12 @@ namespace AdbcDrivers.BigQuery
         private readonly FileActivityListener? _fileActivityListener;
 
         private readonly string infoDriverArrowVersion = BigQueryUtils.GetAssemblyVersion(typeof(IArrowArray));
+
+        // The universe domain is interpolated into service hostnames, so only accept a bare domain name.
+        private static readonly Regex UniverseDomainPattern = new Regex(
+            @"\A(?=.{1,253}\z)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+\z",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
 
         readonly AdbcInfoCode[] infoSupportedCodes = new[] {
             AdbcInfoCode.DriverName,
@@ -165,6 +172,26 @@ namespace AdbcDrivers.BigQuery
             {
                 TestStorageEndpoint = storageEndpoint;
             }
+
+            if (this.properties.TryGetValue(BigQueryParameters.UniverseDomain, out string? universeDomain) &&
+                !string.IsNullOrEmpty(universeDomain))
+            {
+                if (!UniverseDomainPattern.IsMatch(universeDomain))
+                {
+                    throw new ArgumentException($"The value '{universeDomain}' for parameter '{BigQueryParameters.UniverseDomain}' is not a valid domain name, such as 'googleapis.com' or 's3nsapis.fr'.");
+                }
+
+                // Credentials are sent to hosts under the universe domain, so a spoofed domain would
+                // capture them. Unknown domains have to be allowed explicitly by a second parameter.
+                if (!BigQueryConstants.KnownUniverseDomains.Contains(universeDomain, StringComparer.OrdinalIgnoreCase) &&
+                    !(this.properties.TryGetValue(BigQueryParameters.AllowUnknownUniverseDomain, out string? sAllowUnknown) &&
+                      bool.TryParse(sAllowUnknown, out bool allowUnknown) && allowUnknown))
+                {
+                    throw new ArgumentException($"The value '{universeDomain}' for parameter '{BigQueryParameters.UniverseDomain}' is not a known universe domain ({string.Join(", ", BigQueryConstants.KnownUniverseDomains)}). Set '{BigQueryParameters.AllowUnknownUniverseDomain}' to 'true' to use it anyway.");
+                }
+
+                UniverseDomain = universeDomain;
+            }
         }
 
         /// <summary>
@@ -216,6 +243,21 @@ namespace AdbcDrivers.BigQuery
         internal bool IncludePublicProjectIds { get; private set; } = false;
 
         internal string? TestStorageEndpoint { get; private set; }
+
+        /// <summary>
+        /// The universe domain explicitly configured by the caller, or null to use the default.
+        /// </summary>
+        internal string? UniverseDomain { get; private set; }
+
+        internal string EffectiveUniverseDomain => UniverseDomain ?? BigQueryConstants.DefaultUniverseDomain;
+
+        /// <summary>
+        /// The Security Token Service endpoint of the effective universe, e.g. https://sts.s3nsapis.fr/v1/token.
+        /// </summary>
+        internal string StsTokenEndpoint => string.Format(
+            CultureInfo.InvariantCulture,
+            BigQueryConstants.StsTokenEndpointFormat,
+            EffectiveUniverseDomain);
 
         internal ProxyConfiguration? ProxyConfiguration => _proxyConfiguration;
 
@@ -456,6 +498,13 @@ namespace AdbcDrivers.BigQuery
                 {
                     bigQueryClientBuilder.BaseUri = $"http://{testRestEndpoint}/bigquery/v2/";
                 }
+                else if (UniverseDomain != null)
+                {
+                    // Builds the base URI as https://bigquery.{universe}/ and requires the credential
+                    // to belong to the same universe (see SetCredential).
+                    bigQueryClientBuilder.UniverseDomain = UniverseDomain;
+                    activity?.AddBigQueryParameterTag(BigQueryParameters.UniverseDomain, UniverseDomain);
+                }
 
                 if (!string.IsNullOrEmpty(DefaultClientLocation))
                 {
@@ -544,7 +593,8 @@ namespace AdbcDrivers.BigQuery
                     if (!this.properties.TryGetValue(BigQueryParameters.AudienceUri, out audienceUri))
                         throw new ArgumentException($"The {BigQueryParameters.AudienceUri} parameter is not present");
 
-                    Credential = ApplyScopes(GoogleCredential.FromAccessToken(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken)));
+                    Credential = ApplyScopes(GoogleCredential.FromAccessToken(
+                        ImpersonateIfRequested(TradeEntraIdTokenForBigQueryToken(audienceUri, accessToken, activity), activity)));
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.ServiceAccountAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
@@ -562,6 +612,15 @@ namespace AdbcDrivers.BigQuery
                 else
                 {
                     throw new ArgumentException($"{authenticationType} is not a valid authenticationType");
+                }
+
+                // The client libraries reject a credential whose universe differs from the client's.
+                // Credentials built from an access token default to googleapis.com, so move them to the
+                // configured universe. JSON credentials issued for that universe already match.
+                if (UniverseDomain != null &&
+                    !string.Equals(Credential.GetUniverseDomain(), UniverseDomain, StringComparison.OrdinalIgnoreCase))
+                {
+                    Credential = Credential.CreateWithUniverseDomain(UniverseDomain);
                 }
 
                 Google.Apis.Http.HttpClientFactory? proxyHttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration);
@@ -617,6 +676,32 @@ namespace AdbcDrivers.BigQuery
             }
 
             return credential;
+        }
+
+        /// <summary>
+        /// Applies service account impersonation to an already-federated token when the caller asked
+        /// for it, so BigQuery grants can live on a shared service account rather than each user.
+        /// </summary>
+        internal string? ImpersonateIfRequested(string? federatedToken, Activity? activity)
+        {
+            this.properties.TryGetValue(BigQueryParameters.ServiceAccountImpersonationEmail, out string? impersonationEmail);
+
+            // Deliberately IsNullOrEmpty: a whitespace value must reach validation, not opt out.
+            if (string.IsNullOrEmpty(impersonationEmail) || string.IsNullOrEmpty(federatedToken))
+            {
+                return federatedToken;
+            }
+
+            this.properties.TryGetValue(BigQueryParameters.Scopes, out string? scopes);
+
+            // generateAccessToken takes one array element per scope; joining them would be sent as
+            // a single malformed scope.
+            string[] scopeList = string.IsNullOrWhiteSpace(scopes)
+                ? new[] { BigQueryConstants.EntraIdScope }
+                : scopes!.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+
+            return WorkloadIdentityFederation.ImpersonateServiceAccount(
+                this.httpClient, impersonationEmail!, scopeList, federatedToken!, activity);
         }
 
         public override IArrowArrayStream GetInfo(IReadOnlyList<AdbcInfoCode> codes)
@@ -1613,10 +1698,11 @@ namespace AdbcDrivers.BigQuery
                     return fieldBuilder.DataType(StringType.Default);
                 case "BYTES":
                     return fieldBuilder.DataType(BinaryType.Default);
+                // Match BigQueryStatement.TranslateType: BigQuery returns both types in microseconds.
                 case "DATETIME":
-                    return fieldBuilder.DataType(TimestampType.Default);
+                    return fieldBuilder.DataType(new TimestampType(TimeUnit.Microsecond, (string?)null));
                 case "TIMESTAMP":
-                    return fieldBuilder.DataType(TimestampType.Default);
+                    return fieldBuilder.DataType(new TimestampType(TimeUnit.Microsecond, "UTC"));
                 case "TIME":
                     return fieldBuilder.DataType(Time64Type.Microsecond);
                 case "DATE":
@@ -1890,7 +1976,8 @@ namespace AdbcDrivers.BigQuery
                 BigQueryParameters.MaxFetchConcurrency,
                 BigQueryParameters.StatementType,
                 BigQueryParameters.StatementIndex,
-                BigQueryParameters.EvaluationKind
+                BigQueryParameters.EvaluationKind,
+                BigQueryParameters.UseLastStatement
             };
 
             foreach (string key in statementOptions)
@@ -1993,53 +2080,85 @@ namespace AdbcDrivers.BigQuery
             request.Headers.Add("Accept", "application/json");
             request.Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded");
             using HttpResponseMessage response = this.httpClient.SendAsync(request).GetAwaiter().GetResult();
-            response.EnsureSuccessStatusCode();
             string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+            // Google explains refusals (expired or revoked refresh tokens, for example) only in the
+            // body, so surface it instead of collapsing to a bare status code.
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new AdbcException(
+                    BuildTokenFailureMessage(response.StatusCode, responseBody),
+                    AdbcStatusCode.Unauthenticated);
+            }
 
             BigQueryTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryTokenResponse>(responseBody);
 
             return bigQueryTokenResponse?.AccessToken;
         }
 
+        internal static string BuildTokenFailureMessage(HttpStatusCode statusCode, string? responseBody)
+        {
+            string detail = string.IsNullOrWhiteSpace(responseBody) ? "no response body" : responseBody!.Trim();
+            return $"The Google token endpoint returned {(int)statusCode} ({statusCode}): {detail}";
+        }
+
         /// <summary>
-        /// Gets the access token from the sts endpoint.
+        /// Exchanges the Entra token for a federated Google token at the Security Token Service.
         /// </summary>
-        /// <param name="audience"></param>
-        /// <param name="entraAccessToken"></param>
-        /// <returns></returns>
-        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken)
+        private string? TradeEntraIdTokenForBigQueryToken(string audience, string entraAccessToken, Activity? activity)
         {
             try
             {
-                var requestBody = new
+                activity?.AddBigQueryTag(
+                    WorkloadIdentityFederation.TagPrefix + WorkloadIdentityFederation.StsExchangeStep + ".audience",
+                    audience);
+
+                string json = CreateEntraStsRequestBody(audience, entraAccessToken);
+
+                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, StsTokenEndpoint)
                 {
-                    scope = BigQueryConstants.EntraIdScope,
-                    subjectToken = entraAccessToken,
-                    audience = audience,
-                    grantType = BigQueryConstants.EntraGrantType,
-                    subjectTokenType = BigQueryConstants.EntraSubjectTokenType,
-                    requestedTokenType = BigQueryConstants.EntraRequestedTokenType
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };
 
-                string json = JsonSerializer.Serialize(requestBody);
-                using StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                using HttpResponseMessage response = this.httpClient.PostAsync(BigQueryConstants.EntraStsTokenEndpoint, content).GetAwaiter().GetResult();
-                response.EnsureSuccessStatusCode();
-
-                string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                string responseBody = WorkloadIdentityFederation.SendAsync(
+                    this.httpClient,
+                    request,
+                    WorkloadIdentityFederation.StsExchangeStep,
+                    "The Google Security Token Service",
+                    activity,
+                    default).GetAwaiter().GetResult();
 
                 BigQueryStsTokenResponse? bigQueryTokenResponse = JsonSerializer.Deserialize<BigQueryStsTokenResponse>(responseBody);
 
                 return bigQueryTokenResponse?.AccessToken;
             }
+            catch (AdbcException)
+            {
+                // SendAsync already reports the endpoint, status, error code and correlation id.
+                throw;
+            }
             catch (Exception ex)
             {
                 throw new AdbcException(
-                    "Unable to obtain access token from BigQuery",
+                    $"Unable to obtain access token from BigQuery. {ex.Message}",
                     AdbcStatusCode.Unauthenticated,
                     ex);
             }
+        }
+
+        internal static string CreateEntraStsRequestBody(string audience, string entraAccessToken)
+        {
+            var requestBody = new
+            {
+                scope = BigQueryConstants.EntraIdScope,
+                subjectToken = entraAccessToken,
+                audience = audience,
+                grantType = BigQueryConstants.EntraGrantType,
+                subjectTokenType = BigQueryConstants.AzureSubjectTokenType,
+                requestedTokenType = BigQueryConstants.EntraRequestedTokenType
+            };
+
+            return JsonSerializer.Serialize(requestBody);
         }
 
         enum XdbcDataType

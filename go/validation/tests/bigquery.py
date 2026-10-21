@@ -26,8 +26,8 @@ class BigQueryQuirks(model.DriverQuirks):
     vendor_name = "BigQuery"
     # BigQuery doesn't really have a public facing version, so use the client
     # version instead
-    vendor_version = "cloud.google.com/go/bigquery v1.82.0"
-    short_version = "1.82.0"
+    vendor_version = "cloud.google.com/go/bigquery v1.85.0"
+    short_version = "1.85.0"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         # TODO(lidavidm): this is a bit weird; it does work, but we'd need two
@@ -67,8 +67,8 @@ class BigQueryQuirks(model.DriverQuirks):
     )
     setup = model.DriverSetup(
         database={
-            "adbc.bigquery.sql.project_id": model.FromEnv("GOOGLE_CLOUD_PROJECT"),
-            "adbc.bigquery.sql.dataset_id": model.FromEnv("BIGQUERY_DATASET_ID"),
+            "bigquery.project_id": model.FromEnv("GOOGLE_CLOUD_PROJECT"),
+            "bigquery.dataset_id": model.FromEnv("BIGQUERY_DATASET_ID"),
         },
         connection={},
         statement={},
@@ -116,9 +116,9 @@ class BigQueryQuirks(model.DriverQuirks):
                                     "bigquery.bulk_ingest.method": {
                                         "apply": "storage_write",
                                         "revert": "load",
-                                    }
-                                }
-                            }
+                                    },
+                                },
+                            },
                         },
                         "tags": {
                             "broken-vendor": None,

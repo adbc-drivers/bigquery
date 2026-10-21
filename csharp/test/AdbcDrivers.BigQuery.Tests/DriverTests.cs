@@ -408,5 +408,25 @@ namespace AdbcDrivers.BigQuery.Tests
                 AdbcTests.DriverTests.CanExecuteQuery(queryResult, 61900, environment.Name);
             }
         }
+
+        /// <summary>
+        /// Validates that the driver can return the result of the last statement
+        /// in a multi-statement query.
+        /// </summary>
+        [SkippableFact, Order(10)]
+        public void CanExecuteLastStatementInMultiStatementQuery()
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                AdbcConnection adbcConnection = GetAdbcConnection(environment.Name);
+                AdbcStatement statement = adbcConnection.CreateStatement();
+                statement.SetOption(BigQueryParameters.UseLastStatement, "true");
+                statement.SqlQuery = "SELECT 1 AS number; SELECT number FROM UNNEST([2, 3]) AS number;";
+
+                QueryResult queryResult = statement.ExecuteQuery();
+
+                AdbcTests.DriverTests.CanExecuteQuery(queryResult, 2, environment.Name);
+            }
+        }
     }
 }
