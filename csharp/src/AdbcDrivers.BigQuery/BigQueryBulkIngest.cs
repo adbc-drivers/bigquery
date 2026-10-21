@@ -69,7 +69,7 @@ namespace AdbcDrivers.BigQuery
         {
             if (maxInFlightBatches <= 0)
                 throw new AdbcException("Maximum in-flight batches must be positive.", AdbcStatusCode.InvalidArgument);
-            if (grpcCompression != "none" && grpcCompression != "gzip")
+            if (grpcCompression != "none" && grpcCompression != BigQueryConstants.GzipCompression)
                 throw new AdbcException("gRPC compression must be 'none' or 'gzip'.", AdbcStatusCode.InvalidArgument);
 
             if (string.IsNullOrEmpty(targetTable))
@@ -161,7 +161,7 @@ namespace AdbcDrivers.BigQuery
                 AllowSynchronousContinuations = false,
             });
             CallSettings callSettings = CallSettings.FromCancellationToken(cancellation.Token);
-            if (grpcCompression == "gzip")
+            if (grpcCompression == BigQueryConstants.GzipCompression)
             {
                 // Both gRPC Core and Grpc.Net.Client consume this metadata to compress messages.
                 callSettings = callSettings.WithHeader("grpc-internal-encoding-request", "gzip");

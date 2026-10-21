@@ -199,8 +199,8 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The value '{value}' for parameter '{key}' is not a valid positive integer.");
                     break;
                 case BigQueryParameters.IngestGrpcCompression:
-                    if (value != "none" && value != "gzip")
-                        throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'none' or 'gzip'.");
+                    if (value != "none" && value != BigQueryConstants.GzipCompression)
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'none' or '{BigQueryConstants.GzipCompression}'.");
                     break;
                 case BigQueryParameters.UseJobCreationMode:
                     if (!bool.TryParse(value, out _))
