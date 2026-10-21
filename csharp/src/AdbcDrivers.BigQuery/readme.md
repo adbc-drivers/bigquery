@@ -101,6 +101,12 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.max_fetch_concurrency**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the [maxStreamCount](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.Storage.V1/latest/Google.Cloud.BigQuery.Storage.V1.BigQueryReadClient#Google_Cloud_BigQuery_Storage_V1_BigQueryReadClient_CreateReadSession_System_String_Google_Cloud_BigQuery_Storage_V1_ReadSession_System_Int32_Google_Api_Gax_Grpc_CallSettings_) for the CreateReadSession method. If not set, defaults to 1.
 
+**adbc.bigquery.ingest.max_in_flight_batches**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional **statement** option used by bulk ingestion. A positive integer limiting the number of unacknowledged append requests on one pending write stream; defaults to `4`. Use `1` for sequential appends. One sender writes requests in order while one reader checks responses concurrently. Input reading pauses when the window is full. Each Arrow batch remains one request, so this bounds request count rather than bytes; memory usage depends on batch size. All responses and the final RPC status must succeed before finalization and atomic commit. This option does not create multiple streams or introduce automatic append retries.
+
+**adbc.bigquery.ingest.grpc_compression**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional **statement** option used by bulk ingestion. Accepts `gzip` (default) or `none`. Requests gRPC transport compression for append messages without changing Arrow IPC serialization. Compression trades CPU for reduced network traffic; the performance benefit depends on the data and environment. Set to `none` to disable compression. Unsupported compression fails without falling back to uncompressed appends.
+
 **adbc.bigquery.multiple_statement.statement_type**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. When executing multiple statements, limit the type of statement returned. If not set, all types of statements are returned.
 

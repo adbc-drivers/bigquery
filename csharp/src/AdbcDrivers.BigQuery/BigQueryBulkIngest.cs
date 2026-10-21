@@ -16,13 +16,16 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Apache.Arrow;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Ipc;
 using Apache.Arrow.Types;
 using Google;
+using Google.Api.Gax.Grpc;
 using Google.Cloud.BigQuery.Storage.V1;
 using Google.Cloud.BigQuery.V2;
 using Google.Protobuf;
@@ -60,8 +63,15 @@ namespace AdbcDrivers.BigQuery
             BulkIngestMode mode,
             RecordBatch? boundBatch,
             IArrowArrayStream? boundStream,
+            int maxInFlightBatches = BigQueryConstants.DefaultIngestMaxInFlightBatches,
+            string grpcCompression = BigQueryConstants.DefaultIngestGrpcCompression,
             CancellationToken cancellationToken = default)
         {
+            if (maxInFlightBatches <= 0)
+                throw new AdbcException("Maximum in-flight batches must be positive.", AdbcStatusCode.InvalidArgument);
+            if (grpcCompression != "none" && grpcCompression != BigQueryConstants.GzipCompression)
+                throw new AdbcException("gRPC compression must be 'none' or 'gzip'.", AdbcStatusCode.InvalidArgument);
+
             if (string.IsNullOrEmpty(targetTable))
                 throw new AdbcException("Target table name is required for bulk ingest", AdbcStatusCode.InvalidArgument);
 
@@ -106,33 +116,12 @@ namespace AdbcDrivers.BigQuery
 
             try
             {
-                // Open the bidirectional streaming call
-                using BigQueryWriteClient.AppendRowsStream appendStream = _writeClient.AppendRows();
-
                 // Serialize the Arrow schema (sent with first request)
                 byte[] schemaBytes = SerializeSchema(normalizedSchema);
-
-                if (boundBatch != null)
-                {
-                    totalRows = await AppendBatchAsync(appendStream, writeStream.Name, schemaBytes, boundBatch, isFirst: true, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    bool isFirst = true;
-                    while (true)
-                    {
-                        RecordBatch? batch = await boundStream!.ReadNextRecordBatchAsync(cancellationToken).ConfigureAwait(false);
-                        if (batch == null) break;
-
-                        totalRows += await AppendBatchAsync(appendStream, writeStream.Name, schemaBytes, batch, isFirst, cancellationToken).ConfigureAwait(false);
-                        isFirst = false;
-                    }
-                }
-
-                // Signal end of writes
-                await appendStream.WriteCompleteAsync().ConfigureAwait(false);
+                totalRows = await AppendBatchesAsync(writeStream.Name, schemaBytes, boundBatch, boundStream,
+                    maxInFlightBatches, grpcCompression, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not AdbcException)
+            catch (Exception ex) when (ex is not AdbcException && ex is not OperationCanceledException)
             {
                 throw new AdbcException($"Failed to append rows: {ex.Message}", AdbcStatusCode.IOError, ex);
             }
@@ -154,13 +143,133 @@ namespace AdbcDrivers.BigQuery
             return new UpdateResult(totalRows);
         }
 
-        private async Task<long> AppendBatchAsync(
+        private async Task<long> AppendBatchesAsync(
+            string writeStreamName,
+            byte[] schemaBytes,
+            RecordBatch? boundBatch,
+            IArrowArrayStream? boundStream,
+            int maxInFlightBatches,
+            string grpcCompression,
+            CancellationToken cancellationToken)
+        {
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var slots = new SemaphoreSlim(maxInFlightBatches, maxInFlightBatches);
+            var pending = Channel.CreateBounded<int>(new BoundedChannelOptions(maxInFlightBatches)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                AllowSynchronousContinuations = false,
+            });
+            CallSettings callSettings = CallSettings.FromCancellationToken(cancellation.Token);
+            if (grpcCompression == BigQueryConstants.GzipCompression)
+            {
+                // Both gRPC Core and Grpc.Net.Client consume this metadata to compress messages.
+                callSettings = callSettings.WithHeader("grpc-internal-encoding-request", "gzip");
+            }
+            using BigQueryWriteClient.AppendRowsStream appendStream = _writeClient.AppendRows(callSettings);
+            var responses = appendStream.GetResponseStream();
+            ExceptionDispatchInfo? failure = null;
+
+            void Fail(Exception error)
+            {
+                Interlocked.CompareExchange(ref failure, ExceptionDispatchInfo.Capture(error), null);
+                cancellation.Cancel();
+            }
+
+            async Task SendAsync()
+            {
+                try
+                {
+                    bool first = true;
+                    while (boundBatch == null || first)
+                    {
+                        // Reserve before reading so the input stream cannot run ahead of the window.
+                        await slots.WaitAsync(cancellation.Token).ConfigureAwait(false);
+                        RecordBatch? batch = boundBatch;
+                        if (batch == null)
+                        {
+                            batch = await boundStream!.ReadNextRecordBatchAsync(cancellation.Token).ConfigureAwait(false);
+                        }
+                        if (batch == null)
+                        {
+                            slots.Release();
+                            break;
+                        }
+
+                        // Publish metadata first so even an immediate acknowledgment can be matched.
+                        await pending.Writer.WriteAsync(batch.Length, cancellation.Token).ConfigureAwait(false);
+                        await SendBatchAsync(appendStream, writeStreamName,
+                            schemaBytes, batch, first).ConfigureAwait(false);
+                        first = false;
+                    }
+
+                    // Make input completion visible before the server can return a clean EOF.
+                    pending.Writer.TryComplete();
+                    await appendStream.WriteCompleteAsync().ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    Fail(error);
+                    throw;
+                }
+                finally
+                {
+                    pending.Writer.TryComplete();
+                }
+            }
+
+            async Task<long> ReceiveAsync()
+            {
+                try
+                {
+                    long rows = 0;
+                    while (await responses.MoveNextAsync(cancellation.Token).ConfigureAwait(false))
+                    {
+                        var response = responses.Current;
+                        if (response.Error != null && response.Error.Code != 0)
+                            throw new AdbcException($"BigQuery append failed: {response.Error.Message}", AdbcStatusCode.IOError);
+                        if (response.AppendResult == null)
+                            throw new AdbcException("BigQuery append response did not contain an append result.", AdbcStatusCode.IOError);
+                        if (!pending.Reader.TryRead(out int batchRows))
+                            throw new AdbcException("BigQuery returned an unexpected extra append response.", AdbcStatusCode.IOError);
+
+                        rows += batchRows;
+                        slots.Release();
+                    }
+
+                    // Reader completion requires both a completed writer and an empty pending queue.
+                    if (!pending.Reader.Completion.IsCompleted)
+                        throw new AdbcException("BigQuery append response stream ended before all input was sent and acknowledged.", AdbcStatusCode.IOError);
+                    return rows;
+                }
+                catch (Exception error)
+                {
+                    Fail(error);
+                    throw;
+                }
+            }
+
+            Task sender = SendAsync();
+            Task<long> receiver = ReceiveAsync();
+            try
+            {
+                await Task.WhenAll(sender, receiver).ConfigureAwait(false);
+            }
+            catch
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                failure!.Throw();
+                throw;
+            }
+            return await receiver.ConfigureAwait(false);
+        }
+
+        private async Task SendBatchAsync(
             BigQueryWriteClient.AppendRowsStream appendStream,
             string writeStreamName,
             byte[] schemaBytes,
             RecordBatch batch,
-            bool isFirst,
-            CancellationToken cancellationToken)
+            bool isFirst)
         {
             // Normalize types BigQuery requires (microsecond precision)
             batch = NormalizeBatch(batch);
@@ -189,21 +298,6 @@ namespace AdbcDrivers.BigQuery
             }
 
             await appendStream.WriteAsync(request).ConfigureAwait(false);
-
-            // Read and check response
-            var responseStream = appendStream.GetResponseStream();
-            if (await responseStream.MoveNextAsync(cancellationToken).ConfigureAwait(false))
-            {
-                var response = responseStream.Current;
-                if (response.Error != null && response.Error.Code != 0)
-                {
-                    throw new AdbcException(
-                        $"BigQuery append failed: {response.Error.Message}",
-                        AdbcStatusCode.IOError);
-                }
-            }
-
-            return batch.Length;
         }
 
         private async Task HandleTableLifecycleAsync(
