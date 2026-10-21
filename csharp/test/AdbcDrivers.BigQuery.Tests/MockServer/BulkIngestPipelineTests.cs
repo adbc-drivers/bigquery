@@ -203,6 +203,46 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
         }
 
+        [Theory]
+        [InlineData(0)]
+        [InlineData(2)]
+        public async Task MissingAcknowledgmentsAfterRequestCompletionPreventCommit(int successfulResponses)
+        {
+            using var server = new BigQueryMockServer();
+            var requestsCompleted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.WriteService.AppendRequestsCompleted = () => requestsCompleted.TrySetResult(true);
+            int responses = 0;
+            server.WriteService.AppendResponseFactory = async _ =>
+            {
+                await requestsCompleted.Task;
+                return ++responses <= successfulResponses
+                    ? new AppendRowsResponse { AppendResult = new AppendRowsResponse.Types.AppendResult() }
+                    : null;
+            };
+            using AdbcConnection connection = Connect(server);
+            using RecordBatch batch = CreateBatch(2);
+            using var stream = new BatchStream(batch, batch, batch);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "missing_acknowledgments", BulkIngestMode.Create, false);
+            statement.SetOption(BigQueryParameters.IngestMaxInFlightBatches, "4");
+            statement.BindStream(stream);
+            try
+            {
+                AdbcException error = await Assert.ThrowsAsync<AdbcException>(() =>
+                    statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert.Contains("ended before all input was sent and acknowledged", error.Message);
+                Assert.True(requestsCompleted.Task.IsCompletedSuccessfully);
+                Assert.Equal(4, stream.ReadCalls);
+                Assert.Equal(successfulResponses + 1, responses);
+                Assert.Empty(server.WriteService.CommittedStreams);
+                Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+            }
+            finally
+            {
+                statement.Cancel();
+                requestsCompleted.TrySetResult(true);
+            }
+        }
+
         [Fact]
         public async Task SourceFailureCancelsPendingResponseAndPreventsCommit()
         {

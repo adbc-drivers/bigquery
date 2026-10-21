@@ -53,6 +53,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// <summary>Observes incoming requests independently of response generation.</summary>
         public Action<AppendRowsRequest>? AppendRequestReceived { get; set; }
 
+        /// <summary>Observes the client half-closing its append request stream.</summary>
+        public Action? AppendRequestsCompleted { get; set; }
+
         /// <summary>Runs after each response is written. Returning true ends the RPC.</summary>
         public Func<Task<bool>>? AppendResponseWritten { get; set; }
 
@@ -168,6 +171,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                         AppendRequestReceived?.Invoke(request);
                         await requests.Writer.WriteAsync(request, cancellation.Token);
                     }
+                    AppendRequestsCompleted?.Invoke();
                     requests.Writer.TryComplete();
                 }
                 catch (Exception error)

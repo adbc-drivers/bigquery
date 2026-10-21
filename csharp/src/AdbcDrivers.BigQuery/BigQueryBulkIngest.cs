@@ -237,6 +237,7 @@ namespace AdbcDrivers.BigQuery
                         slots.Release();
                     }
 
+                    // Reader completion requires both a completed writer and an empty pending queue.
                     if (!pending.Reader.Completion.IsCompleted)
                         throw new AdbcException("BigQuery append response stream ended before all input was sent and acknowledged.", AdbcStatusCode.IOError);
                     return rows;
