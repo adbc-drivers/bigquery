@@ -53,7 +53,10 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// <summary>Observes incoming requests independently of response generation.</summary>
         public Action<AppendRowsRequest>? AppendRequestReceived { get; set; }
 
-        /// <summary>Optional final RPC failure after all append requests have been read.</summary>
+        /// <summary>Runs after each response is written. Returning true ends the RPC.</summary>
+        public Func<Task<bool>>? AppendResponseWritten { get; set; }
+
+        /// <summary>Optional final RPC failure when the append RPC completes.</summary>
         public RpcException? AppendCompletionError { get; set; }
 
         public override Task<WriteStream> CreateWriteStream(CreateWriteStreamRequest request, ServerCallContext context)
@@ -143,6 +146,8 @@ namespace AdbcDrivers.BigQuery.MockServer
 
                     await responseStream.WriteAsync(response);
                     offset++;
+                    if (AppendResponseWritten != null && await AppendResponseWritten().WaitAsync(cancellation.Token))
+                        break;
                 }
                 if (AppendCompletionError != null)
                     throw AppendCompletionError;

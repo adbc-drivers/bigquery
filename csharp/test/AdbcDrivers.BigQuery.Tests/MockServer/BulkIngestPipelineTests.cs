@@ -174,8 +174,8 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         [Theory]
         [InlineData("error", 0, "rejected for test")]
         [InlineData("error", 6, "rejected for test")]
-        [InlineData("end", 0, "ended before acknowledging")]
-        [InlineData("end", 6, "ended before acknowledging")]
+        [InlineData("end", 0, "ended before all input was sent and acknowledged")]
+        [InlineData("end", 6, "ended before all input was sent and acknowledged")]
         [InlineData("empty", 0, "did not contain an append result")]
         public async Task FailedOrMissingResponsePreventsFinalizeAndCommit(string responseKind, int successfulResponses, string message)
         {
@@ -252,6 +252,56 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.True(stream.WaitingForRead.Task.IsCompletedSuccessfully);
             Assert.Empty(server.WriteService.CommittedStreams);
             Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task RpcTerminationAfterAcknowledgmentCancelsBlockedInputRead(bool failRpc)
+        {
+            using var server = new BigQueryMockServer();
+            using RecordBatch batch = CreateBatch(2);
+            using var stream = new BlockingBatchStream(batch);
+            server.WriteService.AppendResponseWritten = async () =>
+            {
+                await stream.WaitingForRead.Task;
+                return true;
+            };
+            if (failRpc)
+                server.WriteService.AppendCompletionError = new Grpc.Core.RpcException(
+                    new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, "shutdown after acknowledgment"));
+            using AdbcConnection connection = Connect(server);
+            var writeClient = new BigQueryWriteClientBuilder
+            {
+                Endpoint = server.GrpcEndpoint,
+                ChannelCredentials = Grpc.Core.ChannelCredentials.Insecure,
+            }.Build();
+            var ingest = new BigQueryBulkIngest(((BigQueryConnection)connection).Client!, writeClient, "mock-project");
+            using var cancellation = new CancellationTokenSource();
+            Task<UpdateResult> execution = ingest.ExecuteAsync("mock-project", "mock_dataset", "rpc_shutdown",
+                BulkIngestMode.Create, null, stream, 1, cancellationToken: cancellation.Token);
+            try
+            {
+                AdbcException error = await Assert.ThrowsAsync<AdbcException>(() =>
+                    execution.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.True(stream.WaitingForRead.Task.IsCompletedSuccessfully);
+                if (failRpc)
+                {
+                    Assert.Contains("shutdown after acknowledgment", error.Message);
+                    Assert.Equal(Grpc.Core.StatusCode.Internal,
+                        Assert.IsType<Grpc.Core.RpcException>(error.InnerException).StatusCode);
+                }
+                else
+                {
+                    Assert.Contains("ended before all input was sent and acknowledged", error.Message);
+                }
+                Assert.Empty(server.WriteService.CommittedStreams);
+                Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+            }
+            finally
+            {
+                cancellation.Cancel();
+            }
         }
 
         [Fact]

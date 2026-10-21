@@ -196,12 +196,15 @@ namespace AdbcDrivers.BigQuery
                             break;
                         }
 
+                        // Publish metadata first so even an immediate acknowledgment can be matched.
+                        await pending.Writer.WriteAsync(batch.Length, cancellation.Token).ConfigureAwait(false);
                         await SendBatchAsync(appendStream, writeStreamName,
                             schemaBytes, batch, first).ConfigureAwait(false);
-                        await pending.Writer.WriteAsync(batch.Length, cancellation.Token).ConfigureAwait(false);
                         first = false;
                     }
 
+                    // Make input completion visible before the server can return a clean EOF.
+                    pending.Writer.TryComplete();
                     await appendStream.WriteCompleteAsync().ConfigureAwait(false);
                 }
                 catch (Exception error)
@@ -220,27 +223,22 @@ namespace AdbcDrivers.BigQuery
                 try
                 {
                     long rows = 0;
-                    while (await pending.Reader.WaitToReadAsync(cancellation.Token).ConfigureAwait(false))
+                    while (await responses.MoveNextAsync(cancellation.Token).ConfigureAwait(false))
                     {
-                        while (pending.Reader.TryRead(out int batchRows))
-                        {
-                            if (!await responses.MoveNextAsync(cancellation.Token).ConfigureAwait(false))
-                                throw new AdbcException("BigQuery append response stream ended before acknowledging the batch.", AdbcStatusCode.IOError);
+                        var response = responses.Current;
+                        if (response.Error != null && response.Error.Code != 0)
+                            throw new AdbcException($"BigQuery append failed: {response.Error.Message}", AdbcStatusCode.IOError);
+                        if (response.AppendResult == null)
+                            throw new AdbcException("BigQuery append response did not contain an append result.", AdbcStatusCode.IOError);
+                        if (!pending.Reader.TryRead(out int batchRows))
+                            throw new AdbcException("BigQuery returned an unexpected extra append response.", AdbcStatusCode.IOError);
 
-                            var response = responses.Current;
-                            if (response.Error != null && response.Error.Code != 0)
-                                throw new AdbcException($"BigQuery append failed: {response.Error.Message}", AdbcStatusCode.IOError);
-                            if (response.AppendResult == null)
-                                throw new AdbcException("BigQuery append response did not contain an append result.", AdbcStatusCode.IOError);
-
-                            rows += batchRows;
-                            slots.Release();
-                        }
+                        rows += batchRows;
+                        slots.Release();
                     }
 
-                    // Observe the final RPC status, not just the last successful append.
-                    if (await responses.MoveNextAsync(cancellation.Token).ConfigureAwait(false))
-                        throw new AdbcException("BigQuery returned an unexpected extra append response.", AdbcStatusCode.IOError);
+                    if (!pending.Reader.Completion.IsCompleted)
+                        throw new AdbcException("BigQuery append response stream ended before all input was sent and acknowledged.", AdbcStatusCode.IOError);
                     return rows;
                 }
                 catch (Exception error)
