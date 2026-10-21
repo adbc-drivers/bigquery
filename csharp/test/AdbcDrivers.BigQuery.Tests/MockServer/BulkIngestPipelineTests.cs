@@ -305,7 +305,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
-        public async Task CallerCancellationStopsFullPipelineWithoutCommit()
+        public async Task StatementCancellationStopsFullPipelineWithoutCommit()
         {
             using var server = new BigQueryMockServer();
             var windowFilled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -324,25 +324,46 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             using AdbcConnection connection = Connect(server);
             using RecordBatch batch = CreateBatch(2);
             using var stream = new BatchStream(Enumerable.Repeat(batch, 7).ToArray());
-            var writeClient = new BigQueryWriteClientBuilder
-            {
-                Endpoint = server.GrpcEndpoint,
-                ChannelCredentials = Grpc.Core.ChannelCredentials.Insecure,
-            }.Build();
-            var ingest = new BigQueryBulkIngest(((BigQueryConnection)connection).Client!, writeClient, "mock-project");
-            using var cancellation = new CancellationTokenSource();
-            Task<UpdateResult> execution = ingest.ExecuteAsync("mock-project", "mock_dataset", "canceled",
-                BulkIngestMode.Create, null, stream, 2, cancellationToken: cancellation.Token);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "canceled", BulkIngestMode.Create, false);
+            statement.SetOption(BigQueryParameters.IngestMaxInFlightBatches, "2");
+            statement.BindStream(stream);
+            Task<UpdateResult> execution = statement.ExecuteUpdateAsync();
             try
             {
                 await windowFilled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-                cancellation.Cancel();
+                statement.Cancel();
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(10)));
             }
             finally
             {
-                cancellation.Cancel();
+                statement.Cancel();
                 releaseResponse.TrySetResult(true);
+            }
+            Assert.Empty(server.WriteService.CommittedStreams);
+            Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+        }
+
+        [Fact]
+        public async Task StatementCancellationStopsBlockedInputReadWithoutCommit()
+        {
+            using var server = new BigQueryMockServer();
+            using AdbcConnection connection = Connect(server);
+            using RecordBatch batch = CreateBatch(2);
+            using var stream = new BlockingBatchStream(batch);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "canceled_input", BulkIngestMode.Create, false);
+            statement.SetOption(BigQueryParameters.IngestMaxInFlightBatches, "1");
+            statement.BindStream(stream);
+            Task<UpdateResult> execution = statement.ExecuteUpdateAsync();
+            try
+            {
+                await stream.WaitingForRead.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                statement.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(10)));
+            }
+            finally
+            {
+                statement.Cancel();
+                stream.ReleaseRead.TrySetResult(true);
             }
             Assert.Empty(server.WriteService.CommittedStreams);
             Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
@@ -444,6 +465,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             public BlockingBatchStream(RecordBatch batch) => _batch = batch;
             public Schema Schema => _batch.Schema;
             public TaskCompletionSource<bool> WaitingForRead { get; } = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource<bool> ReleaseRead { get; } = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             public async ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken = default)
             {
                 if (!_read)
@@ -452,7 +474,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                     return _batch;
                 }
                 WaitingForRead.TrySetResult(true);
-                await Task.Delay(Timeout.Infinite, cancellationToken);
+                await ReleaseRead.Task.WaitAsync(cancellationToken);
                 return null;
             }
             public void Dispose() { }

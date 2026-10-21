@@ -1343,6 +1343,7 @@ namespace AdbcDrivers.BigQuery
 
         private async Task<UpdateResult> ExecuteBulkIngestAsync()
         {
+            using CancellationContext context = new(cancellationRegistry);
             int maxInFlightBatches = Options?.TryGetValue(BigQueryParameters.IngestMaxInFlightBatches, out string? value) == true
                 ? int.Parse(value!) : BigQueryConstants.DefaultIngestMaxInFlightBatches;
             string compression = Options?.TryGetValue(BigQueryParameters.IngestGrpcCompression, out string? encoding) == true
@@ -1357,7 +1358,8 @@ namespace AdbcDrivers.BigQuery
                 _boundBatch,
                 _boundStream,
                 maxInFlightBatches,
-                compression).ConfigureAwait(false);
+                compression,
+                cancellationToken: context.CancellationToken).ConfigureAwait(false);
         }
 
         private BigQueryWriteClient CreateBigQueryWriteClient()
