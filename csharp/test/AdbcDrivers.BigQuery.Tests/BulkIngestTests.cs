@@ -541,7 +541,7 @@ namespace AdbcDrivers.BigQuery.Tests
             Add("boolean", new BooleanArray.Builder().Append(false).Append(true).Append(false).AppendNull().Build(), "true", "false");
             Add("single", new FloatArray.Builder().Append(99).Append(-1.5f).Append(0).AppendNull().Build(), "-1.5", "0");
             Add("double", new DoubleArray.Builder().Append(99).Append(-1.25).Append(0).AppendNull().Build(), "-1.25", "0");
-            Add("text", new StringArray.Builder().Append("excluded").Append("caf\u00e9 \u65e5\u672c").Append("").AppendNull().Build(), "caf\u00e9 \u65e5\u672c", "");
+            Add("text", new StringArray.Builder().Append("excluded").Append("caf\u00e9 \u65e5\u672c").Append("").AppendNull().Build(), "caf\u00e9 \u65e5\u672c", ""); // codespell:ignore caf
             Add("binary", new BinaryArray.Builder().Append(new byte[] { 99 }).Append(new byte[] { 0, 255 }).Append(System.Array.Empty<byte>()).AppendNull().Build(),
                 "00ff", "", "LOWER(TO_HEX(binary))");
             const string numeric = "-99999999999999999999999999999.999999999";
