@@ -306,8 +306,10 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             await AssertSingleRowAsync(result);
         }
 
-        [Fact]
-        public void CanBulkIngestAppendToTable()
+        [Theory]
+        [InlineData("protobuf")]
+        [InlineData("arrow")]
+        public void CanBulkIngestAppendToTable(string format)
         {
             using var mockServer = new BigQueryMockServer();
 
@@ -352,6 +354,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
 
             // Use BulkIngest with CreateAppend mode (creates table if missing)
             using AdbcStatement statement = connection.BulkIngest(projectId, datasetId, tableId, BulkIngestMode.CreateAppend, false);
+            statement.SetOption(BigQueryParameters.IngestFormat, format);
             statement.Bind(batch, schema);
 
             UpdateResult result = statement.ExecuteUpdate();
@@ -364,8 +367,16 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             var writeStream = Assert.Single(mockServer.WriteService.Streams.Values);
             Assert.Equal(WriteStream.Types.Type.Pending, writeStream.Type);
             Assert.True(writeStream.Finalized, "Write stream should have been finalized");
-            Assert.NotNull(writeStream.SchemaBytes);
-            Assert.Single(writeStream.RecordBatches);
+            if (format == "arrow")
+            {
+                Assert.NotNull(writeStream.SchemaBytes);
+                Assert.Single(writeStream.RecordBatches);
+            }
+            else
+            {
+                Assert.NotNull(writeStream.ProtoSchema);
+                Assert.Single(writeStream.ProtoBatches);
+            }
 
             // Verify the stream was committed
             Assert.Single(mockServer.WriteService.CommittedStreams);
@@ -423,7 +434,8 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             string writeStreamName = Assert.Single(mockServer.WriteService.Streams.Keys.Except(existingStreamNames));
             var writeStream = mockServer.WriteService.Streams[writeStreamName];
             Assert.True(writeStream.Finalized);
-            Assert.Single(writeStream.RecordBatches);
+            Assert.NotNull(writeStream.ProtoSchema);
+            Assert.Single(writeStream.ProtoBatches);
         }
 
         [Fact]

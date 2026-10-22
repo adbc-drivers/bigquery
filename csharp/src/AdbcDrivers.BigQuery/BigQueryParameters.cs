@@ -59,6 +59,7 @@ namespace AdbcDrivers.BigQuery
         public const string MaxFetchConcurrency = "adbc.bigquery.max_fetch_concurrency";
         public const string IngestMaxInFlightBatches = "adbc.bigquery.ingest.max_in_flight_batches";
         public const string IngestGrpcCompression = "adbc.bigquery.ingest.grpc_compression";
+        public const string IngestFormat = "adbc.bigquery.ingest.format";
         public const string MaximumRetryAttempts = "adbc.bigquery.maximum_retries";
         public const string ProjectId = "adbc.bigquery.project_id";
         public const string ProxyHost = "adbc.bigquery.proxy_host";
@@ -113,7 +114,7 @@ namespace AdbcDrivers.BigQuery
             AllowLargeResults, AuthenticationType, BillingProjectId, ClientId, ClientTimeout, DefaultClientLocation, EvaluationKind, GetQueryResultsOptionsTimeout,
             EvaluationKind, GetQueryResultsOptionsTimeout, IncludeConstraintsWithGetObjects,
             IncludePublicProjectId, LargeDecimalsAsString, CreateLargeResultsDataset, LargeResultsDataset, LargeResultsDestinationTable,
-            MaxFetchConcurrency, IngestMaxInFlightBatches, IngestGrpcCompression, MaximumRetryAttempts, UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,
+            MaxFetchConcurrency, IngestMaxInFlightBatches, IngestGrpcCompression, IngestFormat, MaximumRetryAttempts, UseJobCreationMode, ProjectId, RetryDelayMs, StatementIndex,
             StatementType, UniverseDomain, AllowUnknownUniverseDomain, UseLastStatement, UseLegacySQL
         };
 
@@ -134,6 +135,7 @@ namespace AdbcDrivers.BigQuery
         public const int DefaultIngestMaxInFlightBatches = 4;
         public const string GzipCompression = "gzip";
         public const string DefaultIngestGrpcCompression = GzipCompression;
+        public const string DefaultIngestFormat = "protobuf";
         public const string UserAuthenticationType = "user";
         public const string EntraIdAuthenticationType = "aad";
         public const string ServiceAccountAuthenticationType = "service";
