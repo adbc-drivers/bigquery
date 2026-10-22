@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -252,6 +253,12 @@ func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string
 
 func stringToTable(defaultProjectID, defaultDatasetID, value string) (*bigquery.Table, error) {
 	parts := strings.Split(value, ".")
+	if slices.Contains(parts, "") {
+		return nil, adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid table reference format, expected `[[ProjectId.][Catalog.]DatasetId.]TableId`, got: `%s`", value),
+		}
+	}
 	table := &bigquery.Table{
 		ProjectID: defaultProjectID,
 		DatasetID: defaultDatasetID,
@@ -266,10 +273,14 @@ func stringToTable(defaultProjectID, defaultDatasetID, value string) (*bigquery.
 		table.ProjectID = parts[0]
 		table.DatasetID = parts[1]
 		table.TableID = parts[2]
+	case 4:
+		table.ProjectID = parts[0]
+		table.DatasetID = parts[1] + "." + parts[2]
+		table.TableID = parts[3]
 	default:
 		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("[bq] invalid table reference format, expected `[[ProjectId.]DatasetId.]TableId`, got: `%s`", value),
+			Msg:  fmt.Sprintf("[bq] invalid table reference format, expected `[[ProjectId.][Catalog.]DatasetId.]TableId`, got: `%s`", value),
 		}
 	}
 	return table, nil
