@@ -128,6 +128,13 @@ namespace AdbcDrivers.BigQuery.MockServer
                                 }
                             }
                         }
+                        else if (request.ProtoRows != null)
+                        {
+                            if (request.ProtoRows.WriterSchema != null)
+                                streamInfo.ProtoSchema = request.ProtoRows.WriterSchema;
+                            streamInfo.ProtoBatches.Add(request.ProtoRows.Rows);
+                            streamInfo.RowCount += request.ProtoRows.Rows.SerializedRows.Count;
+                        }
                     }
 
                     AppendRowsResponse? response;
@@ -216,6 +223,8 @@ namespace AdbcDrivers.BigQuery.MockServer
             public WriteStream.Types.Type Type { get; }
             public byte[]? SchemaBytes { get; set; }
             public List<byte[]> RecordBatches { get; } = new();
+            public ProtoSchema? ProtoSchema { get; set; }
+            public List<ProtoRows> ProtoBatches { get; } = new();
             public long RowCount { get; set; }
             public bool Finalized { get; set; }
 

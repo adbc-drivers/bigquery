@@ -202,6 +202,10 @@ namespace AdbcDrivers.BigQuery
                     if (value != "none" && value != BigQueryConstants.GzipCompression)
                         throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'none' or '{BigQueryConstants.GzipCompression}'.");
                     break;
+                case BigQueryParameters.IngestFormat:
+                    if (value != "protobuf" && value != "arrow")
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'protobuf' or 'arrow'.");
+                    break;
                 case BigQueryParameters.UseJobCreationMode:
                     if (!bool.TryParse(value, out _))
                     {
@@ -1348,6 +1352,8 @@ namespace AdbcDrivers.BigQuery
                 ? int.Parse(value!) : BigQueryConstants.DefaultIngestMaxInFlightBatches;
             string compression = Options?.TryGetValue(BigQueryParameters.IngestGrpcCompression, out string? encoding) == true
                 ? encoding! : BigQueryConstants.DefaultIngestGrpcCompression;
+            string format = Options?.TryGetValue(BigQueryParameters.IngestFormat, out string? formatValue) == true
+                ? formatValue! : BigQueryConstants.DefaultIngestFormat;
             var writeClient = CreateBigQueryWriteClient();
             var ingest = new BigQueryBulkIngest(Client, writeClient, this.bigQueryConnection.ProjectId!);
             return await ingest.ExecuteAsync(
@@ -1359,6 +1365,7 @@ namespace AdbcDrivers.BigQuery
                 _boundStream,
                 maxInFlightBatches,
                 compression,
+                format,
                 cancellationToken: context.CancellationToken).ConfigureAwait(false);
         }
 

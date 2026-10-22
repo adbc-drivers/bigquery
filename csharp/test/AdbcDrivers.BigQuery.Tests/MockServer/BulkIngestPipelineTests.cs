@@ -28,6 +28,7 @@ using Apache.Arrow.Adbc;
 using Apache.Arrow.Ipc;
 using Apache.Arrow.Types;
 using Google.Cloud.BigQuery.Storage.V1;
+using Google.Protobuf;
 using Xunit;
 
 namespace AdbcDrivers.BigQuery.Tests.MockServer
@@ -36,10 +37,13 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
     public class BulkIngestPipelineTests
     {
         [Theory]
-        [InlineData(null, true)]
-        [InlineData("none", false)]
-        [InlineData("gzip", true)]
-        public async Task CompressionChangesGrpcFramingButNotArrowPayload(string? compression, bool expectCompressed)
+        [InlineData(null, true, null)]
+        [InlineData("none", false, "protobuf")]
+        [InlineData("gzip", true, "protobuf")]
+        [InlineData(null, true, "arrow")]
+        [InlineData("none", false, "arrow")]
+        [InlineData("gzip", true, "arrow")]
+        public async Task CompressionChangesGrpcFramingButNotPayload(string? compression, bool expectCompressed, string? format)
         {
             using var server = new BigQueryMockServer();
             var requests = new ConcurrentQueue<AppendRowsRequest>();
@@ -54,13 +58,39 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "compression", BulkIngestMode.Create, false);
             if (compression != null)
                 statement.SetOption(BigQueryParameters.IngestGrpcCompression, compression);
+            if (format != null)
+                statement.SetOption(BigQueryParameters.IngestFormat, format);
             statement.BindStream(stream);
 
             UpdateResult result = await statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(8192, result.AffectedRows);
             Assert.Equal(2, requests.Count);
-            byte[] expected = ArrowSerializationHelpers.SerializeRecordBatch(batch);
-            Assert.All(requests, request => Assert.Equal(expected, request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray()));
+            if (format == "arrow")
+            {
+                byte[] expected = ArrowSerializationHelpers.SerializeRecordBatch(batch);
+                Assert.All(requests, request =>
+                {
+                    Assert.Null(request.ProtoRows);
+                    Assert.Equal(expected, request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray());
+                });
+            }
+            else
+            {
+                Assert.All(requests, request =>
+                {
+                    Assert.Null(request.ArrowRows);
+                    Assert.Equal(4096, request.ProtoRows.Rows.SerializedRows.Count);
+                    for (int i = 0; i < 4096; i++)
+                    {
+                        using var input = new CodedInputStream(request.ProtoRows.Rows.SerializedRows[i].ToByteArray());
+                        Assert.Equal(8U, input.ReadTag());
+                        Assert.Equal(i, input.ReadInt64());
+                        Assert.True(input.IsAtEnd);
+                    }
+                });
+                Assert.NotNull(requests.First().ProtoRows.WriterSchema);
+                Assert.Null(requests.Last().ProtoRows.WriterSchema);
+            }
             var wire = Assert.Single(server.AppendTransportRequests);
             Assert.Equal(expectCompressed, wire.Compressed);
             if (expectCompressed)
@@ -111,11 +141,84 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Theory]
-        [InlineData(null, "none")]
-        [InlineData(1, "none")]
-        [InlineData(3, "none")]
-        [InlineData(3, "gzip")]
-        public async Task PipelineFillsButDoesNotExceedWindowBeforeAcknowledgment(int? configuredWindow, string compression)
+        [InlineData("")]
+        [InlineData("json")]
+        [InlineData("PROTOBUF")]
+        public void RejectsUnsupportedIngestFormat(string value)
+        {
+            using var server = new BigQueryMockServer();
+            using AdbcConnection connection = Connect(server);
+            using AdbcStatement statement = connection.CreateStatement();
+            Assert.Throws<ArgumentException>(() => statement.SetOption(BigQueryParameters.IngestFormat, value));
+        }
+
+        [Fact]
+        public async Task UnsupportedProtobufSchemaFailsBeforeTableLifecycle()
+        {
+            using var server = new BigQueryMockServer();
+            using AdbcConnection connection = Connect(server);
+            var schema = new Schema(new[] { new Field("nested_lists", new ListType(new ListType(Int64Type.Default)), true) }, null);
+            using var stream = new BatchStream(schema);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "unsupported", BulkIngestMode.Replace, false);
+            statement.BindStream(stream);
+            AdbcException error = await Assert.ThrowsAsync<AdbcException>(() => statement.ExecuteUpdateAsync());
+            Assert.Equal(AdbcStatusCode.NotImplemented, error.Status);
+            Assert.Empty(server.RequestsOfKind(MockRequestKind.TableGet));
+            Assert.Empty(server.RequestsOfKind(MockRequestKind.TableInsert));
+            Assert.Empty(server.RequestsOfKind(MockRequestKind.TableDelete));
+            Assert.Empty(server.WriteService.Streams);
+        }
+
+        [Fact]
+        public async Task ProtobufEncodingFailurePreventsFinalizeAndCommit()
+        {
+            using var server = new BigQueryMockServer();
+            using AdbcConnection connection = Connect(server);
+            var schema = new Schema(new[] { new Field("value", UInt64Type.Default, true) }, null);
+            using var batch = new RecordBatch(schema,
+                new IArrowArray[] { new UInt64Array.Builder().Append(ulong.MaxValue).Build() }, 1);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "overflow", BulkIngestMode.Create, false);
+            statement.Bind(batch, schema);
+            AdbcException error = await Assert.ThrowsAsync<AdbcException>(() => statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(AdbcStatusCode.InvalidArgument, error.Status);
+            Assert.Contains("INT64 range", error.Message);
+            Assert.Empty(server.WriteService.CommittedStreams);
+            Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+        }
+
+        [Theory]
+        [InlineData("protobuf")]
+        [InlineData("arrow")]
+        public async Task AppendFailureIncludesRowErrors(string format)
+        {
+            using var server = new BigQueryMockServer();
+            server.WriteService.AppendResponseFactory = _ => Task.FromResult<AppendRowsResponse?>(new AppendRowsResponse
+            {
+                Error = new Google.Rpc.Status { Code = 3, Message = "invalid rows" },
+                RowErrors = { new RowError { Index = 1, Message = "invalid value in field example" } },
+            });
+            using AdbcConnection connection = Connect(server);
+            using RecordBatch batch = CreateBatch(2);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "row_error", BulkIngestMode.Create, false);
+            statement.SetOption(BigQueryParameters.IngestFormat, format);
+            statement.Bind(batch, batch.Schema);
+            AdbcException error = await Assert.ThrowsAsync<AdbcException>(() => statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Contains("invalid rows", error.Message);
+            Assert.Contains("invalid value in field example", error.Message);
+            Assert.Empty(server.WriteService.CommittedStreams);
+            Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+        }
+
+        [Theory]
+        [InlineData(null, "none", "protobuf")]
+        [InlineData(1, "none", "protobuf")]
+        [InlineData(3, "none", "protobuf")]
+        [InlineData(3, "gzip", "protobuf")]
+        [InlineData(null, "none", "arrow")]
+        [InlineData(1, "none", "arrow")]
+        [InlineData(3, "none", "arrow")]
+        [InlineData(3, "gzip", "arrow")]
+        public async Task PipelineFillsButDoesNotExceedWindowBeforeAcknowledgment(int? configuredWindow, string compression, string format)
         {
             int window = configuredWindow ?? BigQueryConstants.DefaultIngestMaxInFlightBatches;
             using var server = new BigQueryMockServer();
@@ -142,6 +245,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             if (configuredWindow.HasValue)
                 statement.SetOption(BigQueryParameters.IngestMaxInFlightBatches, configuredWindow.Value.ToString());
             statement.SetOption(BigQueryParameters.IngestGrpcCompression, compression);
+            statement.SetOption(BigQueryParameters.IngestFormat, format);
             statement.BindStream(stream);
 
             Task<UpdateResult> execution = statement.ExecuteUpdateAsync();
@@ -163,10 +267,21 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             UpdateResult result = await execution.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(11, result.AffectedRows);
             Assert.Equal(batches.Length, requests.Count);
-            Assert.NotNull(requests.First().ArrowRows.WriterSchema);
-            Assert.All(requests.Skip(1), request => Assert.Null(request.ArrowRows.WriterSchema));
-            Assert.Equal(batches.Select(b => Convert.ToBase64String(ArrowSerializationHelpers.SerializeRecordBatch(b))),
-                requests.Select(request => Convert.ToBase64String(request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray())));
+            if (format == "arrow")
+            {
+                Assert.NotNull(requests.First().ArrowRows.WriterSchema);
+                Assert.All(requests.Skip(1), request => Assert.Null(request.ArrowRows.WriterSchema));
+                Assert.Equal(batches.Select(b => Convert.ToBase64String(ArrowSerializationHelpers.SerializeRecordBatch(b))),
+                    requests.Select(request => Convert.ToBase64String(request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray())));
+            }
+            else
+            {
+                Assert.NotNull(requests.First().ProtoRows.WriterSchema);
+                Assert.All(requests.Skip(1), request => Assert.Null(request.ProtoRows.WriterSchema));
+                var encoder = new ProtobufEncoder(first.Schema);
+                Assert.Equal(batches.Select(b => encoder.Encode(b).ToByteString()),
+                    requests.Select(request => request.ProtoRows.Rows.ToByteString()));
+            }
             Assert.True(Assert.Single(server.WriteService.Streams.Values).Finalized);
             Assert.Single(server.WriteService.CommittedStreams);
         }

@@ -36,8 +36,7 @@ using TableFieldSchema = Google.Apis.Bigquery.v2.Data.TableFieldSchema;
 namespace AdbcDrivers.BigQuery
 {
     /// <summary>
-    /// Implements bulk ingestion using the BigQuery Storage Write API with Arrow IPC format.
-    /// Data flows columnar end-to-end: Arrow RecordBatch → IPC serialize → gRPC → BigQuery.
+    /// Implements bulk ingestion using the BigQuery Storage Write API with Protobuf or Arrow IPC.
     /// Uses a PENDING write stream for atomic commit.
     /// </summary>
     internal sealed class BigQueryBulkIngest
@@ -65,12 +64,15 @@ namespace AdbcDrivers.BigQuery
             IArrowArrayStream? boundStream,
             int maxInFlightBatches = BigQueryConstants.DefaultIngestMaxInFlightBatches,
             string grpcCompression = BigQueryConstants.DefaultIngestGrpcCompression,
+            string format = BigQueryConstants.DefaultIngestFormat,
             CancellationToken cancellationToken = default)
         {
             if (maxInFlightBatches <= 0)
                 throw new AdbcException("Maximum in-flight batches must be positive.", AdbcStatusCode.InvalidArgument);
             if (grpcCompression != "none" && grpcCompression != BigQueryConstants.GzipCompression)
                 throw new AdbcException("gRPC compression must be 'none' or 'gzip'.", AdbcStatusCode.InvalidArgument);
+            if (format != "protobuf" && format != "arrow")
+                throw new AdbcException("Ingestion format must be 'protobuf' or 'arrow'.", AdbcStatusCode.InvalidArgument);
 
             if (string.IsNullOrEmpty(targetTable))
                 throw new AdbcException("Target table name is required for bulk ingest", AdbcStatusCode.InvalidArgument);
@@ -99,6 +101,8 @@ namespace AdbcDrivers.BigQuery
             // so the serialized schema sent with AppendRows is consistent with
             // the serialized record batches.
             Schema normalizedSchema = NormalizeSchema(arrowSchema);
+            // Validate the Protobuf schema before any table creation or replacement.
+            var protoEncoder = format == "protobuf" ? new ProtobufEncoder(arrowSchema) : null;
 
             // Handle table lifecycle based on BulkIngestMode
             await HandleTableLifecycleAsync(catalog, targetDbSchema!, targetTable, mode, normalizedSchema, cancellationToken).ConfigureAwait(false);
@@ -117,8 +121,8 @@ namespace AdbcDrivers.BigQuery
             try
             {
                 // Serialize the Arrow schema (sent with first request)
-                byte[] schemaBytes = SerializeSchema(normalizedSchema);
-                totalRows = await AppendBatchesAsync(writeStream.Name, schemaBytes, boundBatch, boundStream,
+                byte[]? schemaBytes = protoEncoder == null ? SerializeSchema(normalizedSchema) : null;
+                totalRows = await AppendBatchesAsync(writeStream.Name, schemaBytes, protoEncoder, boundBatch, boundStream,
                     maxInFlightBatches, grpcCompression, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not AdbcException && ex is not OperationCanceledException)
@@ -145,7 +149,8 @@ namespace AdbcDrivers.BigQuery
 
         private async Task<long> AppendBatchesAsync(
             string writeStreamName,
-            byte[] schemaBytes,
+            byte[]? schemaBytes,
+            ProtobufEncoder? protoEncoder,
             RecordBatch? boundBatch,
             IArrowArrayStream? boundStream,
             int maxInFlightBatches,
@@ -199,7 +204,7 @@ namespace AdbcDrivers.BigQuery
                         // Publish metadata first so even an immediate acknowledgment can be matched.
                         await pending.Writer.WriteAsync(batch.Length, cancellation.Token).ConfigureAwait(false);
                         await SendBatchAsync(appendStream, writeStreamName,
-                            schemaBytes, batch, first).ConfigureAwait(false);
+                            schemaBytes, protoEncoder, batch, first, cancellation.Token).ConfigureAwait(false);
                         first = false;
                     }
 
@@ -227,7 +232,12 @@ namespace AdbcDrivers.BigQuery
                     {
                         var response = responses.Current;
                         if (response.Error != null && response.Error.Code != 0)
-                            throw new AdbcException($"BigQuery append failed: {response.Error.Message}", AdbcStatusCode.IOError);
+                        {
+                            string message = $"BigQuery append failed: {response.Error.Message}";
+                            if (response.RowErrors.Count > 0)
+                                message += $" Row errors: {string.Join("; ", response.RowErrors)}";
+                            throw new AdbcException(message, AdbcStatusCode.IOError);
+                        }
                         if (response.AppendResult == null)
                             throw new AdbcException("BigQuery append response did not contain an append result.", AdbcStatusCode.IOError);
                         if (!pending.Reader.TryRead(out int batchRows))
@@ -267,10 +277,28 @@ namespace AdbcDrivers.BigQuery
         private async Task SendBatchAsync(
             BigQueryWriteClient.AppendRowsStream appendStream,
             string writeStreamName,
-            byte[] schemaBytes,
+            byte[]? schemaBytes,
+            ProtobufEncoder? protoEncoder,
             RecordBatch batch,
-            bool isFirst)
+            bool isFirst,
+            CancellationToken cancellationToken)
         {
+            if (protoEncoder != null)
+            {
+                var protoRequest = new AppendRowsRequest
+                {
+                    WriteStream = writeStreamName,
+                    ProtoRows = new AppendRowsRequest.Types.ProtoData
+                    {
+                        Rows = protoEncoder.Encode(batch, cancellationToken),
+                    }
+                };
+                if (isFirst)
+                    protoRequest.ProtoRows.WriterSchema = protoEncoder.WriterSchema;
+                await appendStream.WriteAsync(protoRequest).ConfigureAwait(false);
+                return;
+            }
+
             // Normalize types BigQuery requires (microsecond precision)
             batch = NormalizeBatch(batch);
 
@@ -293,7 +321,7 @@ namespace AdbcDrivers.BigQuery
             {
                 request.ArrowRows.WriterSchema = new ArrowSchema
                 {
-                    SerializedSchema = ByteString.CopyFrom(schemaBytes)
+                    SerializedSchema = ByteString.CopyFrom(schemaBytes!)
                 };
             }
 
