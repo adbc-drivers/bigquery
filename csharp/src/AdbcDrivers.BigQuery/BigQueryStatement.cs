@@ -75,6 +75,7 @@ namespace AdbcDrivers.BigQuery
         private BulkIngestMode _ingestMode;
         private RecordBatch? _boundBatch;
         private IArrowArrayStream? _boundStream;
+        private BigQueryQueryParameters? _queryParameters;
 
         public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
         {
@@ -104,12 +105,14 @@ namespace AdbcDrivers.BigQuery
         {
             _boundBatch = batch ?? throw new ArgumentNullException(nameof(batch));
             _boundStream = null;
+            _queryParameters = null;
         }
 
         public override void BindStream(IArrowArrayStream stream)
         {
             _boundStream = stream ?? throw new ArgumentNullException(nameof(stream));
             _boundBatch = null;
+            _queryParameters = null;
         }
 
         private BigQueryClient Client => this.bigQueryConnection.Client ?? throw new AdbcException("Client cannot be null");
@@ -257,11 +260,18 @@ namespace AdbcDrivers.BigQuery
             return await this.TraceActivityAsync(async activity =>
             {
                 QueryOptions queryOptions = ValidateOptions(activity);
+                using CancellationContext parameterContext = new(cancellationRegistry);
+                BigQueryQueryParameters? queryParameters = await GetQueryParametersAsync(parameterContext.CancellationToken).ConfigureAwait(false);
+                queryParameters?.ApplyTo(queryOptions);
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
 
                 if (isMetadataCommand)
                 {
+                    if (queryParameters != null)
+                    {
+                        throw new AdbcException("Query parameters cannot be bound to metadata commands.", AdbcStatusCode.InvalidArgument);
+                    }
                     return await ExecuteMetadataCommandQuery(activity);
                 }
 
@@ -285,6 +295,7 @@ namespace AdbcDrivers.BigQuery
                 {
                     string requestId = Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture);
                     QueryRequest queryRequest = CreateJobCreationRequiredModeRequest(queryOptions, queryResultsTimeout, requestId);
+                    queryParameters?.ApplyTo(queryRequest);
                     QueryResponse queryResponse;
                     using (JobCancellationContext queryContext = new JobCancellationContext(cancellationRegistry))
                     {
@@ -317,7 +328,7 @@ namespace AdbcDrivers.BigQuery
                 else
                 {
                     job = await ExecuteWithRetriesAsync(
-                        () => Client.CreateQueryJobAsync(SqlQuery, null, queryOptions), activity).ConfigureAwait(false);
+                        () => Client.CreateQueryJobAsync(SqlQuery, queryParameters?.Parameters, queryOptions), activity).ConfigureAwait(false);
                     jobReference = job.Reference;
                 }
 
@@ -476,6 +487,22 @@ namespace AdbcDrivers.BigQuery
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, totalRows);
                 return new QueryResult(totalRows, stream);
             }, ClassName + "." + nameof(ExecuteQueryInternalAsync));
+        }
+
+        internal async Task<BigQueryQueryParameters?> GetQueryParametersAsync(CancellationToken cancellationToken)
+        {
+            if (_queryParameters == null)
+            {
+                if (_boundBatch != null)
+                {
+                    _queryParameters = BigQueryQueryParameters.FromBatch(_boundBatch);
+                }
+                else if (_boundStream != null)
+                {
+                    _queryParameters = await BigQueryQueryParameters.FromStreamAsync(_boundStream, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            return _queryParameters;
         }
 
         private QueryRequest CreateJobCreationRequiredModeRequest(QueryOptions queryOptions, TimeSpan? timeout, string requestId)
@@ -1310,11 +1337,22 @@ namespace AdbcDrivers.BigQuery
                     };
                 }
 
+                BigQueryQueryParameters? queryParameters = await GetQueryParametersAsync(context.CancellationToken).ConfigureAwait(false);
+                if (queryParameters != null)
+                {
+                    updateQueryOptions ??= new QueryOptions();
+                    if (Options?.TryGetValue(BigQueryParameters.UseLegacySQL, out string? legacySql) == true)
+                    {
+                        updateQueryOptions.UseLegacySql = string.Equals(legacySql, "true", StringComparison.OrdinalIgnoreCase);
+                    }
+                    queryParameters.ApplyTo(updateQueryOptions);
+                }
+
                 Task<BigQueryJob> createJobAsyncFunc()
                 {
                     return ExecuteCancellableJobAsync(context, activity, async (context, jobActivity) =>
                     {
-                        context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, null, updateQueryOptions, context.CancellationToken).ConfigureAwait(false);
+                        context.Job = await this.Client.CreateQueryJobAsync(SqlQuery, queryParameters?.Parameters, updateQueryOptions, context.CancellationToken).ConfigureAwait(false);
                         return context.Job;
                     }, ClassName + "." + nameof(ExecuteUpdateInternalAsync) + "." + nameof(BigQueryClient.CreateQueryJobAsync));
                 }

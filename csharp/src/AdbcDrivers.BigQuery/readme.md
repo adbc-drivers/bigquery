@@ -45,6 +45,32 @@ The ADBC driver passes the configured credentials to BigQuery, but you may need 
 
 ## Parameters
 
+### SQL query parameters
+
+`Bind` and `BindStream` support a single row of positional query parameters for
+GoogleSQL `?` placeholders. The bindings are used by both query-submission paths
+and by non-ingest `ExecuteUpdate`. Rebinding replaces the previous values.
+Bindings are serialized separately from SQL; callers must not quote or escape
+parameter values as SQL literals. Legacy SQL is rejected when parameters are bound.
+
+Supported Arrow scalar types are boolean, signed integers, unsigned integers
+within INT64 range, float/double, UTF-8 text, binary, date, time, timestamp, and
+decimal128/256 within BigQuery NUMERIC/BIGNUMERIC precision and scale limits.
+Null values retain their Arrow types. Temporal values must fit BigQuery's
+microsecond precision; finer nonzero fractions are rejected rather than truncated.
+Unzoned timestamps map to DATETIME and zoned timestamps map to TIMESTAMP.
+The Arrow timestamp-with-offset extension also maps to TIMESTAMP, preserving
+the UTC instant rather than interpreting the local clock as UTC.
+Duration/interval, nested types, named parameters, and multiple parameter rows
+are not supported by this query-binding implementation. Bulk ingestion retains
+its existing batch/stream behavior.
+
+For durations represented exactly in Int64 microseconds, callers can explicitly
+bind the count and construct an interval in GoogleSQL with
+`JUSTIFY_INTERVAL(INTERVAL ? MICROSECOND)` instead of binding an Arrow duration.
+
+### Driver configuration
+
 The following parameters can be used to configure the driver behavior. The parameters are case sensitive.
 
 **adbc.bigquery.access_token**<br>
