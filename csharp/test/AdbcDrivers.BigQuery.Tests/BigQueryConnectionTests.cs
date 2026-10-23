@@ -551,6 +551,33 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Equal(validLocation, location);
         }
 
+        [Fact]
+        public void Constructor_SetsDriverUserAgent_WhenCustomUserAgentProvided()
+        {
+            // Arrange
+            var properties = CreateBaseProperties();
+            properties["adbc.bigquery.custom_user_agent"] = "MyCustomApp/2.0";
+
+            // Act
+            var connection = new BigQueryConnection(properties);
+
+            // Assert
+            Assert.Equal($"Google-BigQuery-ADBC-CSharp/{BigQueryUtils.GetDriverVersion()} MyCustomApp/2.0", connection.DriverUserAgent);
+        }
+
+        [Fact]
+        public void Constructor_UsesDefaultDriverUserAgent_WhenCustomUserAgentNotProvided()
+        {
+            // Arrange
+            var properties = CreateBaseProperties();
+
+            // Act
+            var connection = new BigQueryConnection(properties);
+
+            // Assert
+            Assert.Equal($"Google-BigQuery-ADBC-CSharp/{BigQueryUtils.GetDriverVersion()}", connection.DriverUserAgent);
+        }
+
         #endregion
 
         #region Helper Methods
