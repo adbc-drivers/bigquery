@@ -101,6 +101,17 @@ The following parameters can be used to configure the driver behavior. The param
 **adbc.bigquery.max_fetch_concurrency**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. Sets the [maxStreamCount](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.Storage.V1/latest/Google.Cloud.BigQuery.Storage.V1.BigQueryReadClient#Google_Cloud_BigQuery_Storage_V1_BigQueryReadClient_CreateReadSession_System_String_Google_Cloud_BigQuery_Storage_V1_ReadSession_System_Int32_Google_Api_Gax_Grpc_CallSettings_) for the CreateReadSession method. If not set, defaults to 1.
 
+**adbc.bigquery.ingest.max_in_flight_batches**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional **statement** option used by bulk ingestion. A positive integer limiting the number of unacknowledged append requests on one pending write stream; defaults to `4`. Use `1` for sequential appends. One sender writes requests in order while one reader checks responses concurrently. Input reading pauses when the window is full. Each Arrow batch remains one request, so this bounds request count rather than bytes; memory usage depends on batch size. All responses and the final RPC status must succeed before finalization and atomic commit. This option does not create multiple streams or introduce automatic append retries.
+
+**adbc.bigquery.ingest.grpc_compression**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional **statement** option used by bulk ingestion. Accepts `gzip` (default) or `none`. Requests gRPC transport compression for append messages in either upload format. Compression trades CPU for reduced network traffic; the performance benefit depends on the data and environment. Set to `none` to disable compression. Unsupported compression fails without falling back to uncompressed appends.
+
+**adbc.bigquery.ingest.format**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional **statement** option used by bulk ingestion. Accepts `protobuf` (default) or `arrow`. Both accept Arrow record batches and streams through the same bulk ingestion API. Protobuf converts batches into rows and uses BigQuery's `column_name` annotations to preserve flexible column names, including spaces, at every nesting level. Arrow sends Arrow IPC directly, but the Storage Write API rejects some flexible column names in this format. Set this option before `ExecuteUpdate`, for example `statement.SetOption(BigQueryParameters.IngestFormat, "arrow")`. Both formats use the same pipelining, compression, and atomic commit behavior; there is no automatic fallback between them.
+
+Protobuf ingestion supports signed and unsigned integers (within BigQuery's signed INT64 range), booleans, floats, doubles, strings, binary and fixed-size binary, Decimal128/NUMERIC and Decimal256/BIGNUMERIC, Date32/Date64, times and timestamps in all Arrow time units, structs, and lists of supported non-list types. Decimal values retain their full precision. Temporal values are truncated to microseconds. Protobuf converts NULL lists to empty lists; BigQuery's Arrow write path rejects NULL lists. NULL list elements and directly nested lists are not supported. Unsupported types fail before table creation or replacement.
+
 **adbc.bigquery.multiple_statement.statement_type**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Optional. When executing multiple statements, limit the type of statement returned. If not set, all types of statements are returned.
 

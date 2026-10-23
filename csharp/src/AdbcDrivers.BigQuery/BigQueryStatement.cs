@@ -194,6 +194,18 @@ namespace AdbcDrivers.BigQuery
                         throw new ArgumentException($"The value '{value}' for parameter '{BigQueryParameters.GetQueryResultsOptionsTimeout}' is not a valid positive integer.");
                     }
                     break;
+                case BigQueryParameters.IngestMaxInFlightBatches:
+                    if (!int.TryParse(value, out int maxInFlightBatches) || maxInFlightBatches <= 0)
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' is not a valid positive integer.");
+                    break;
+                case BigQueryParameters.IngestGrpcCompression:
+                    if (value != "none" && value != BigQueryConstants.GzipCompression)
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'none' or '{BigQueryConstants.GzipCompression}'.");
+                    break;
+                case BigQueryParameters.IngestFormat:
+                    if (value != "protobuf" && value != "arrow")
+                        throw new ArgumentException($"The value '{value}' for parameter '{key}' must be 'protobuf' or 'arrow'.");
+                    break;
                 case BigQueryParameters.UseJobCreationMode:
                     if (!bool.TryParse(value, out _))
                     {
@@ -1336,6 +1348,13 @@ namespace AdbcDrivers.BigQuery
 
         private async Task<UpdateResult> ExecuteBulkIngestAsync()
         {
+            using CancellationContext context = new(cancellationRegistry);
+            int maxInFlightBatches = Options?.TryGetValue(BigQueryParameters.IngestMaxInFlightBatches, out string? value) == true
+                ? int.Parse(value!) : BigQueryConstants.DefaultIngestMaxInFlightBatches;
+            string compression = Options?.TryGetValue(BigQueryParameters.IngestGrpcCompression, out string? encoding) == true
+                ? encoding! : BigQueryConstants.DefaultIngestGrpcCompression;
+            string format = Options?.TryGetValue(BigQueryParameters.IngestFormat, out string? formatValue) == true
+                ? formatValue! : BigQueryConstants.DefaultIngestFormat;
             var writeClient = CreateBigQueryWriteClient();
             var ingest = new BigQueryBulkIngest(Client, writeClient, this.bigQueryConnection.ProjectId!);
             return await ingest.ExecuteAsync(
@@ -1344,7 +1363,11 @@ namespace AdbcDrivers.BigQuery
                 _ingestTargetTable!,
                 _ingestMode,
                 _boundBatch,
-                _boundStream).ConfigureAwait(false);
+                _boundStream,
+                maxInFlightBatches,
+                compression,
+                format,
+                cancellationToken: context.CancellationToken).ConfigureAwait(false);
         }
 
         private BigQueryWriteClient CreateBigQueryWriteClient()

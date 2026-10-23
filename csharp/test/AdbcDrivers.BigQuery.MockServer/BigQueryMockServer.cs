@@ -15,6 +15,8 @@
  */
 
 using System;
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO.Compression;
@@ -210,16 +212,22 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// </summary>
         public MockBigQueryWriteService WriteService { get; }
 
+        /// <summary>The request encoding and first gRPC message's framing, before decompression.</summary>
+        public ConcurrentQueue<(string Encoding, bool Compressed, int MessageBytes)> AppendTransportRequests { get; } = new();
+
         /// <summary>
         /// Creates and starts a new mock BigQuery server on random loopback ports.
         /// </summary>
-        public BigQueryMockServer()
+        public BigQueryMockServer() : this(enableGrpcGzip: true) { }
+
+        /// <summary>Creates a mock server with optional support for gzip-compressed gRPC messages.</summary>
+        public BigQueryMockServer(bool enableGrpcGzip)
         {
             ReadService = new MockBigQueryReadService();
             WriteService = new MockBigQueryWriteService();
 
             _restApp = BuildRestApp();
-            _grpcApp = BuildGrpcApp();
+            _grpcApp = BuildGrpcApp(enableGrpcGzip);
 
             _restApp.StartAsync().GetAwaiter().GetResult();
             _grpcApp.StartAsync().GetAwaiter().GetResult();
@@ -346,11 +354,21 @@ namespace AdbcDrivers.BigQuery.MockServer
             return app;
         }
 
-        private WebApplication BuildGrpcApp()
+        private WebApplication BuildGrpcApp(bool enableGrpcGzip)
         {
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
-            builder.Services.AddGrpc();
+            builder.Services.AddGrpc(options =>
+            {
+                if (!enableGrpcGzip)
+                {
+                    // An empty provider list reinstates defaults, including gzip.
+                    options.CompressionProviders = new List<Grpc.Net.Compression.ICompressionProvider>
+                    {
+                        new Grpc.Net.Compression.DeflateCompressionProvider(CompressionLevel.Fastest)
+                    };
+                }
+            });
             builder.Services.AddSingleton(ReadService);
             builder.Services.AddSingleton(WriteService);
             builder.WebHost.ConfigureKestrel(options =>
@@ -362,10 +380,34 @@ namespace AdbcDrivers.BigQuery.MockServer
             });
 
             var app = builder.Build();
-            app.Use(async (ctx, next) =>
+            app.Use(async (context, next) =>
             {
-                LastGrpcUserAgent = ctx.Request.Headers.UserAgent.ToString();
-                await next();
+                LastGrpcUserAgent = context.Request.Headers.UserAgent.ToString();
+
+                if (context.Request.Path.Value?.EndsWith("/AppendRows", StringComparison.Ordinal) == true)
+                {
+                    var body = context.Request.BodyReader;
+                    while (true)
+                    {
+                        var read = await body.ReadAsync(context.RequestAborted).ConfigureAwait(false);
+                        var buffer = read.Buffer;
+                        if (buffer.Length >= 5)
+                        {
+                            byte[] header = new byte[5];
+                            buffer.Slice(0, 5).CopyTo(header);
+                            AppendTransportRequests.Enqueue((
+                                context.Request.Headers["grpc-encoding"].ToString(),
+                                header[0] == 1,
+                                BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1))));
+                            // Leave the frame untouched for the gRPC service to deserialize.
+                            body.AdvanceTo(buffer.Start, buffer.Start);
+                            break;
+                        }
+                        body.AdvanceTo(buffer.Start, buffer.End);
+                        if (read.IsCompleted) break;
+                    }
+                }
+                await next().ConfigureAwait(false);
             });
             app.MapGrpcService<MockBigQueryReadService>();
             app.MapGrpcService<MockBigQueryWriteService>();
