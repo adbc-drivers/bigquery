@@ -76,6 +76,7 @@ namespace AdbcDrivers.BigQuery
         private RecordBatch? _boundBatch;
         private IArrowArrayStream? _boundStream;
         private BigQueryQueryParameters? _queryParameters;
+        private Task<BigQueryQueryParameters>? _queryParameterStreamTask;
 
         public BigQueryStatement(BigQueryConnection bigQueryConnection) : base(bigQueryConnection)
         {
@@ -106,6 +107,7 @@ namespace AdbcDrivers.BigQuery
             _boundBatch = batch ?? throw new ArgumentNullException(nameof(batch));
             _boundStream = null;
             _queryParameters = null;
+            _queryParameterStreamTask = null;
         }
 
         public override void BindStream(IArrowArrayStream stream)
@@ -113,6 +115,7 @@ namespace AdbcDrivers.BigQuery
             _boundStream = stream ?? throw new ArgumentNullException(nameof(stream));
             _boundBatch = null;
             _queryParameters = null;
+            _queryParameterStreamTask = null;
         }
 
         private BigQueryClient Client => this.bigQueryConnection.Client ?? throw new AdbcException("Client cannot be null");
@@ -499,7 +502,8 @@ namespace AdbcDrivers.BigQuery
                 }
                 else if (_boundStream != null)
                 {
-                    _queryParameters = await BigQueryQueryParameters.FromStreamAsync(_boundStream, cancellationToken).ConfigureAwait(false);
+                    _queryParameterStreamTask ??= BigQueryQueryParameters.FromStreamAsync(_boundStream, cancellationToken);
+                    _queryParameters = await _queryParameterStreamTask.ConfigureAwait(false);
                 }
             }
             return _queryParameters;

@@ -296,6 +296,73 @@ namespace AdbcDrivers.BigQuery.Tests
 
 #if NET8_0_OR_GREATER
         [Theory]
+        [InlineData(false, false)]
+        [InlineData(false, true)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public void FailedStreamValidationCannotSubmitRemainingRows(bool executeUpdate, bool rebindStream)
+        {
+            using var server = new BigQueryMockServer();
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(new Dictionary<string, string>
+            {
+                [BigQueryParameters.ProjectId] = "mock-project",
+                [BigQueryParameters.AuthenticationType] = BigQueryConstants.MockAuthenticationType,
+                [BigQueryParameters.TestRestEndpoint] = server.RestEndpoint,
+                [BigQueryParameters.TestStorageEndpoint] = server.GrpcEndpoint
+            });
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = executeUpdate ? "UPDATE t SET value = ?" : "SELECT ? AS value";
+            var stream = new Mock<IArrowArrayStream>(MockBehavior.Strict);
+            stream.SetupSequence(s => s.ReadNextRecordBatchAsync(It.IsAny<CancellationToken>()))
+                .Returns(() => new ValueTask<RecordBatch?>(Batch(new Int64Array.Builder().Append(1).Build())))
+                .Returns(() => new ValueTask<RecordBatch?>(Batch(new Int64Array.Builder().Append(2).Build())))
+                .Returns(() => new ValueTask<RecordBatch?>(Batch(new Int64Array.Builder().Append(3).Build())))
+                .Returns(new ValueTask<RecordBatch?>((RecordBatch?)null));
+            statement.BindStream(stream.Object);
+
+            void Execute()
+            {
+                if (executeUpdate)
+                {
+                    statement.ExecuteUpdate();
+                }
+                else
+                {
+                    statement.ExecuteQuery().Stream?.Dispose();
+                }
+            }
+
+            AdbcException failure = Assert.Throws<AdbcException>(Execute);
+            Assert.Equal(AdbcStatusCode.InvalidArgument, failure.Status);
+            Assert.Same(failure, Assert.Throws<AdbcException>(Execute));
+            Assert.Empty(server.ExecutedQueries);
+            stream.Verify(s => s.ReadNextRecordBatchAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+
+            using RecordBatch replacementBatch = Batch(new Int64Array.Builder().Append(4).Build());
+            if (rebindStream)
+            {
+                var replacement = new Mock<IArrowArrayStream>(MockBehavior.Strict);
+                replacement.SetupSequence(s => s.ReadNextRecordBatchAsync(It.IsAny<CancellationToken>()))
+                    .Returns(() => new ValueTask<RecordBatch?>(Batch(new Int64Array.Builder().Append(4).Build())))
+                    .Returns(new ValueTask<RecordBatch?>((RecordBatch?)null));
+                statement.BindStream(replacement.Object);
+            }
+            else
+            {
+                statement.Bind(replacementBatch, replacementBatch.Schema);
+            }
+
+            Execute();
+            Execute();
+            Assert.Equal(2, server.ExecutedQueries.Count);
+            Assert.All(server.ExecutedQueryParameters, parameters =>
+                Assert.Equal("4", Assert.Single(parameters).ParameterValue.Value));
+            stream.Verify(s => s.ReadNextRecordBatchAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        }
+
+        [Theory]
         [InlineData(false)]
         [InlineData(true)]
         public void QuerySubmissionActuallySendsBindings(bool useQueryEndpoint)

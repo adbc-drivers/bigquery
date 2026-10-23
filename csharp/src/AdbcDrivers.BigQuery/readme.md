@@ -50,6 +50,9 @@ The ADBC driver passes the configured credentials to BigQuery, but you may need 
 `Bind` and `BindStream` support a single row of positional query parameters for
 GoogleSQL `?` placeholders. The bindings are used by both query-submission paths
 and by non-ingest `ExecuteUpdate`. Rebinding replaces the previous values.
+If stream materialization fails, subsequent executions retain that failure until
+`Bind` or `BindStream` supplies a new binding; the remaining rows are never retried
+as a different parameter set.
 Bindings are serialized separately from SQL; callers must not quote or escape
 parameter values as SQL literals. Legacy SQL is rejected when parameters are bound.
 
@@ -68,6 +71,21 @@ its existing batch/stream behavior.
 For durations represented exactly in Int64 microseconds, callers can explicitly
 bind the count and construct an interval in GoogleSQL with
 `JUSTIFY_INTERVAL(INTERVAL ? MICROSECOND)` instead of binding an Arrow duration.
+
+#### Live validation
+
+`QueryParameterLiveTests` uses the existing `BIGQUERY_TEST_CONFIG_FILE` credential
+configuration to validate both query-submission APIs directly against BigQuery.
+The tests run constant SELECTs without creating datasets or tables, and check
+scalar types, Unicode/control characters, typed nulls, exact Int64 values, and
+rebinding on the same statement. They are skipped when no test configuration
+is supplied.
+
+From the `csharp` directory:
+
+```powershell
+dotnet test .\test\AdbcDrivers.BigQuery.Tests\AdbcDrivers.BigQuery.Tests.csproj --framework net8.0 --filter "FullyQualifiedName~QueryParameterLiveTests"
+```
 
 ### Driver configuration
 
