@@ -69,6 +69,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         private IReadOnlyList<string> _jobStateScript = new[] { JobStateDone };
         private int _queryResultsRequestCount;
         private int _requestSequence;
+        private int _lostInsertResponses;
 
         /// <summary>
         /// The REST API endpoint as host:port (e.g., "127.0.0.1:12345").
@@ -291,6 +292,27 @@ namespace AdbcDrivers.BigQuery.MockServer
         public int PendingErrorCount(MockRequestKind kind) =>
             _queuedErrors.TryGetValue(kind, out var queue) ? queue.Count : 0;
 
+        /// <summary>
+        /// Makes the next jobs.insert create its job but respond with a retryable 503, modelling a
+        /// response lost after BigQuery accepted the insert. Each call affects one more insert.
+        /// </summary>
+        public void LoseNextInsertResponse() => Interlocked.Increment(ref _lostInsertResponses);
+
+        private bool TryConsumeLostInsertResponse()
+        {
+            int remaining;
+            do
+            {
+                remaining = Volatile.Read(ref _lostInsertResponses);
+                if (remaining == 0)
+                {
+                    return false;
+                }
+            }
+            while (Interlocked.CompareExchange(ref _lostInsertResponses, remaining - 1, remaining) != remaining);
+            return true;
+        }
+
         private async Task<bool> TryWriteQueuedErrorAsync(HttpContext ctx, MockRequestKind kind, string? jobId)
         {
             if (!_queuedErrors.TryGetValue(kind, out var queue) || !queue.TryDequeue(out MockError? error))
@@ -299,7 +321,12 @@ namespace AdbcDrivers.BigQuery.MockServer
             }
 
             Record(kind, jobId);
+            await WriteErrorAsync(ctx, error).ConfigureAwait(false);
+            return true;
+        }
 
+        private static async Task WriteErrorAsync(HttpContext ctx, MockError error)
+        {
             // Shaped so that Google.Apis populates GoogleApiException.Error, which is what the
             // driver reads to decide whether a failure is retryable.
             var response = new
@@ -318,7 +345,6 @@ namespace AdbcDrivers.BigQuery.MockServer
             ctx.Response.StatusCode = (int)error.StatusCode;
             ctx.Response.ContentType = "application/json";
             await ctx.Response.WriteAsync(NewtonsoftJsonSerializer.Instance.Serialize(response)).ConfigureAwait(false);
-            return true;
         }
 
         private MockRequest Record(MockRequestKind kind, string? jobId = null)
@@ -517,7 +543,18 @@ namespace AdbcDrivers.BigQuery.MockServer
                     // If deserialization fails, proceed without parsed request
                 }
 
-                string jobId = $"mock-job-{Guid.NewGuid():N}";
+                // Like BigQuery, use the client's job id when it sends one and reject a duplicate.
+                string jobId = jobRequest?.JobReference?.JobId ?? $"mock-job-{Guid.NewGuid():N}";
+                if (_jobs.ContainsKey(jobId))
+                {
+                    Record(MockRequestKind.JobInsert, jobId);
+                    await WriteErrorAsync(ctx, new MockError(
+                        HttpStatusCode.Conflict,
+                        "duplicate",
+                        $"Already Exists: Job {projectId}:{jobId}")).ConfigureAwait(false);
+                    return;
+                }
+
                 string? queryText = jobRequest?.Configuration?.Query?.Query;
                 bool createSession = jobRequest?.Configuration?.Query?.CreateSession == true;
                 string? sessionId = null;
@@ -566,6 +603,15 @@ namespace AdbcDrivers.BigQuery.MockServer
 
                 _jobs[jobId] = mockJob;
                 Record(MockRequestKind.JobInsert, jobId);
+
+                if (TryConsumeLostInsertResponse())
+                {
+                    await WriteErrorAsync(ctx, new MockError(
+                        HttpStatusCode.ServiceUnavailable,
+                        "backendError",
+                        "Mock server lost the insert response")).ConfigureAwait(false);
+                    return;
+                }
 
                 // The insert response reports the initial state without consuming a scripted
                 // observation; only status polls advance the script.

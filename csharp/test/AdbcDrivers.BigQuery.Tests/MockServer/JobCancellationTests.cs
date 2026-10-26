@@ -18,6 +18,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -73,7 +75,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
-        public async Task ExecuteQueryCancellationDuringJobInsertStopsQuery()
+        public async Task ExecuteQueryCancellationDuringJobInsertCancelsJob()
         {
             using var mockServer = new BigQueryMockServer();
 
@@ -91,9 +93,175 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
                 () => Task.Run(() => statement.ExecuteQuery()));
 
-            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            // The insert never returned, so the driver can only cancel the job by the id it chose.
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            MockRequest cancel = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+            Assert.Equal(insert.JobId, cancel.JobId);
             Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobGet));
             Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.QueryResults));
+        }
+
+        [Fact]
+        public async Task ExecuteUpdateCancellationDuringJobInsertCancelsJob()
+        {
+            using var mockServer = new BigQueryMockServer();
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "UPDATE test_table SET value = 1";
+
+            CancelOnRequest(mockServer, MockRequestKind.JobInsert, occurrence: 1, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteUpdate()));
+
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            MockRequest cancel = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+            Assert.Equal(insert.JobId, cancel.JobId);
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobGet));
+        }
+
+        [Fact]
+        public async Task ExecuteQueryCancellationRetriesJobCancelWhileJobIsNotFound()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.ScriptJobStates(BigQueryMockServer.JobStateRunning);
+
+            // Models a cancel that reaches BigQuery before the interrupted insert does.
+            mockServer.QueueError(MockRequestKind.JobCancel, HttpStatusCode.NotFound, "notFound");
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            CancelOnRequest(mockServer, MockRequestKind.QueryResults, occurrence: 1, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            IReadOnlyList<MockRequest> cancels = mockServer.RequestsOfKind(MockRequestKind.JobCancel);
+            Assert.Equal(2, cancels.Count);
+            Assert.All(cancels, cancel => Assert.Equal(insert.JobId, cancel.JobId));
+            Assert.Equal(0, mockServer.PendingErrorCount(MockRequestKind.JobCancel));
+        }
+
+        [Fact]
+        public async Task ExecuteQueryCancellationDuringRetryBackOffCancelsJob()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.ScriptJobStates(BigQueryMockServer.JobStateRunning);
+
+            // A retryable failure of the first jobs.get makes the driver wait before retrying. The client
+            // library retries 5xx and rateLimitExceeded itself, inside the attempt, so use a 429 that only
+            // the driver retries.
+            mockServer.QueueError(MockRequestKind.JobGet, HttpStatusCode.TooManyRequests, "tooManyRequests");
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer, LongRetryDelay));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            CancelAfterRequest(mockServer, MockRequestKind.JobGet, occurrence: 1, CancelDelay, statement);
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+            stopwatch.Stop();
+
+            Assert.True(stopwatch.Elapsed < LongRetryDelayTime, $"cancel should interrupt the retry delay, took {stopwatch.Elapsed}");
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            MockRequest cancel = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+            Assert.Equal(insert.JobId, cancel.JobId);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobGet));
+        }
+
+        [Fact]
+        public async Task ExecuteUpdateCancellationDuringRetryBackOffCancelsJob()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.ScriptJobStates(BigQueryMockServer.JobStateRunning);
+            mockServer.QueueError(MockRequestKind.JobGet, HttpStatusCode.TooManyRequests, "tooManyRequests");
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer, LongRetryDelay));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "UPDATE test_table SET value = 1";
+
+            CancelAfterRequest(mockServer, MockRequestKind.JobGet, occurrence: 1, CancelDelay, statement);
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteUpdate()));
+            stopwatch.Stop();
+
+            Assert.True(stopwatch.Elapsed < LongRetryDelayTime, $"cancel should interrupt the retry delay, took {stopwatch.Elapsed}");
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            MockRequest cancel = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+            Assert.Equal(insert.JobId, cancel.JobId);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobGet));
+        }
+
+        [Fact]
+        public async Task ExecuteQueryUsesExistingJobWhenInsertResponseIsLost()
+        {
+            using var mockServer = new BigQueryMockServer();
+            ConfigureSingleRowResults(mockServer);
+            mockServer.LoseNextInsertResponse();
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            QueryResult result = statement.ExecuteQuery();
+
+            Assert.NotNull(result.Stream);
+            using (result.Stream)
+            {
+                using RecordBatch? batch = await result.Stream.ReadNextRecordBatchAsync();
+                Assert.NotNull(batch);
+                Assert.Equal(42L, Assert.IsType<Int64Array>(batch!.Column(0)).GetValue(0));
+            }
+
+            // The retried insert reuses the job id and is rejected as a duplicate; the driver then
+            // continues with the job the first insert created.
+            IReadOnlyList<MockRequest> inserts = mockServer.RequestsOfKind(MockRequestKind.JobInsert);
+            Assert.Equal(2, inserts.Count);
+            Assert.Equal(inserts[0].JobId, inserts[1].JobId);
+            Assert.All(mockServer.RequestsOfKind(MockRequestKind.JobGet), get => Assert.Equal(inserts[0].JobId, get.JobId));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+        }
+
+        [Fact]
+        public void ExecuteUpdateUsesExistingJobWhenInsertResponseIsLost()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.LoseNextInsertResponse();
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "UPDATE test_table SET value = 1";
+
+            UpdateResult result = statement.ExecuteUpdate();
+
+            Assert.Equal(2, result.AffectedRows);
+            IReadOnlyList<MockRequest> inserts = mockServer.RequestsOfKind(MockRequestKind.JobInsert);
+            Assert.Equal(2, inserts.Count);
+            Assert.Equal(inserts[0].JobId, inserts[1].JobId);
+
+            // Setting the job id means passing QueryOptions where none were passed before; that must
+            // not change the SQL dialect.
+            Assert.False(mockServer.LastInsertedJob?.Configuration?.Query?.UseLegacySql);
         }
 
         [Fact]
@@ -270,13 +438,28 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
         }
 
-        private static Dictionary<string, string> CreateParameters(BigQueryMockServer mockServer) => new()
+        // Long enough that a test finishing well before it shows the cancel interrupted the delay.
+        private const int LongRetryDelay = 30000;
+        private static readonly TimeSpan LongRetryDelayTime = TimeSpan.FromMilliseconds(LongRetryDelay);
+
+        // Long enough for the failed response to reach the driver, so the cancel lands in the retry delay.
+        private static readonly TimeSpan CancelDelay = TimeSpan.FromMilliseconds(500);
+
+        private static Dictionary<string, string> CreateParameters(BigQueryMockServer mockServer, int? retryDelayMs = null)
         {
-            { BigQueryParameters.ProjectId, ProjectId },
-            { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
-            { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
-            { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
-        };
+            Dictionary<string, string> parameters = new()
+            {
+                { BigQueryParameters.ProjectId, ProjectId },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            };
+            if (retryDelayMs.HasValue)
+            {
+                parameters[BigQueryParameters.RetryDelayMs] = retryDelayMs.Value.ToString(CultureInfo.InvariantCulture);
+            }
+            return parameters;
+        }
 
         private static string CancelUri(BigQueryMockServer mockServer, string jobId) =>
             $"http://{mockServer.RestEndpoint}/bigquery/v2/projects/{ProjectId}/jobs/{jobId}/cancel";
@@ -297,6 +480,27 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 if (request.Kind == kind && Interlocked.Increment(ref seen) == occurrence)
                 {
                     statement.Cancel();
+                }
+            };
+        }
+
+        /// <summary>
+        /// Cancels the statement a fixed time after the given occurrence of a request kind arrives,
+        /// so the cancellation lands after the driver has received that request's response.
+        /// </summary>
+        private static void CancelAfterRequest(
+            BigQueryMockServer mockServer,
+            MockRequestKind kind,
+            int occurrence,
+            TimeSpan delay,
+            AdbcStatement statement)
+        {
+            int seen = 0;
+            mockServer.RequestReceived += request =>
+            {
+                if (request.Kind == kind && Interlocked.Increment(ref seen) == occurrence)
+                {
+                    _ = Task.Delay(delay).ContinueWith(_ => statement.Cancel(), TaskScheduler.Default);
                 }
             };
         }
