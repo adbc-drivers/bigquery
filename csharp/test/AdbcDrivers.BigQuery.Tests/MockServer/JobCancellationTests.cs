@@ -73,6 +73,81 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
+        public async Task ExecuteQueryCancellationDuringJobInsertStopsQuery()
+        {
+            using var mockServer = new BigQueryMockServer();
+
+            // The job would complete immediately, so a dropped cancel lets the query succeed.
+            ConfigureSingleRowResults(mockServer);
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            CancelOnRequest(mockServer, MockRequestKind.JobInsert, occurrence: 1, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobGet));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.QueryResults));
+        }
+
+        [Fact]
+        public async Task ExecuteQueryCancellationDuringJobsQueryStopsQuery()
+        {
+            using var mockServer = new BigQueryMockServer { OptionalQueryCreatesJob = true };
+            ConfigureSingleRowResults(mockServer);
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(BigQueryParameters.UseJobCreationMode, "true");
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            CancelOnRequest(mockServer, MockRequestKind.JobQuery, occurrence: 1, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobQuery));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.JobGet));
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.QueryResults));
+        }
+
+        [Fact]
+        public async Task ExecuteQueryCancellationAfterJobsQueryFallbackRequestsJobCancel()
+        {
+            // jobs.query returns only a job reference, so the driver falls back to polling a job
+            // it has not yet fetched.
+            using var mockServer = new BigQueryMockServer { OptionalQueryCreatesJob = true };
+            mockServer.ScriptJobStates(BigQueryMockServer.JobStateRunning);
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SetOption(BigQueryParameters.UseJobCreationMode, "true");
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            // Cancel during the first jobs.get, before the driver has a BigQueryJob for the
+            // reference; the job must still be cancelled by its reference.
+            CancelOnRequest(mockServer, MockRequestKind.JobGet, occurrence: 1, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+
+            MockRequest query = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobQuery));
+            MockRequest cancel = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+            Assert.Equal(query.JobId, cancel.JobId);
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.QueryResults));
+        }
+
+        [Fact]
         public async Task ExecuteUpdateCancellationRequestsJobCancel()
         {
             using var mockServer = new BigQueryMockServer();
