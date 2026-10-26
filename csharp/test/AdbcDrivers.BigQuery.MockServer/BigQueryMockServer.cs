@@ -19,6 +19,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
@@ -70,6 +71,7 @@ namespace AdbcDrivers.BigQuery.MockServer
         private int _queryResultsRequestCount;
         private int _requestSequence;
         private int _lostInsertResponses;
+        private readonly AsyncLocal<string?> _requestAccessToken = new();
 
         /// <summary>
         /// The REST API endpoint as host:port (e.g., "127.0.0.1:12345").
@@ -199,6 +201,16 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// responding immediately would spin the client in a tight request loop. Defaults to 100ms.
         /// </summary>
         public TimeSpan IncompleteQueryResultsDelay { get; set; } = TimeSpan.FromMilliseconds(100);
+
+        /// <summary>
+        /// The location given to a job created without one, as BigQuery infers it from the query's
+        /// datasets. Defaults to null, which means "US". As in BigQuery, requests for a job outside the
+        /// US and EU multi-regions must name its location, or the job is not found.
+        /// </summary>
+        public string? InferredJobLocation { get; set; }
+
+        /// <summary>Whether jobs.cancel has been called for the given job.</summary>
+        public bool IsJobCancelled(string jobId) => _jobs.TryGetValue(jobId, out MockJob? job) && job.IsCancelled;
 
         /// <summary>
         /// The mock gRPC service for configuring Storage Read API responses.
@@ -349,7 +361,7 @@ namespace AdbcDrivers.BigQuery.MockServer
 
         private MockRequest Record(MockRequestKind kind, string? jobId = null)
         {
-            MockRequest request = new(kind, jobId, Interlocked.Increment(ref _requestSequence) - 1);
+            MockRequest request = new(kind, jobId, Interlocked.Increment(ref _requestSequence) - 1, _requestAccessToken.Value);
             _requests.Enqueue(request);
             RequestReceived?.Invoke(request);
             return request;
@@ -368,6 +380,15 @@ namespace AdbcDrivers.BigQuery.MockServer
             });
 
             var app = builder.Build();
+            app.Use(async (context, next) =>
+            {
+                // Captured for Record, which runs inside the route handlers.
+                string authorization = context.Request.Headers.Authorization.ToString();
+                _requestAccessToken.Value = authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                    ? authorization.Substring("Bearer ".Length)
+                    : null;
+                await next().ConfigureAwait(false);
+            });
             MapRestRoutes(app);
             return app;
         }
@@ -487,6 +508,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                     ProjectId = projectId,
                     StateScript = _jobStateScript,
                     StatementType = "SELECT",
+                    Location = queryRequest?.Location ?? InferredJobLocation ?? "US",
                 };
                 _jobs[jobId] = mockJob;
                 Record(MockRequestKind.JobQuery, jobId);
@@ -496,7 +518,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                 {
                     Kind = "bigquery#queryResponse",
                     JobComplete = includesResults,
-                    JobReference = new JobReference { ProjectId = projectId, JobId = jobId, Location = "US" },
+                    JobReference = new JobReference { ProjectId = projectId, JobId = jobId, Location = mockJob.Location },
                     JobCreationReason = new JobCreationReason { Code = "LARGE_RESULTS" },
                     PageToken = OptionalQueryIncludesPagedResults ? "next-page" : null,
                     TotalRows = includesResults
@@ -587,6 +609,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                     StateScript = _jobStateScript,
                     StatementType = queryText?.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) == true ? "UPDATE" : "SELECT",
                     NumDmlAffectedRows = queryText?.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) == true ? 2 : null,
+                    Location = jobRequest?.JobReference?.Location ?? InferredJobLocation ?? "US",
                 };
 
                 // If CreateSession is requested, generate a new session ID
@@ -621,6 +644,49 @@ namespace AdbcDrivers.BigQuery.MockServer
                 await ctx.Response.WriteAsync(json);
             });
 
+            // GET /bigquery/v2/projects/{projectId}/jobs - List jobs. Like BigQuery, this covers every
+            // location, so it is how a client finds the location of a job it did not specify one for.
+            app.MapGet("/bigquery/v2/projects/{projectId}/jobs", async (HttpContext ctx, string projectId) =>
+            {
+                Record(MockRequestKind.JobList);
+
+                IEnumerable<MockJob> jobs = _jobs.Values.Where(job => job.ProjectId == projectId);
+                if (!string.IsNullOrEmpty(ctx.Request.Query["parentJobId"]))
+                {
+                    // The mock does not model child jobs of a script.
+                    jobs = Enumerable.Empty<MockJob>();
+                }
+                if (long.TryParse(ctx.Request.Query["minCreationTime"], out long minCreationTime))
+                {
+                    jobs = jobs.Where(job => job.CreatedUtc.ToUnixTimeMilliseconds() >= minCreationTime);
+                }
+
+                var response = new JobList
+                {
+                    Kind = "bigquery#jobList",
+                    Jobs = jobs
+                        .OrderByDescending(job => job.CreatedUtc)
+                        .Select(job =>
+                        {
+                            Job resource = CreateJobResource(job, job.PeekState());
+                            return new JobList.JobsData
+                            {
+                                Id = resource.Id,
+                                Kind = resource.Kind,
+                                JobReference = resource.JobReference,
+                                State = resource.Status.State,
+                                Status = resource.Status,
+                                Configuration = resource.Configuration,
+                                Statistics = resource.Statistics,
+                            };
+                        })
+                        .ToList(),
+                };
+
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(NewtonsoftJsonSerializer.Instance.Serialize(response)).ConfigureAwait(false);
+            });
+
             // GET /bigquery/v2/projects/{projectId}/jobs/{jobId} - Get job status
             app.MapGet("/bigquery/v2/projects/{projectId}/jobs/{jobId}", async (HttpContext ctx, string projectId, string jobId) =>
             {
@@ -630,7 +696,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                 }
 
                 Record(MockRequestKind.JobGet, jobId);
-                if (!_jobs.TryGetValue(jobId, out var mockJob))
+                if (!TryGetJob(ctx, jobId, out MockJob? mockJob))
                 {
                     ctx.Response.StatusCode = 404;
                     return;
@@ -651,7 +717,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                 }
 
                 Record(MockRequestKind.JobCancel, jobId);
-                if (!_jobs.TryGetValue(jobId, out var mockJob))
+                if (!TryGetJob(ctx, jobId, out MockJob? mockJob))
                 {
                     ctx.Response.StatusCode = 404;
                     var notFound = new { error = new { code = 404, message = $"Not found: Job {projectId}:{jobId}", status = "NOT_FOUND" } };
@@ -688,13 +754,13 @@ namespace AdbcDrivers.BigQuery.MockServer
                 Interlocked.Increment(ref _queryResultsRequestCount);
                 LastQueryResultsPageToken = ctx.Request.Query["pageToken"];
                 Record(MockRequestKind.QueryResults, jobId);
-                if (!_jobs.TryGetValue(jobId, out var mockJob))
+                if (!TryGetJob(ctx, jobId, out MockJob? mockJob))
                 {
                     ctx.Response.StatusCode = 404;
                     return;
                 }
 
-                var jobReference = new JobReference { ProjectId = projectId, JobId = jobId, Location = "US" };
+                var jobReference = new JobReference { ProjectId = projectId, JobId = jobId, Location = mockJob.Location };
 
                 if (mockJob.NextState() != JobStateDone)
                 {
@@ -862,6 +928,24 @@ namespace AdbcDrivers.BigQuery.MockServer
             });
         }
 
+        private bool TryGetJob(HttpContext ctx, string jobId, [NotNullWhen(true)] out MockJob? job)
+        {
+            if (!_jobs.TryGetValue(jobId, out job))
+            {
+                return false;
+            }
+
+            if (job.Location.Equals("US", StringComparison.OrdinalIgnoreCase) ||
+                job.Location.Equals("EU", StringComparison.OrdinalIgnoreCase) ||
+                job.Location.Equals(ctx.Request.Query["location"].ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            job = null;
+            return false;
+        }
+
         private static async Task<string> ReadBodyAsync(HttpContext ctx)
         {
             if (string.Equals(ctx.Request.Headers["Content-Encoding"].ToString(), "gzip", StringComparison.OrdinalIgnoreCase))
@@ -948,7 +1032,7 @@ namespace AdbcDrivers.BigQuery.MockServer
                 {
                     ProjectId = mockJob.ProjectId,
                     JobId = mockJob.JobId,
-                    Location = "US"
+                    Location = mockJob.Location
                 },
                 Status = status,
                 Configuration = new JobConfiguration
@@ -1011,6 +1095,8 @@ namespace AdbcDrivers.BigQuery.MockServer
             public string? SessionId { get; set; }
             public string StatementType { get; set; } = "SELECT";
             public long? NumDmlAffectedRows { get; set; }
+            public string Location { get; set; } = "US";
+            public DateTimeOffset CreatedUtc { get; } = DateTimeOffset.UtcNow;
 
             /// <summary>Whether jobs.cancel has been called for this job.</summary>
             public bool IsCancelled => Volatile.Read(ref _cancelled) != 0;

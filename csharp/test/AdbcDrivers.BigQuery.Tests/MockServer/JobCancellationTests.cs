@@ -209,6 +209,94 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
+        public async Task ExecuteQueryCancellationAfterTokenRefreshUsesNewCredentials()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.ScriptJobStates(BigQueryMockServer.JobStateRunning);
+
+            // The first jobs.get is rejected as unauthenticated, so the driver refreshes its token,
+            // which replaces the client, and then waits before retrying.
+            mockServer.QueueError(MockRequestKind.JobGet, HttpStatusCode.Unauthorized, "authError");
+
+            Dictionary<string, string> parameters = CreateParameters(mockServer, LongRetryDelay);
+            parameters[BigQueryParameters.AccessToken] = "token-1";
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(parameters);
+            using var connection = (BigQueryConnection)database.Connect(new Dictionary<string, string>());
+            connection.UpdateToken = () => Task.Run(() => connection.SetOption(BigQueryParameters.AccessToken, "token-2"));
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            CancelAfterRequest(mockServer, MockRequestKind.JobGet, occurrence: 1, CancelDelay, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            Assert.Equal("token-1", insert.AccessToken);
+            MockRequest cancel = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobCancel));
+            Assert.Equal(insert.JobId, cancel.JobId);
+            Assert.Equal("token-2", cancel.AccessToken);
+        }
+
+        [Fact]
+        public async Task ExecuteQueryCancellationDuringJobInsertCancelsRegionalJob()
+        {
+            // No location is configured, so BigQuery picks a single region and jobs.cancel needs it.
+            using var mockServer = new BigQueryMockServer { InferredJobLocation = "asia-northeast1" };
+            ConfigureSingleRowResults(mockServer);
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            CancelOnRequest(mockServer, MockRequestKind.JobInsert, occurrence: 1, statement);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => Task.Run(() => statement.ExecuteQuery()));
+
+            // The first jobs.cancel cannot find the job without its location; the driver finds the
+            // location with jobs.list and cancels again.
+            MockRequest insert = Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobInsert));
+            Assert.True(mockServer.IsJobCancelled(insert.JobId!), "the job should have been cancelled");
+            Assert.NotEmpty(mockServer.RequestsOfKind(MockRequestKind.JobList));
+            Assert.All(mockServer.RequestsOfKind(MockRequestKind.JobCancel), cancel => Assert.Equal(insert.JobId, cancel.JobId));
+        }
+
+        [Fact]
+        public async Task ExecuteQueryUsesExistingRegionalJobWhenInsertResponseIsLost()
+        {
+            using var mockServer = new BigQueryMockServer { InferredJobLocation = "asia-northeast1" };
+            ConfigureSingleRowResults(mockServer);
+            mockServer.LoseNextInsertResponse();
+
+            using var driver = new BigQueryDriver();
+            using AdbcDatabase database = driver.Open(CreateParameters(mockServer));
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+            using AdbcStatement statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42 AS value";
+
+            QueryResult result = statement.ExecuteQuery();
+
+            Assert.NotNull(result.Stream);
+            using (result.Stream)
+            {
+                using RecordBatch? batch = await result.Stream.ReadNextRecordBatchAsync();
+                Assert.NotNull(batch);
+                Assert.Equal(42L, Assert.IsType<Int64Array>(batch!.Column(0)).GetValue(0));
+            }
+
+            // jobs.get without the location cannot find the job, so the driver finds it with jobs.list.
+            IReadOnlyList<MockRequest> inserts = mockServer.RequestsOfKind(MockRequestKind.JobInsert);
+            Assert.Equal(2, inserts.Count);
+            Assert.Equal(inserts[0].JobId, inserts[1].JobId);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.JobList));
+        }
+
+        [Fact]
         public async Task ExecuteQueryUsesExistingJobWhenInsertResponseIsLost()
         {
             using var mockServer = new BigQueryMockServer();

@@ -35,6 +35,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// <summary>POST projects/{projectId}/jobs/{jobId}/cancel</summary>
         JobCancel,
 
+        /// <summary>GET projects/{projectId}/jobs</summary>
+        JobList,
+
         /// <summary>GET projects/{projectId}/queries/{jobId}</summary>
         QueryResults,
 
@@ -60,13 +63,17 @@ namespace AdbcDrivers.BigQuery.MockServer
     /// </summary>
     public sealed class MockRequest
     {
-        internal MockRequest(MockRequestKind kind, string? jobId, int sequence)
+        internal MockRequest(MockRequestKind kind, string? jobId, int sequence, string? accessToken)
         {
             Kind = kind;
             JobId = jobId;
             Sequence = sequence;
+            AccessToken = accessToken;
             TimestampUtc = DateTimeOffset.UtcNow;
         }
+
+        /// <summary>The bearer token the request was sent with, if any.</summary>
+        public string? AccessToken { get; }
 
         /// <summary>The kind of request.</summary>
         public MockRequestKind Kind { get; }

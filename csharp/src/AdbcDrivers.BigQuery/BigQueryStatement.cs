@@ -62,6 +62,8 @@ namespace AdbcDrivers.BigQuery
         private const int JobCancelNotFoundRetries = 5;
         private const int JobCancelInitialRetryDelayMs = 25;
         private static readonly TimeSpan JobCancelTimeout = TimeSpan.FromSeconds(30);
+        // Allows for a difference between the local clock and BigQuery's when listing recent jobs.
+        private static readonly TimeSpan JobListClockSkew = TimeSpan.FromMinutes(5);
         readonly BigQueryConnection bigQueryConnection;
         readonly CancellationRegistry cancellationRegistry;
 
@@ -1799,53 +1801,99 @@ namespace AdbcDrivers.BigQuery
                     activity?.AddEvent("job_cancellation_origin", origin.ToTags("context.cancel").ToList());
                 }
                 activity?.AddException(cancelledEx!);
-                await CancelJobAsync(context.Job, activity).ConfigureAwait(false);
+                await CancelJobAsync(context, activity).ConfigureAwait(false);
                 throw;
             }
         }
 
         /// <summary>
-        /// Asks BigQuery to cancel the job, recording but not throwing any failure.
+        /// Asks BigQuery to cancel the context's job, recording but not throwing any failure.
         /// </summary>
-        private static async Task CancelJobAsync(BigQueryJob? job, Activity? activity)
+        private async Task CancelJobAsync(JobCancellationContext context, Activity? activity)
         {
+            BigQueryJob? job = context.Job;
             if (job == null)
             {
                 return;
             }
 
-            activity?.AddBigQueryTag("job.cancel", job.Reference.JobId);
+            JobReference reference = job.Reference;
+            activity?.AddBigQueryTag("job.cancel", reference.JobId);
             using CancellationTokenSource timeout = new CancellationTokenSource(JobCancelTimeout);
-            int delayMs = JobCancelInitialRetryDelayMs;
-            for (int attempt = 1; ; attempt++)
+            try
             {
-                try
+                int delayMs = JobCancelInitialRetryDelayMs;
+                for (int attempt = 1; ; attempt++)
                 {
-                    await job.CancelAsync(cancellationToken: timeout.Token).ConfigureAwait(false);
-                    return;
-                }
-                catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound && attempt <= JobCancelNotFoundRetries)
-                {
-                    // The job may come from an interrupted insert that BigQuery has not processed yet,
-                    // so give it a moment to appear.
-                    activity?.AddException(ex);
-                }
-                catch (Exception ex)
-                {
-                    activity?.AddException(ex);
-                    return;
-                }
+                    try
+                    {
+                        // Through the current client rather than the job's own: an auth refresh replaces the
+                        // client, and the job may still hold the old one with expired credentials.
+                        await Client.CancelJobAsync(reference, cancellationToken: timeout.Token).ConfigureAwait(false);
+                        return;
+                    }
+                    catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound && attempt <= JobCancelNotFoundRetries)
+                    {
+                        // The job may come from an interrupted insert that BigQuery has not processed yet, or be
+                        // in a single region that the reference does not name.
+                        activity?.AddException(ex);
+                    }
 
-                try
-                {
+                    if (reference.Location == null && context.JobSubmittedUtc.HasValue)
+                    {
+                        JobReference? found = await FindJobReferenceAsync(reference, context.JobSubmittedUtc.Value, timeout.Token).ConfigureAwait(false);
+                        if (found != null)
+                        {
+                            reference = found;
+                            continue;
+                        }
+                    }
+
                     await Task.Delay(delayMs, timeout.Token).ConfigureAwait(false);
+                    delayMs *= 2;
                 }
-                catch (OperationCanceledException ex)
+            }
+            catch (Exception ex)
+            {
+                activity?.AddException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Finds the full reference, including the location BigQuery chose, of a job that was submitted
+        /// without a location. jobs.get and jobs.cancel need the location of a single-region job, but
+        /// jobs.list covers every location.
+        /// </summary>
+        private async Task<JobReference?> FindJobReferenceAsync(JobReference reference, DateTime submittedUtc, CancellationToken cancellationToken)
+        {
+            ListJobsOptions options = new ListJobsOptions { MinCreationTime = submittedUtc - JobListClockSkew };
+            await foreach (BigQueryJob job in Client.ListJobsAsync(reference.ProjectId, options).WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                if (job.Reference.JobId == reference.JobId)
                 {
-                    activity?.AddException(ex);
-                    return;
+                    return job.Reference;
                 }
-                delayMs *= 2;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Gets a job the driver submitted, finding its location first if it is needed but unknown.
+        /// </summary>
+        private async Task<BigQueryJob> GetSubmittedJobAsync(JobReference reference, DateTime submittedUtc, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await Client.GetJobAsync(reference, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound && reference.Location == null)
+            {
+                JobReference? found = await FindJobReferenceAsync(reference, submittedUtc, cancellationToken).ConfigureAwait(false);
+                if (found == null)
+                {
+                    throw;
+                }
+                return await Client.GetJobAsync(found, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -1872,8 +1920,10 @@ namespace AdbcDrivers.BigQuery
                 Location = queryOptions.JobLocation ?? Client.DefaultLocation,
             };
 
-            // A cancel that interrupts the insert can still cancel the job by its id.
+            // A cancel that interrupts the insert can still cancel the job by its id. The reference has no
+            // location if none was configured; the submission time then bounds a search for it.
             context.Job = new BigQueryJob(Client, new Job { JobReference = jobReference });
+            context.JobSubmittedUtc ??= DateTime.UtcNow;
             try
             {
                 context.Job = await Client.CreateQueryJobAsync(SqlQuery, queryParameters?.Parameters, queryOptions, context.CancellationToken).ConfigureAwait(false);
@@ -1882,7 +1932,7 @@ namespace AdbcDrivers.BigQuery
             {
                 // An earlier attempt, retried by this driver or by the client library, created the job
                 // but its response was lost.
-                context.Job = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+                context.Job = await GetSubmittedJobAsync(jobReference, context.JobSubmittedUtc.Value, context.CancellationToken).ConfigureAwait(false);
             }
             return context.Job;
         }
@@ -2018,6 +2068,11 @@ namespace AdbcDrivers.BigQuery
             }
 
             public BigQueryJob? Job { get; set; }
+
+            /// <summary>
+            /// When the driver first submitted a job whose id it chose, if it has.
+            /// </summary>
+            public DateTime? JobSubmittedUtc { get; set; }
         }
 
         internal sealed class CancellationRegistry : IDisposable
