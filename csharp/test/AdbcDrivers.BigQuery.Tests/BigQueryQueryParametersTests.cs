@@ -50,7 +50,19 @@ namespace AdbcDrivers.BigQuery.Tests
             yield return Case(new UInt32Array.Builder().Append(uint.MaxValue).Build(), BigQueryDbType.Int64, "4294967295");
             yield return Case(new UInt64Array.Builder().Append((ulong)long.MaxValue).Build(), BigQueryDbType.Int64, "9223372036854775807");
             yield return Case(new DoubleArray.Builder().Append(123.125).Build(), BigQueryDbType.Float64, "123.125");
+            yield return Case(new DoubleArray.Builder().Append(0.1).Build(), BigQueryDbType.Float64, "0.10000000000000001");
+            yield return Case(new DoubleArray.Builder().Append(0.84551240822557006).Build(), BigQueryDbType.Float64, "0.84551240822557006");
+            yield return Case(new DoubleArray.Builder().Append(double.MaxValue).Build(), BigQueryDbType.Float64, "1.7976931348623157E+308");
+            yield return Case(new DoubleArray.Builder().Append(double.MinValue).Build(), BigQueryDbType.Float64, "-1.7976931348623157E+308");
+            yield return Case(new DoubleArray.Builder().Append(double.Epsilon).Build(), BigQueryDbType.Float64, "4.9406564584124654E-324");
             yield return Case(new FloatArray.Builder().Append(1.5f).Build(), BigQueryDbType.Float64, "1.5");
+            yield return Case(new FloatArray.Builder().Append(0.1f).Build(), BigQueryDbType.Float64, "0.100000001");
+            yield return Case(new FloatArray.Builder().Append(float.MaxValue).Build(), BigQueryDbType.Float64, "3.40282347E+38");
+            yield return Case(new FloatArray.Builder().Append(float.MinValue).Build(), BigQueryDbType.Float64, "-3.40282347E+38");
+            yield return Case(new FloatArray.Builder().Append(float.Epsilon).Build(), BigQueryDbType.Float64, "1.40129846E-45");
+            yield return Case(new FloatArray.Builder().Append(float.NaN).Build(), BigQueryDbType.Float64, "NaN");
+            yield return Case(new FloatArray.Builder().Append(float.PositiveInfinity).Build(), BigQueryDbType.Float64, "+inf");
+            yield return Case(new FloatArray.Builder().Append(float.NegativeInfinity).Build(), BigQueryDbType.Float64, "-inf");
             yield return Case(new DoubleArray.Builder().Append(double.NaN).Build(), BigQueryDbType.Float64, "NaN");
             yield return Case(new DoubleArray.Builder().Append(double.PositiveInfinity).Build(), BigQueryDbType.Float64, "+inf");
             yield return Case(new DoubleArray.Builder().Append(double.NegativeInfinity).Build(), BigQueryDbType.Float64, "-inf");
@@ -137,6 +149,22 @@ namespace AdbcDrivers.BigQuery.Tests
             Assert.Equal("SELECT ?, ?", request.Query);
             Assert.Equal(new[] { "42", "?" }, request.QueryParameters.Select(p => p.ParameterValue.Value));
             Assert.Equal(new[] { "42", "?" }, parameters.Parameters.Select(p => p.Value));
+        }
+
+        [Fact]
+        public void RequestProjectionsDoNotMutateTheSnapshot()
+        {
+            using RecordBatch batch = Batch(new Int64Array.Builder().Append(42).Build());
+            var parameters = BigQueryQueryParameters.FromBatch(batch);
+            Assert.Single(parameters.Parameters).Value = "changed";
+            var firstRequest = new QueryRequest();
+            parameters.ApplyTo(firstRequest);
+            Assert.Single(firstRequest.QueryParameters).ParameterValue.Value = "changed";
+
+            var secondRequest = new QueryRequest();
+            parameters.ApplyTo(secondRequest);
+            Assert.Equal("42", Assert.Single(secondRequest.QueryParameters).ParameterValue.Value);
+            Assert.Equal("42", Assert.Single(parameters.Parameters).Value);
         }
 
         [Fact]
@@ -265,8 +293,15 @@ namespace AdbcDrivers.BigQuery.Tests
                 CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
                 using RecordBatch batch = Batch(
                     new DoubleArray.Builder().Append(123.125).Build(),
+                    new DoubleArray.Builder().Append(0.1).Build(),
+                    new FloatArray.Builder().Append(0.1f).Build(),
                     new Decimal128Array.Builder(new Decimal128Type(29, 4)).Append(123.4567m).Build());
-                Assert.Equal(new[] { "123.125", "123.4567" }, BigQueryQueryParameters.FromBatch(batch).Parameters.Select(p => p.Value));
+                var parameters = BigQueryQueryParameters.FromBatch(batch);
+                var expected = new[] { "123.125", "0.10000000000000001", "0.100000001", "123.4567" };
+                Assert.Equal(expected, parameters.Parameters.Select(p => p.Value));
+                var request = new QueryRequest();
+                parameters.ApplyTo(request);
+                Assert.Equal(expected, request.QueryParameters.Select(p => p.ParameterValue.Value));
             }
             finally
             {

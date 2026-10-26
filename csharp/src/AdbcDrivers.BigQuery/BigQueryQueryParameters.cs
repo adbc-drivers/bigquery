@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Apache.Arrow;
@@ -30,10 +31,10 @@ namespace AdbcDrivers.BigQuery
 {
     internal sealed class BigQueryQueryParameters
     {
-        private readonly List<BigQueryParameter> parameters = new();
-        private readonly List<QueryParameter> restParameters = new();
+        private readonly List<(BigQueryDbType Type, string? Value)> parameters = new();
 
-        public IEnumerable<BigQueryParameter> Parameters => parameters;
+        public IEnumerable<BigQueryParameter> Parameters =>
+            parameters.Select(parameter => new BigQueryParameter { Type = parameter.Type, Value = parameter.Value });
 
         internal static BigQueryQueryParameters FromBatch(RecordBatch batch)
         {
@@ -48,12 +49,7 @@ namespace AdbcDrivers.BigQuery
                 IArrowArray array = batch.Column(i);
                 BigQueryDbType type = GetParameterType(array.Data.DataType);
                 string? value = array.IsNull(0) ? null : GetParameterValue(array);
-                result.parameters.Add(new BigQueryParameter { Type = type, Value = value });
-                result.restParameters.Add(new QueryParameter
-                {
-                    ParameterType = new QueryParameterType { Type = type.ToString().ToUpperInvariant() },
-                    ParameterValue = new QueryParameterValue { Value = value }
-                });
+                result.parameters.Add((type, value));
             }
             return result;
         }
@@ -95,7 +91,11 @@ namespace AdbcDrivers.BigQuery
         {
             request.UseLegacySql = false;
             request.ParameterMode = "POSITIONAL";
-            request.QueryParameters = restParameters;
+            request.QueryParameters = parameters.Select(parameter => new QueryParameter
+            {
+                ParameterType = new QueryParameterType { Type = parameter.Type.ToString().ToUpperInvariant() },
+                ParameterValue = new QueryParameterValue { Value = parameter.Value }
+            }).ToList();
         }
 
         private static BigQueryDbType GetParameterType(IArrowType type)
@@ -162,11 +162,17 @@ namespace AdbcDrivers.BigQuery
             };
         }
 
+        private static string FloatValue(float value) =>
+            float.IsNaN(value) ? "NaN" :
+            float.IsPositiveInfinity(value) ? "+inf" :
+            float.IsNegativeInfinity(value) ? "-inf" :
+            value.ToString("G9", CultureInfo.InvariantCulture);
+
         private static string FloatValue(double value) =>
             double.IsNaN(value) ? "NaN" :
             double.IsPositiveInfinity(value) ? "+inf" :
             double.IsNegativeInfinity(value) ? "-inf" :
-            value.ToString("R", CultureInfo.InvariantCulture);
+            value.ToString("G17", CultureInfo.InvariantCulture);
 
         private static long Microseconds(long value, TimeUnit unit)
         {
