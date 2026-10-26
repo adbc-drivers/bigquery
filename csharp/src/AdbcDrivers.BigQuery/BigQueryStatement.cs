@@ -1864,7 +1864,7 @@ namespace AdbcDrivers.BigQuery
         /// without a location. jobs.get and jobs.cancel need the location of a single-region job, but
         /// jobs.list covers every location.
         /// </summary>
-        private async Task<JobReference?> FindJobReferenceAsync(JobReference reference, DateTime submittedUtc, CancellationToken cancellationToken)
+        private async Task<JobReference?> FindJobReferenceAsync(JobReference reference, DateTimeOffset submittedUtc, CancellationToken cancellationToken)
         {
             ListJobsOptions options = new ListJobsOptions { MinCreationTime = submittedUtc - JobListClockSkew };
             await foreach (BigQueryJob job in Client.ListJobsAsync(reference.ProjectId, options).WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -1880,7 +1880,7 @@ namespace AdbcDrivers.BigQuery
         /// <summary>
         /// Gets a job the driver submitted, finding its location first if it is needed but unknown.
         /// </summary>
-        private async Task<BigQueryJob> GetSubmittedJobAsync(JobReference reference, DateTime submittedUtc, CancellationToken cancellationToken)
+        private async Task<BigQueryJob> GetSubmittedJobAsync(JobReference reference, DateTimeOffset submittedUtc, CancellationToken cancellationToken)
         {
             try
             {
@@ -1923,7 +1923,7 @@ namespace AdbcDrivers.BigQuery
             // A cancel that interrupts the insert can still cancel the job by its id. The reference has no
             // location if none was configured; the submission time then bounds a search for it.
             context.Job = new BigQueryJob(Client, new Job { JobReference = jobReference });
-            context.JobSubmittedUtc ??= DateTime.UtcNow;
+            context.JobSubmittedUtc ??= DateTimeOffset.UtcNow;
             try
             {
                 context.Job = await Client.CreateQueryJobAsync(SqlQuery, queryParameters?.Parameters, queryOptions, context.CancellationToken).ConfigureAwait(false);
@@ -2072,7 +2072,7 @@ namespace AdbcDrivers.BigQuery
             /// <summary>
             /// When the driver first submitted a job whose id it chose, if it has.
             /// </summary>
-            public DateTime? JobSubmittedUtc { get; set; }
+            public DateTimeOffset? JobSubmittedUtc { get; set; }
         }
 
         internal sealed class CancellationRegistry : IDisposable
