@@ -262,9 +262,12 @@ namespace AdbcDrivers.BigQuery
         {
             return await this.TraceActivityAsync(async activity =>
             {
+                // A single context covers setup, submission and result polling, so a Cancel() at any
+                // point either stops the query before it is submitted or cancels the job. It is
+                // registered first so that no part of the execution runs without one.
+                using JobCancellationContext cancellationContext = new(cancellationRegistry);
                 QueryOptions queryOptions = ValidateOptions(activity);
-                using CancellationContext parameterContext = new(cancellationRegistry);
-                BigQueryQueryParameters? queryParameters = await GetQueryParametersAsync(parameterContext.CancellationToken).ConfigureAwait(false);
+                BigQueryQueryParameters? queryParameters = await GetQueryParametersAsync(cancellationContext.CancellationToken).ConfigureAwait(false);
                 queryParameters?.ApplyTo(queryOptions);
 
                 activity?.AddConditionalTag(SemanticConventions.Db.Query.Text, SqlQuery, this.bigQueryConnection.IsSafeToTrace);
@@ -292,6 +295,8 @@ namespace AdbcDrivers.BigQuery
                 this.bigQueryConnection.EnsureClientTimeoutSufficient(queryResultsTimeout, activity);
                 activity?.AddBigQueryParameterTag(BigQueryParameters.ClientTimeout, Client.Service.HttpClient.Timeout.TotalSeconds);
 
+                cancellationContext.CancellationToken.ThrowIfCancellationRequested();
+
                 BigQueryJob? job = null;
                 JobReference jobReference;
                 if (useJobCreationMode && CanUseJobCreationRequiredMode(queryOptions))
@@ -299,16 +304,12 @@ namespace AdbcDrivers.BigQuery
                     string requestId = Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture);
                     QueryRequest queryRequest = CreateJobCreationRequiredModeRequest(queryOptions, queryResultsTimeout, requestId);
                     queryParameters?.ApplyTo(queryRequest);
-                    QueryResponse queryResponse;
-                    using (JobCancellationContext queryContext = new JobCancellationContext(cancellationRegistry))
-                    {
-                        queryResponse = await this.TraceActivityAsync(
-                            queryActivity => ExecuteWithRetriesAsync(
-                                () => Client.Service.Jobs.Query(queryRequest, queryOptions.ProjectId ?? Client.ProjectId).ExecuteAsync(queryContext.CancellationToken),
-                                queryActivity,
-                                queryContext.CancellationToken),
-                            ClassName + "." + nameof(ExecuteQueryInternalAsync) + ".Jobs.Query").ConfigureAwait(false);
-                    }
+                    QueryResponse queryResponse = await this.TraceActivityAsync(
+                        queryActivity => ExecuteWithRetriesAsync(
+                            () => Client.Service.Jobs.Query(queryRequest, queryOptions.ProjectId ?? Client.ProjectId).ExecuteAsync(cancellationContext.CancellationToken),
+                            queryActivity,
+                            cancellationContext.CancellationToken),
+                        ClassName + "." + nameof(ExecuteQueryInternalAsync) + ".Jobs.Query").ConfigureAwait(false);
 
                     if (TryCreateRestQueryResult(
                         queryResponse,
@@ -330,14 +331,18 @@ namespace AdbcDrivers.BigQuery
                 }
                 else
                 {
-                    job = await ExecuteWithRetriesAsync(
-                        () => Client.CreateQueryJobAsync(SqlQuery, queryParameters?.Parameters, queryOptions), activity).ConfigureAwait(false);
+                    Task<BigQueryJob> createJobAsyncFunc()
+                    {
+                        return ExecuteCancellableJobAsync(cancellationContext, activity, async (context, jobActivity) =>
+                        {
+                            context.Job = await Client.CreateQueryJobAsync(SqlQuery, queryParameters?.Parameters, queryOptions, context.CancellationToken).ConfigureAwait(false);
+                            return context.Job;
+                        }, ClassName + "." + nameof(ExecuteQueryInternalAsync) + "." + nameof(BigQueryClient.CreateQueryJobAsync));
+                    }
+
+                    job = await ExecuteWithRetriesAsync(createJobAsyncFunc, activity, cancellationContext.CancellationToken).ConfigureAwait(false);
                     jobReference = job.Reference;
                 }
-
-                using JobCancellationContext cancellationContext = job == null
-                    ? new JobCancellationContext(cancellationRegistry)
-                    : new JobCancellationContext(cancellationRegistry, job);
 
                 // We can't checkJobStatus, Otherwise, the timeout in QueryResultsOptions is meaningless.
                 // When encountering a long-running job, it should be controlled by the timeout in the Google SDK instead of blocking in a while loop.
@@ -345,6 +350,10 @@ namespace AdbcDrivers.BigQuery
                 {
                     return ExecuteCancellableJobAsync(cancellationContext, activity, async (context, jobActivity) =>
                     {
+                        // Set before GetJobAsync so that a cancel which interrupts it still cancels the
+                        // server-side job. On the jobs.query path only the reference is known here.
+                        context.Job = job ?? new BigQueryJob(Client, new Job { JobReference = jobReference });
+
                         // if the authentication token was reset, then we need a new job with the latest token
                         BigQueryJob currentJob = await Client.GetJobAsync(jobReference, cancellationToken: context.CancellationToken).ConfigureAwait(false);
                         context.Job = currentJob;
