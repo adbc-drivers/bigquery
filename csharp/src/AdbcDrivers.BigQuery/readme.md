@@ -204,6 +204,8 @@ Protobuf ingestion supports signed and unsigned integers (within BigQuery's sign
 **adbc.bigquery.use_legacy_sql**<br>
 &nbsp;&nbsp;&nbsp;&nbsp;Sets the [UseLegacySql](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.BigQuery.V2/latest/Google.Cloud.BigQuery.V2.QueryOptions#Google_Cloud_BigQuery_V2_QueryOptions_UseLegacySql) value of the QueryOptions to `true` if configured; otherwise, the default is `false`.
 
+**adbc.bigquery.custom_user_agent**<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Optional. A string identifying the calling application that is appended to the driver's `User-Agent` header, useful for attributing BigQuery traffic to a specific tool or integration.
 
 ## Type Support
 
