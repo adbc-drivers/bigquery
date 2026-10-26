@@ -607,7 +607,12 @@ namespace AdbcDrivers.BigQuery
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.MockAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
-                    Credential = ApplyScopes(GoogleCredential.FromAccessToken("mock-token"));
+                    // Tests can set an access token to observe which credentials a request used.
+                    if (!this.properties.TryGetValue(BigQueryParameters.AccessToken, out accessToken) || string.IsNullOrEmpty(accessToken))
+                    {
+                        accessToken = "mock-token";
+                    }
+                    Credential = ApplyScopes(GoogleCredential.FromAccessToken(accessToken));
                 }
                 else
                 {
