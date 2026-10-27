@@ -16,7 +16,9 @@ package bigquery
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 )
 
@@ -179,6 +182,12 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 		return nil, nil
 	}
 
+	// 4-part PCNT datasets (catalog.namespace) do not support INFORMATION_SCHEMA queries,
+	// so retrieve statistics directly from the BigQuery Tables REST API.
+	if strings.Contains(dataset, ".") {
+		return c.getTableStatisticsFromAPI(ctx, project, dataset, tableNames)
+	}
+
 	// Query INFORMATION_SCHEMA in batches to avoid query size limits
 	batchSize := 100
 	var allStats []driverbase.Statistic
@@ -192,6 +201,38 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 			return nil, err
 		}
 		allStats = append(allStats, stats...)
+	}
+
+	return allStats, nil
+}
+
+// getTableStatisticsFromAPI retrieves statistics for tables in a PCNT dataset using the BigQuery Tables REST API.
+func (c *connectionImpl) getTableStatisticsFromAPI(ctx context.Context, project, dataset string, tableNames []string) ([]driverbase.Statistic, error) {
+	ds := c.client.DatasetInProject(project, dataset)
+	var allStats []driverbase.Statistic
+
+	for _, tableName := range tableNames {
+		md, err := ds.Table(tableName).Metadata(ctx)
+		if err != nil {
+			if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
+				// Ignore inaccessible or concurrently deleted tables
+				continue
+			}
+			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", project, dataset, tableName)
+		}
+
+		activeLogicalBytes := max(md.NumBytes-md.NumLongTermBytes, int64(0))
+		allStats = append(allStats,
+			driverbase.NewFloat64Stat(tableName, nil, int16(adbc.StatisticRowCountKey), float64(md.NumRows), true),
+			driverbase.NewInt64Stat(tableName, nil, StatisticTotalLogicalBytesKey, md.NumBytes, true),
+			driverbase.NewInt64Stat(tableName, nil, StatisticActiveLogicalBytesKey, activeLogicalBytes, true),
+			driverbase.NewInt64Stat(tableName, nil, StatisticLongTermLogicalBytesKey, md.NumLongTermBytes, true),
+		)
+		if !md.LastModifiedTime.IsZero() {
+			allStats = append(allStats,
+				driverbase.NewBinaryStat(tableName, nil, StatisticLastModifiedTimeKey, []byte(md.LastModifiedTime.Format(time.RFC3339Nano)), false),
+			)
+		}
 	}
 
 	return allStats, nil
