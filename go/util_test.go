@@ -102,3 +102,80 @@ func TestSafeWaitForJobBacksOffBetweenPolls(t *testing.T) {
 	// server answers, which is hundreds of polls against a local server.
 	require.Less(t, polls.Load(), int64(50), "safeWaitForJob polled without backing off")
 }
+
+func TestStringToTable(t *testing.T) {
+	const (
+		defaultProject = "default-proj"
+		defaultDataset = "default-ds"
+	)
+
+	t.Run("valid formats", func(t *testing.T) {
+		for _, tc := range []struct {
+			name        string
+			input       string
+			wantProject string
+			wantDataset string
+			wantTable   string
+			wantStr     string
+		}{
+			{
+				name:        "1-part table",
+				input:       "my_table",
+				wantProject: defaultProject,
+				wantDataset: defaultDataset,
+				wantTable:   "my_table",
+				wantStr:     "default-proj.default-ds.my_table",
+			},
+			{
+				name:        "2-part dataset.table",
+				input:       "custom_ds.my_table",
+				wantProject: defaultProject,
+				wantDataset: "custom_ds",
+				wantTable:   "my_table",
+				wantStr:     "default-proj.custom_ds.my_table",
+			},
+			{
+				name:        "3-part project.dataset.table",
+				input:       "custom_proj.custom_ds.my_table",
+				wantProject: "custom_proj",
+				wantDataset: "custom_ds",
+				wantTable:   "my_table",
+				wantStr:     "custom_proj.custom_ds.my_table",
+			},
+			{
+				name:        "4-part PCNT project.catalog.namespace.table",
+				input:       "custom_proj.my_catalog.my_namespace.my_table",
+				wantProject: "custom_proj",
+				wantDataset: "my_catalog.my_namespace",
+				wantTable:   "my_table",
+				wantStr:     "custom_proj.my_catalog.my_namespace.my_table",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				tbl, err := stringToTable(defaultProject, defaultDataset, tc.input)
+				require.NoError(t, err)
+				require.Equal(t, tc.wantProject, tbl.ProjectID)
+				require.Equal(t, tc.wantDataset, tbl.DatasetID)
+				require.Equal(t, tc.wantTable, tbl.TableID)
+				require.Equal(t, tc.wantStr, tableToString(tbl))
+			})
+		}
+	})
+
+	t.Run("invalid formats", func(t *testing.T) {
+		for _, input := range []string{
+			"a.b.c.d.e",
+			"a..b",
+			"a.b..d",
+			".a.b",
+			"a.b.",
+		} {
+			t.Run(input, func(t *testing.T) {
+				_, err := stringToTable(defaultProject, defaultDataset, input)
+				var adbcErr adbc.Error
+				require.ErrorAs(t, err, &adbcErr)
+				require.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code)
+			})
+		}
+	})
+}
