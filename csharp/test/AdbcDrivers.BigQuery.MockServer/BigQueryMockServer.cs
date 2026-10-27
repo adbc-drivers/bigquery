@@ -234,6 +234,45 @@ namespace AdbcDrivers.BigQuery.MockServer
         }
 
         /// <summary>
+        /// Registers a table in the mock server so that <c>tables.get</c> returns it, and ensures
+        /// its project and dataset exist in <see cref="Projects"/> and <see cref="Datasets"/>.
+        /// </summary>
+        public void AddTable(Table table)
+        {
+            string projectId = table.TableReference?.ProjectId ?? "mock-project";
+            string datasetId = table.TableReference?.DatasetId ?? "mock_dataset";
+            string tableId = table.TableReference?.TableId
+                ?? throw new ArgumentException("table.TableReference.TableId is required.", nameof(table));
+
+            table.TableReference = new TableReference
+            {
+                ProjectId = projectId,
+                DatasetId = datasetId,
+                TableId = tableId,
+            };
+            table.Kind ??= "bigquery#table";
+            table.Type ??= "TABLE";
+
+            if (!_projects.Contains(projectId))
+            {
+                _projects.Add(projectId);
+            }
+
+            if (!_datasets.TryGetValue(projectId, out List<string>? datasetIds))
+            {
+                datasetIds = new List<string>();
+                _datasets[projectId] = datasetIds;
+            }
+
+            if (!datasetIds.Contains(datasetId))
+            {
+                datasetIds.Add(datasetId);
+            }
+
+            _tables[$"{projectId}.{datasetId}.{tableId}"] = table;
+        }
+
+        /// <summary>
         /// Sets <see cref="JobStateScript"/> from the given states, e.g.
         /// <c>ScriptJobStates(JobStateRunning, JobStateRunning, JobStateDone)</c>.
         /// </summary>
