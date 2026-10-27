@@ -52,6 +52,9 @@ namespace AdbcDrivers.BigQuery.MockServer
 
         /// <summary>GET projects/{projectId}/datasets</summary>
         DatasetsList,
+
+        /// <summary>GET projects/{projectId}/datasets/{datasetId}/tables</summary>
+        TablesList,
     }
 
     /// <summary>

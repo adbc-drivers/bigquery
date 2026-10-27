@@ -234,6 +234,46 @@ namespace AdbcDrivers.BigQuery.MockServer
         }
 
         /// <summary>
+        /// Registers a table in the mock server so that <c>tables.list</c> and <c>tables.get</c>
+        /// return it, and ensures its project and dataset exist in <see cref="Projects"/> and
+        /// <see cref="Datasets"/>.
+        /// </summary>
+        public void AddTable(Table table)
+        {
+            string projectId = table.TableReference?.ProjectId ?? "mock-project";
+            string datasetId = table.TableReference?.DatasetId ?? "mock_dataset";
+            string tableId = table.TableReference?.TableId
+                ?? throw new ArgumentException("table.TableReference.TableId is required.", nameof(table));
+
+            table.TableReference = new TableReference
+            {
+                ProjectId = projectId,
+                DatasetId = datasetId,
+                TableId = tableId,
+            };
+            table.Kind ??= "bigquery#table";
+            table.Type ??= "TABLE";
+
+            if (!_projects.Contains(projectId))
+            {
+                _projects.Add(projectId);
+            }
+
+            if (!_datasets.TryGetValue(projectId, out List<string>? datasetIds))
+            {
+                datasetIds = new List<string>();
+                _datasets[projectId] = datasetIds;
+            }
+
+            if (!datasetIds.Contains(datasetId))
+            {
+                datasetIds.Add(datasetId);
+            }
+
+            _tables[$"{projectId}.{datasetId}.{tableId}"] = table;
+        }
+
+        /// <summary>
         /// Sets <see cref="JobStateScript"/> from the given states, e.g.
         /// <c>ScriptJobStates(JobStateRunning, JobStateRunning, JobStateDone)</c>.
         /// </summary>
@@ -731,6 +771,35 @@ namespace AdbcDrivers.BigQuery.MockServer
                         Id = $"{projectId}:{id}",
                         DatasetReference = new DatasetReference { ProjectId = projectId, DatasetId = id },
                     }).ToList(),
+                };
+
+                string json = NewtonsoftJsonSerializer.Instance.Serialize(response);
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(json);
+            });
+
+            // GET /bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables - List tables
+            app.MapGet("/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables", async (HttpContext ctx, string projectId, string datasetId) =>
+            {
+                Record(MockRequestKind.TablesList);
+
+                var matchingTables = _tables.Values
+                    .Where(t => string.Equals(t.TableReference?.ProjectId, projectId, StringComparison.Ordinal) &&
+                                string.Equals(t.TableReference?.DatasetId, datasetId, StringComparison.Ordinal))
+                    .Select(t => new TableList.TablesData
+                    {
+                        Id = $"{projectId}:{datasetId}.{t.TableReference?.TableId}",
+                        Kind = "bigquery#table",
+                        TableReference = t.TableReference,
+                        Type = t.Type ?? "TABLE",
+                    })
+                    .ToList();
+
+                var response = new TableList
+                {
+                    Kind = "bigquery#tableList",
+                    TotalItems = matchingTables.Count,
+                    Tables = matchingTables,
                 };
 
                 string json = NewtonsoftJsonSerializer.Instance.Serialize(response);
