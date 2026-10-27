@@ -73,35 +73,64 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.Null(dt.Timezone);
         }
 
+        [Fact]
+        public void PcntDatasetTableSchemaSucceeds()
+        {
+            const string pcntDataset = "my_catalog.my_namespace";
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Google.Apis.Bigquery.v2.Data.Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = pcntDataset,
+                    TableId = "my_table",
+                },
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "id", Type = "INTEGER", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "name", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+            });
+
+            using AdbcConnection connection = Connect(mockServer);
+            Schema schema = connection.GetTableSchema(ProjectId, pcntDataset, "my_table");
+
+            Assert.Equal(2, schema.FieldsList.Count);
+            Assert.Equal(Int64Type.Default.TypeId, schema.GetFieldByName("id").DataType.TypeId);
+            Assert.False(schema.GetFieldByName("id").IsNullable);
+            Assert.Equal(StringType.Default.TypeId, schema.GetFieldByName("name").DataType.TypeId);
+            Assert.True(schema.GetFieldByName("name").IsNullable);
+            Assert.Empty(mockServer.ExecutedQueries);
+        }
+
         private static Schema GetTableSchema(params (string Name, string DataType)[] columns)
         {
             using var mockServer = new BigQueryMockServer();
-            mockServer.QueryResultSchema = new TableSchema
-            {
-                Fields = new[]
-                {
-                    new TableFieldSchema { Name = "column_name", Type = "STRING", Mode = "NULLABLE" },
-                    new TableFieldSchema { Name = "ordinal_position", Type = "INTEGER", Mode = "NULLABLE" },
-                    new TableFieldSchema { Name = "is_nullable", Type = "STRING", Mode = "NULLABLE" },
-                    new TableFieldSchema { Name = "data_type", Type = "STRING", Mode = "NULLABLE" },
-                }
-            };
-
-            var rows = new List<TableRow>();
+            var fields = new List<TableFieldSchema>();
             for (int i = 0; i < columns.Length; i++)
             {
-                rows.Add(new TableRow
+                fields.Add(new TableFieldSchema
                 {
-                    F = new[]
-                    {
-                        new TableCell { V = columns[i].Name },
-                        new TableCell { V = (i + 1).ToString() },
-                        new TableCell { V = "YES" },
-                        new TableCell { V = columns[i].DataType },
-                    }
+                    Name = columns[i].Name,
+                    Type = columns[i].DataType,
+                    Mode = "NULLABLE",
                 });
             }
-            mockServer.QueryResultRows = rows;
+
+            mockServer.AddTable(new Google.Apis.Bigquery.v2.Data.Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "my_table",
+                },
+                Schema = new TableSchema { Fields = fields },
+            });
 
             using AdbcConnection connection = Connect(mockServer);
             Schema schema = connection.GetTableSchema(ProjectId, DbSchema, "my_table");
