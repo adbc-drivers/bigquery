@@ -18,6 +18,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using AdbcDrivers.BigQuery.MockServer;
 using Apache.Arrow.Adbc;
 using Google.Apis.Bigquery.v2.Data;
@@ -63,9 +64,27 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
-        public void GetObjectsBindsTableAndColumnPatterns()
+        public void GetObjectsUsesRestApiAndMatchesTableAndColumnPatternsClientSide()
         {
             using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "my_table",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "id", Type = "INTEGER", Mode = "REQUIRED" },
+                    },
+                },
+            });
+
             using AdbcConnection connection = Connect(mockServer);
 
             connection.GetObjects(
@@ -76,28 +95,57 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 tableTypes: new List<string> { "BASE TABLE" },
                 columnNamePattern: Payload);
 
-            Assert.NotEmpty(mockServer.ExecutedQueries);
-            foreach (string executed in mockServer.ExecutedQueries)
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TablesList));
+        }
+
+        [Fact]
+        public async Task GetObjectsSupportsPcntDatasets()
+        {
+            const string pcntDataset = "my_catalog.my_namespace";
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
             {
-                Assert.DoesNotContain("DROP TABLE secrets", executed);
-            }
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = pcntDataset,
+                    TableId = "pcnt_table",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "id", Type = "INTEGER", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "name", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+                TableConstraints = new TableConstraints
+                {
+                    PrimaryKey = new TableConstraints.PrimaryKeyData
+                    {
+                        Columns = new[] { "id" },
+                    },
+                },
+            });
 
-            string tablesQuery = mockServer.ExecutedQueries.First(q => q.Contains("INFORMATION_SCHEMA.TABLES"));
-            Assert.Contains("table_name LIKE @tableNamePattern", tablesQuery);
+            using AdbcConnection connection = Connect(mockServer);
 
-            // An array parameter with IN UNNEST; BigQuery will not expand one into an IN list.
-            Assert.Contains("table_type IN UNNEST(@tableTypes)", tablesQuery);
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.All,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: pcntDataset,
+                tableNamePattern: "pcnt_table",
+                tableTypes: new List<string> { "BASE TABLE" },
+                columnNamePattern: null);
 
-            IReadOnlyList<QueryParameter> parameters =
-                mockServer.ExecutedQueryParameters[mockServer.ExecutedQueries.ToList().IndexOf(tablesQuery)];
-            QueryParameter pattern = parameters.Single(p => p.Name == "tableNamePattern");
-            Assert.Equal(Payload, pattern.ParameterValue.Value);
-
-            QueryParameter types = parameters.Single(p => p.Name == "tableTypes");
-            Assert.Equal("ARRAY", types.ParameterType.Type);
-            Assert.Equal(
-                new[] { "BASE TABLE" },
-                types.ParameterValue.ArrayValues.Select(v => v.Value).ToArray());
+            var batch = await stream.ReadNextRecordBatchAsync();
+            Assert.NotNull(batch);
+            Assert.Equal(1, batch.Length);
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TablesList));
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TableGet));
         }
 
         [Theory]
