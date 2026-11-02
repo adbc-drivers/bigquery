@@ -202,6 +202,9 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// </summary>
         public TimeSpan IncompleteQueryResultsDelay { get; set; } = TimeSpan.FromMilliseconds(100);
 
+        public string? LastRestUserAgent { get; private set; }
+        public string? LastGrpcUserAgent { get; private set; }
+
         /// <summary>
         /// The location given to a job created without one, as BigQuery infers it from the query's
         /// datasets. Defaults to null, which means "US". As in BigQuery, requests for a job outside the
@@ -382,6 +385,7 @@ namespace AdbcDrivers.BigQuery.MockServer
             var app = builder.Build();
             app.Use(async (context, next) =>
             {
+                LastRestUserAgent = context.Request.Headers.UserAgent.ToString();
                 // Captured for Record, which runs inside the route handlers.
                 string authorization = context.Request.Headers.Authorization.ToString();
                 _requestAccessToken.Value = authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
@@ -421,6 +425,8 @@ namespace AdbcDrivers.BigQuery.MockServer
             var app = builder.Build();
             app.Use(async (context, next) =>
             {
+                LastGrpcUserAgent = context.Request.Headers.UserAgent.ToString();
+
                 if (context.Request.Path.Value?.EndsWith("/AppendRows", StringComparison.Ordinal) == true)
                 {
                     var body = context.Request.BodyReader;
