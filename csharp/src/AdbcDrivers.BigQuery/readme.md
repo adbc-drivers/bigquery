@@ -45,6 +45,50 @@ The ADBC driver passes the configured credentials to BigQuery, but you may need 
 
 ## Parameters
 
+### SQL query parameters
+
+`Bind` and `BindStream` support a single row of positional query parameters for
+GoogleSQL `?` placeholders. The bindings are used by both query-submission paths
+and by non-ingest `ExecuteUpdate`. Rebinding replaces the previous values.
+If stream materialization fails, subsequent executions retain that failure until
+`Bind` or `BindStream` supplies a new binding; the remaining rows are never retried
+as a different parameter set.
+Bindings are serialized separately from SQL; callers must not quote or escape
+parameter values as SQL literals. Legacy SQL is rejected when parameters are bound.
+
+Supported Arrow scalar types are boolean, signed integers, unsigned integers
+within INT64 range, float/double, UTF-8 text, binary, date, time, timestamp, and
+decimal128/256 within BigQuery NUMERIC/BIGNUMERIC precision and scale limits.
+Null values retain their Arrow types. Temporal values must fit BigQuery's
+microsecond precision; finer nonzero fractions are rejected rather than truncated.
+Unzoned timestamps map to DATETIME and zoned timestamps map to TIMESTAMP.
+The Arrow timestamp-with-offset extension also maps to TIMESTAMP, preserving
+the UTC instant rather than interpreting the local clock as UTC.
+Duration/interval, nested types, named parameters, and multiple parameter rows
+are not supported by this query-binding implementation. Bulk ingestion retains
+its existing batch/stream behavior.
+
+For durations represented exactly in Int64 microseconds, callers can explicitly
+bind the count and construct an interval in GoogleSQL with
+`JUSTIFY_INTERVAL(INTERVAL ? MICROSECOND)` instead of binding an Arrow duration.
+
+#### Live validation
+
+`QueryParameterLiveTests` uses the existing `BIGQUERY_TEST_CONFIG_FILE` credential
+configuration to validate both query-submission APIs directly against BigQuery.
+The tests run constant SELECTs without creating datasets or tables, and check
+scalar types, Unicode/control characters, typed nulls, exact Int64 values, and
+rebinding on the same statement. They are skipped when no test configuration
+is supplied.
+
+From the `csharp` directory:
+
+```powershell
+dotnet test .\test\AdbcDrivers.BigQuery.Tests\AdbcDrivers.BigQuery.Tests.csproj --framework net8.0 --filter "FullyQualifiedName~QueryParameterLiveTests"
+```
+
+### Driver configuration
+
 The following parameters can be used to configure the driver behavior. The parameters are case sensitive.
 
 **adbc.bigquery.access_token**<br>
