@@ -498,12 +498,14 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
         }
 
-        [Fact]
-        public async Task StatementCancellationStopsBlockedInputReadWithoutCommit()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task StatementCancellationStopsBlockedInputReadWithoutCommit(bool emptyFirstBatch)
         {
             using var server = new BigQueryMockServer();
             using AdbcConnection connection = Connect(server);
-            using RecordBatch batch = CreateBatch(2);
+            using RecordBatch batch = CreateBatch(emptyFirstBatch ? 0 : 2);
             using var stream = new BlockingBatchStream(batch);
             using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "canceled_input", BulkIngestMode.Create, false);
             statement.SetOption(BigQueryParameters.IngestMaxInFlightBatches, "1");
@@ -521,7 +523,10 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 stream.ReleaseRead.TrySetResult(true);
             }
             Assert.Empty(server.WriteService.CommittedStreams);
-            Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
+            if (emptyFirstBatch)
+                Assert.Empty(server.WriteService.Streams);
+            else
+                Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
         }
 
         [Fact]
@@ -543,19 +548,136 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.False(Assert.Single(server.WriteService.Streams.Values).Finalized);
         }
 
-        [Fact]
-        public async Task EmptyInputCompletesWithoutWaitingForAnAcknowledgment()
+        [Theory]
+        [InlineData("protobuf", "batch")]
+        [InlineData("protobuf", "stream")]
+        [InlineData("protobuf", "schema_only_stream")]
+        [InlineData("arrow", "batch")]
+        [InlineData("arrow", "stream")]
+        [InlineData("arrow", "schema_only_stream")]
+        public async Task EmptyInputCompletesWithoutOpeningAWriteStream(string format, string inputKind)
         {
             using var server = new BigQueryMockServer();
             using AdbcConnection connection = Connect(server);
             using RecordBatch batch = CreateBatch(0);
-            using var stream = new BatchStream(batch.Schema);
+            using var stream = new BatchStream(batch.Schema,
+                inputKind == "schema_only_stream" ? System.Array.Empty<RecordBatch>() : new[] { batch, batch });
             using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "empty_input", BulkIngestMode.Create, false);
-            statement.BindStream(stream);
+            statement.SetOption(BigQueryParameters.IngestFormat, format);
+            if (inputKind == "batch")
+                statement.Bind(batch, batch.Schema);
+            else
+                statement.BindStream(stream);
+
             UpdateResult result = await statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
             Assert.Equal(0, result.AffectedRows);
-            Assert.Empty(Assert.Single(server.WriteService.Streams.Values).RecordBatches);
+            Assert.Single(server.RequestsOfKind(MockRequestKind.TableInsert));
+            Assert.Empty(server.WriteService.Streams);
+            Assert.Empty(server.AppendTransportRequests);
+            Assert.Empty(server.WriteService.CommittedStreams);
+        }
+
+        [Theory]
+        [InlineData("protobuf")]
+        [InlineData("arrow")]
+        public async Task EmptyBatchesAreSkippedBeforeBetweenAndAfterNonEmptyBatches(string format)
+        {
+            using var server = new BigQueryMockServer();
+            var requests = new ConcurrentQueue<AppendRowsRequest>();
+            server.WriteService.AppendRequestReceived = request => requests.Enqueue(request);
+            using AdbcConnection connection = Connect(server);
+            using RecordBatch empty = CreateBatch(0);
+            using RecordBatch first = CreateBatch(2);
+            using RecordBatch second = CreateBatch(1);
+            using var stream = new BatchStream(empty, empty, first, empty, second, empty);
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "mixed_input", BulkIngestMode.Create, false);
+            statement.SetOption(BigQueryParameters.IngestFormat, format);
+            statement.SetOption(BigQueryParameters.IngestMaxInFlightBatches, "1");
+            statement.BindStream(stream);
+
+            UpdateResult result = await statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(3, result.AffectedRows);
+            Assert.Equal(2, requests.Count);
+            if (format == "arrow")
+            {
+                Assert.NotNull(requests.First().ArrowRows.WriterSchema);
+                Assert.Null(requests.Last().ArrowRows.WriterSchema);
+                Assert.Equal(new[] { first, second }.Select(b => Convert.ToBase64String(ArrowSerializationHelpers.SerializeRecordBatch(b))),
+                    requests.Select(request => Convert.ToBase64String(request.ArrowRows.Rows.SerializedRecordBatch.ToByteArray())));
+            }
+            else
+            {
+                Assert.NotNull(requests.First().ProtoRows.WriterSchema);
+                Assert.Null(requests.Last().ProtoRows.WriterSchema);
+                var encoder = new ProtobufEncoder(first.Schema);
+                Assert.Equal(new[] { first, second }.Select(b => encoder.Encode(b).ToByteString()),
+                    requests.Select(request => request.ProtoRows.Rows.ToByteString()));
+            }
+            Assert.True(Assert.Single(server.WriteService.Streams.Values).Finalized);
             Assert.Single(server.WriteService.CommittedStreams);
+        }
+
+        [Theory]
+        [InlineData(BulkIngestMode.Append, true)]
+        [InlineData(BulkIngestMode.Append, false)]
+        [InlineData(BulkIngestMode.Create, true)]
+        [InlineData(BulkIngestMode.Replace, true)]
+        [InlineData(BulkIngestMode.CreateAppend, true)]
+        [InlineData(BulkIngestMode.CreateAppend, false)]
+        public async Task EmptyInputPreservesTableLifecycle(BulkIngestMode mode, bool tableExists)
+        {
+            using var server = new BigQueryMockServer();
+            using AdbcConnection connection = Connect(server);
+            using RecordBatch batch = CreateBatch(0);
+            if (tableExists)
+            {
+                using AdbcStatement create = connection.BulkIngest("mock-project", "mock_dataset", "empty_lifecycle", BulkIngestMode.Create, false);
+                create.Bind(batch, batch.Schema);
+                await create.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "empty_lifecycle", mode, false);
+            statement.Bind(batch, batch.Schema);
+
+            if (mode == BulkIngestMode.Create || (mode == BulkIngestMode.Append && !tableExists))
+            {
+                AdbcException error = await Assert.ThrowsAsync<AdbcException>(() =>
+                    statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert.Equal(tableExists ? AdbcStatusCode.AlreadyExists : AdbcStatusCode.NotFound, error.Status);
+            }
+            else
+            {
+                UpdateResult result = await statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Equal(0, result.AffectedRows);
+            }
+
+            int expectedCreates = tableExists ? 1 : 0;
+            if (mode == BulkIngestMode.Replace || (mode == BulkIngestMode.CreateAppend && !tableExists))
+                expectedCreates++;
+            Assert.Equal(expectedCreates, server.RequestsOfKind(MockRequestKind.TableInsert).Count());
+            Assert.Equal(mode == BulkIngestMode.Replace ? 1 : 0, server.RequestsOfKind(MockRequestKind.TableDelete).Count());
+            Assert.Empty(server.WriteService.Streams);
+            Assert.Empty(server.WriteService.CommittedStreams);
+        }
+
+        [Fact]
+        public async Task SourceFailureBeforeAnyRowsIsNotTreatedAsEmptyInput()
+        {
+            using var server = new BigQueryMockServer();
+            using AdbcConnection connection = Connect(server);
+            using RecordBatch batch = CreateBatch(0);
+            using var stream = new BatchStream(batch.Schema, batch) { EndError = new InvalidOperationException("source failed") };
+            using AdbcStatement statement = connection.BulkIngest("mock-project", "mock_dataset", "empty_source_failure", BulkIngestMode.Create, false);
+            statement.BindStream(stream);
+
+            AdbcException error = await Assert.ThrowsAsync<AdbcException>(() =>
+                statement.ExecuteUpdateAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+
+            Assert.Contains("source failed", error.Message);
+            Assert.Equal(AdbcStatusCode.IOError, error.Status);
+            Assert.Empty(server.WriteService.Streams);
+            Assert.Empty(server.WriteService.CommittedStreams);
         }
 
         [Theory]
