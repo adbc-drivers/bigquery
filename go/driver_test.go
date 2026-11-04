@@ -2505,6 +2505,7 @@ func (suite *BigQueryTests) TestOldOptionNames() {
 		{k: "adbc.bigquery.sql.query.default_dataset_id", v: "foobar"},
 		{k: "adbc.bigquery.sql.query.default_project_id", v: "foobar"},
 		{k: "adbc.bigquery.sql.query.destination_table", v: "foobar", a: new(fmt.Sprintf("%s.%s.foobar", suite.Quirks.catalogName, suite.Quirks.schemaName))},
+		{k: "adbc.bigquery.sql.query.destination_table", v: "proj.cat.ns.foobar", a: new("proj.cat.ns.foobar")},
 		{k: "adbc.bigquery.sql.query.parameter_mode", v: "adbc.bigquery.sql.query.parameter_mode_named", a: new("named")},
 		{k: "adbc.bigquery.sql.query.parameter_mode", v: "adbc.bigquery.sql.query.parameter_mode_positional", a: new("positional")},
 		{k: "adbc.bigquery.sql.query.create_disposition", v: "CREATE_IF_NEEDED"},
