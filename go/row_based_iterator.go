@@ -25,6 +25,7 @@ package bigquery
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"math/big"
 	"time"
 
@@ -57,9 +58,6 @@ func newRowBasedArrowIterator(iter *bigquery.RowIterator, alloc memory.Allocator
 	}
 }
 
-// Next returns the next batch of rows as an Arrow record batch, IPC-encoded
-// so the returned bytes plug directly into
-// bigquery.NewArrowIteratorReader downstream.
 func (l *RowBasedArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
 	if l.done {
 		return nil, iterator.Done
@@ -115,13 +113,10 @@ func (l *RowBasedArrowIterator) serialize(batch arrow.RecordBatch) ([]byte, erro
 	return buf.Bytes(), nil
 }
 
-// Schema returns the BigQuery schema of the underlying row iterator.
 func (l *RowBasedArrowIterator) Schema() bigquery.Schema {
 	return l.schema
 }
 
-// SerializedArrowSchema returns the Arrow schema (from `buildField`) as IPC
-// bytes so it can be fed into an ipc.Reader on the consuming side.
 func (l *RowBasedArrowIterator) SerializedArrowSchema() []byte {
 	fields := make([]arrow.Field, len(l.schema))
 	for i, field := range l.schema {
@@ -143,8 +138,6 @@ func (l *RowBasedArrowIterator) SerializedArrowSchema() []byte {
 	return buf.Bytes()
 }
 
-// rowsToArrowRecordBatch converts a slice of bigquery.Value rows into an
-// Arrow record batch matching the given BigQuery schema.
 func rowsToArrowRecordBatch(schema bigquery.Schema, rows [][]bigquery.Value, alloc memory.Allocator) (arrow.RecordBatch, error) {
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("no rows to convert")

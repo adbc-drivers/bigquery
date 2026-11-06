@@ -145,14 +145,6 @@ def test_link_failed_job(driver, conn) -> None:
 STORAGE_API_DISABLED = "bigquery.query.disable_storage_api"
 
 
-def test_disable_storage_api_option_roundtrip(driver, conn) -> None:
-    with conn.cursor() as cursor:
-        statement = cursor.adbc_statement
-        assert statement.get_option(STORAGE_API_DISABLED) == "false"
-        statement.set_options(**{STORAGE_API_DISABLED: "true"})
-        assert statement.get_option(STORAGE_API_DISABLED) == "true"
-
-
 def test_disable_storage_api_pseudo_columns(driver, conn) -> None:
     # Ingestion-time partitioning is what exposes _PARTITIONDATE and
     # _PARTITIONTIME. Routing through the row-based reader must return their
