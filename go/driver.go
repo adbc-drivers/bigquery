@@ -50,6 +50,10 @@ const (
 	OptionValueAuthTypeJSONCredentialString = "json_credential_string"
 	OptionValueAuthTypeAnonymous            = "anonymous"
 	OptionValueAuthTypeUserAuthentication   = "user_authentication"
+	// OptionValueAuthTypeAccessToken authenticates with the OAuth 2.0 access
+	// token in OptionAuthAccessToken. The driver sends the token as it is and
+	// never refreshes it.
+	OptionValueAuthTypeAccessToken = "access_token"
 	// WithAppDefaultCredentials instructs the driver to authenticate using
 	// Application Default Credentials (ADC).
 	OptionValueAuthTypeAppDefaultCredentials = "app_default_credentials"
@@ -68,6 +72,9 @@ const (
 	OptionAuthClientSecret = "bigquery.auth.client_secret"
 	OptionAuthRefreshToken = "bigquery.auth.refresh_token"
 	OptionAuthQuotaProject = "bigquery.auth.quota_project"
+	// OptionAuthAccessToken is the OAuth 2.0 access token that
+	// OptionValueAuthTypeAccessToken sends. Any other auth type refuses it.
+	OptionAuthAccessToken = "bigquery.auth.access_token"
 
 	// OptionQueryParameterMode specifies if the query uses positional syntax ("?")
 	// or the named syntax ("@p"). It is illegal to mix positional and named syntax.
@@ -128,6 +135,11 @@ const (
 	// OptionImpersonateLifetime instructs the driver to impersonate for the
 	// given duration (e.g. "3600s").
 	OptionImpersonateLifetime = "bigquery.impersonate.lifetime"
+
+	// OptionImpersonateSubject instructs the driver to impersonate the given
+	// user through domain-wide delegation of the target principal. It needs
+	// OptionImpersonateTargetPrincipal.
+	OptionImpersonateSubject = "bigquery.impersonate.subject"
 
 	// OptionBulkIngestMethod specifies the bulk ingest implementation to use.
 	// Default is "load" (Parquet + LoaderFrom). "storage_write" uses Storage Write API.
