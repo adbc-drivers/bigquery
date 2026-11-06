@@ -550,10 +550,6 @@ func (st *statement) SetSubstraitPlan(ctx context.Context, plan []byte) error {
 func (st *statement) query() *bigquery.Query {
 	var client *bigquery.Client
 	if st.disableStorageApi {
-		// Lazily create the secondary client. If creation fails for any
-		// reason fall back to the main client; callers that strictly require
-		// pseudo-column support will surface the issue via a subsequent
-		// query error.
 		c, err := st.cnxn.getOrCreateStorageApiDisabledClient(context.Background())
 		if err != nil {
 			st.cnxn.Logger.Warn("[bq] failed to create non-storage-api client; falling back", "error", err)

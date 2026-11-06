@@ -755,11 +755,6 @@ func (c *connectionImpl) SetOptionInt(ctx context.Context, key string, value int
 	}
 }
 
-// authOptions builds the slice of google.golang.org/api/option client
-// options reflecting the connection's configured auth type and
-// impersonation/quota settings. Exposed so auxiliary clients (secondary
-// BigQuery client without Storage Read API) can be created with the same
-// credentials.
 func (c *connectionImpl) authOptions(ctx context.Context) ([]option.ClientOption, error) {
 	authOptions := []option.ClientOption{}
 
@@ -919,10 +914,6 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 	return nil
 }
 
-// getOrCreateStorageApiDisabledClient lazily constructs (and caches) a
-// BigQuery client that has NOT had its Storage Read API enabled. Required by
-// queries that select pseudo-columns like _PARTITIONDATE/_PARTITIONTIME,
-// which return null over the Storage Read API.
 func (c *connectionImpl) getOrCreateStorageApiDisabledClient(ctx context.Context) (*bigquery.Client, error) {
 	if c.clientStorageApiDisabled != nil {
 		return c.clientStorageApiDisabled, nil
