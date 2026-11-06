@@ -24,6 +24,7 @@ package bigquery
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -210,4 +211,25 @@ func sampleJobStatistics() *bigquery.JobStatistics {
 			ExportDataStatistics:          &bigquery.ExportDataStatistics{FileCount: 4, RowCount: 5},
 		},
 	}
+}
+
+type failingArrowIterator struct{}
+
+func (failingArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
+	return nil, fmt.Errorf("stream failed")
+}
+
+func (failingArrowIterator) Schema() bigquery.Schema {
+	return bigquery.Schema{{Name: "col", Type: bigquery.StringFieldType}}
+}
+
+func (failingArrowIterator) SerializedArrowSchema() []byte {
+	return nil
+}
+
+func TestIpcReaderFromArrowIteratorPropagatesReaderError(t *testing.T) {
+	rdr, schema, err := ipcReaderFromArrowIterator(failingArrowIterator{}, nil, "job", memory.DefaultAllocator)
+	require.Error(t, err)
+	require.Nil(t, rdr)
+	require.Nil(t, schema)
 }
