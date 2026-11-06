@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -69,6 +70,11 @@ type statement struct {
 	execution *statementExecution
 	// Query and bulk-ingest paths wait for each job before submitting the next.
 	activeJob *jobCancellation
+
+	// ExecutePartitions' stream sizing; zero means unset. See
+	// OptionQueryPartitionsMaxStreams and OptionQueryPartitionsTargetRowsPerStream.
+	partitionMaxStreams          int32
+	partitionTargetRowsPerStream int64
 }
 
 func (st *statement) GetOptionBytes(ctx context.Context, key string) ([]byte, error) {
@@ -171,6 +177,9 @@ func (st *statement) GetOption(ctx context.Context, key string) (string, error) 
 			return st.bulkIngestCompression, nil
 		}
 		return st.cnxn.GetOption(ctx, key)
+	case OptionQueryPartitionsMaxStreams, OptionQueryPartitionsTargetRowsPerStream:
+		n, err := st.GetOptionInt(ctx, key)
+		return strconv.FormatInt(n, 10), err
 	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
 		return getQueryOption(&st.queryConfig, key)
 	default:
@@ -195,6 +204,10 @@ func (st *statement) GetOptionInt(ctx context.Context, key string) (int64, error
 		return int64(st.resultRecordBufferSize), nil
 	case OptionQueryPrefetchConcurrency:
 		return int64(st.prefetchConcurrency), nil
+	case OptionQueryPartitionsMaxStreams:
+		return int64(st.maxPartitionStreams()), nil
+	case OptionQueryPartitionsTargetRowsPerStream:
+		return st.partitionTargetRowsPerStream, nil
 	default:
 		val, err := st.cnxn.GetOptionInt(ctx, key)
 		if err == nil {
@@ -343,6 +356,15 @@ func (st *statement) SetOption(ctx context.Context, key string, v string) error 
 			}
 		}
 		st.bulkIngestCompression = v
+	case OptionQueryPartitionsMaxStreams, OptionQueryPartitionsTargetRowsPerStream:
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] `%s` must be a positive integer, got %q", key, v),
+			}
+		}
+		return st.setPartitionOption(key, n)
 	case OptionQueryJobCreationMode, OptionQueryResultsFormat, OptionQueryArrowSerializationOptionsBufferCompression:
 		return setQueryOption(&st.queryConfig, key, v)
 
@@ -370,6 +392,8 @@ func (st *statement) SetOptionInt(ctx context.Context, key string, value int64) 
 	case OptionQueryPrefetchConcurrency:
 		st.prefetchConcurrency = int(value)
 		return nil
+	case OptionQueryPartitionsMaxStreams, OptionQueryPartitionsTargetRowsPerStream:
+		return st.setPartitionOption(key, value)
 	default:
 		return adbc.Error{
 			Code: adbc.StatusNotImplemented,
@@ -940,13 +964,110 @@ func (st *statement) GetParameterSchema(ctx context.Context) (*arrow.Schema, err
 // descriptors and the number of rows affected, if known. If unknown,
 // the number of rows affected will be -1.
 //
-// If the driver does not support partitioned results, this will return
-// an error with a StatusNotImplemented code.
+// The query runs to completion as it would for ExecuteQuery. Then the
+// destination table's own metadata is read once for its exact row count
+// (not the Storage Read API session's estimate), and a multi-stream Storage
+// Read API session is created against that table, sized by
+// partitionStreamCountFor. One partition descriptor is returned per stream.
+// A descriptor carries only the stream name that the Storage Read API
+// assigned, plus a version byte. It carries no credential or token, so
+// ReadPartition opens it with the credentials of whichever connection calls
+// it, in this process or in another.
+//
+// The returned row count is exact, but the split is not: the Storage Read
+// API session may return fewer streams than requested. The metadata read is
+// one extra round trip beyond what ExecuteQuery needs.
+//
+// A dry run (bigquery.query.dry_run) has no destination table, so it cannot
+// be partitioned; this returns an error. Bound parameters are not
+// supported either.
 func (st *statement) ExecutePartitions(ctx context.Context) (*arrow.Schema, adbc.Partitions, int64, error) {
-	return nil, adbc.Partitions{}, -1, adbc.Error{
-		Code: adbc.StatusNotImplemented,
-		Msg:  "ExecutePartitions not yet implemented for BigQuery driver",
+	ctx, execution := st.beginExecution(ctx)
+	defer st.endExecution(execution)
+
+	if st.queryConfig.Q == "" {
+		return nil, adbc.Partitions{}, -1, adbc.Error{
+			Code: adbc.StatusInvalidState,
+			Msg:  "[bq] cannot execute without a query",
+		}
 	}
+	if st.queryConfig.DryRun {
+		return nil, adbc.Partitions{}, -1, adbc.Error{
+			Code: adbc.StatusInvalidState,
+			Msg:  "[bq] ExecutePartitions does not support bigquery.query.dry_run: a dry run has no destination table to partition",
+		}
+	}
+	if st.params != nil {
+		return nil, adbc.Partitions{}, -1, adbc.Error{
+			Code: adbc.StatusNotImplemented,
+			Msg:  "[bq] ExecutePartitions does not support bound parameters",
+		}
+	}
+
+	query := st.query()
+
+	activeJob := st.beginJob(st.cnxn.client, &query.JobIDConfig)
+	defer st.finishJob(ctx, st.cnxn.Logger, activeJob)
+
+	job, err := query.Run(ctx)
+	if err != nil {
+		return nil, adbc.Partitions{}, -1, errToAdbcErr(adbc.StatusInternal, err, "run query")
+	}
+	activeJob.setJob(job)
+
+	js, err := safeWaitForJob(ctx, st.cnxn.Logger, job)
+	if err != nil {
+		return nil, adbc.Partitions{}, -1, errToAdbcErr(adbc.StatusInternal, err, "wait for job")
+	}
+	activeJob.markFinished()
+
+	if err := js.Err(); err != nil {
+		return nil, adbc.Partitions{}, -1, errToAdbcErr(adbc.StatusInternal, err, "complete job")
+	} else if !js.Done() {
+		return nil, adbc.Partitions{}, -1, adbc.Error{
+			Code: adbc.StatusInternal,
+			Msg:  "[bq] query job did not complete",
+		}
+	}
+
+	cfg, err := job.Config()
+	if err != nil {
+		return nil, adbc.Partitions{}, -1, errToAdbcErr(adbc.StatusInternal, err, "read job config")
+	}
+	queryCfg, ok := cfg.(*bigquery.QueryConfig)
+	if !ok || queryCfg.Dst == nil {
+		return nil, adbc.Partitions{}, -1, adbc.Error{
+			Code: adbc.StatusInternal,
+			Msg:  "[bq] query job has no destination table to partition",
+		}
+	}
+
+	// The exact row count comes from the destination table's own metadata, not from
+	// the read session's estimate.
+	meta, err := queryCfg.Dst.Metadata(ctx)
+	if err != nil {
+		return nil, adbc.Partitions{}, -1, errToAdbcErr(adbc.StatusInternal, err, "read destination table metadata")
+	}
+	rowsAffected := int64(-1)
+	if meta.NumRows <= math.MaxInt64 {
+		rowsAffected = int64(meta.NumRows)
+	}
+
+	streamCount := partitionStreamCountFor(meta.NumRows, st.maxPartitionStreams(), st.partitionTargetRowsPerStream)
+	schema, streams, err := createPartitionReadSession(ctx, st.cnxn.client, queryCfg.Dst, streamCount)
+	if err != nil {
+		return nil, adbc.Partitions{}, -1, err
+	}
+
+	partitions := adbc.Partitions{
+		NumPartitions: uint64(len(streams)),
+		PartitionIDs:  make([][]byte, len(streams)),
+	}
+	for i, streamName := range streams {
+		partitions.PartitionIDs[i] = encodePartitionDescriptor(streamName)
+	}
+
+	return schema, partitions, rowsAffected, nil
 }
 
 func (st *statement) executeIngest(ctx context.Context) (int64, error) {

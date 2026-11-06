@@ -42,6 +42,7 @@ import (
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
@@ -561,6 +562,19 @@ func (c *connectionImpl) Close(ctx context.Context) error {
 
 func (c *connectionImpl) GetTableSchema(ctx context.Context, catalog *string, dbSchema *string, tableName string) (*arrow.Schema, error) {
 	return c.getTableSchemaWithFilter(ctx, catalog, dbSchema, tableName, nil)
+}
+
+// ReadPartition turns a partition descriptor produced by (*statement).ExecutePartitions
+// into a RecordReader, by decoding the Storage Read API stream name it carries and
+// opening it with this connection's own credentials -- never the credentials of
+// whichever connection created the partition. A malformed descriptor is reported
+// as adbc.StatusInvalidArgument rather than panicking.
+func (c *connectionImpl) ReadPartition(ctx context.Context, descriptor []byte) (array.RecordReader, error) {
+	streamName, err := decodePartitionDescriptor(descriptor)
+	if err != nil {
+		return nil, err
+	}
+	return readPartitionRecordReader(ctx, c.client, streamName, c.Alloc, c.resultRecordBufferSize)
 }
 
 // NewStatement initializes a new statement object tied to this connection
