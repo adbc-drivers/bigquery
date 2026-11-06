@@ -44,11 +44,13 @@ type databaseImpl struct {
 	clientID        string
 	clientSecret    string
 	refreshToken    string
+	accessToken     string
 
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
 	impersonateScopes          []string
 	impersonateLifetime        time.Duration
+	impersonateSubject         string
 
 	// projectID is the catalog
 	projectID string
@@ -76,10 +78,12 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		clientID:                   d.clientID,
 		clientSecret:               d.clientSecret,
 		refreshToken:               d.refreshToken,
+		accessToken:                d.accessToken,
 		impersonateTargetPrincipal: d.impersonateTargetPrincipal,
 		impersonateDelegates:       d.impersonateDelegates,
 		impersonateScopes:          d.impersonateScopes,
 		impersonateLifetime:        d.impersonateLifetime,
+		impersonateSubject:         d.impersonateSubject,
 		catalog:                    d.projectID,
 		dbSchema:                   d.datasetID,
 		location:                   d.location,
@@ -127,6 +131,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.clientSecret, nil
 	case OptionAuthRefreshToken:
 		return d.refreshToken, nil
+	case OptionAuthAccessToken:
+		return d.accessToken, nil
 	case OptionAuthQuotaProject:
 		return d.quotaProject, nil
 	case OptionLocation:
@@ -139,6 +145,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.endpoint, nil
 	case OptionStorageEndpoint:
 		return d.storageEndpoint, nil
+	case OptionImpersonateSubject:
+		return d.impersonateSubject, nil
 	case OptionImpersonateLifetime:
 		if d.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
@@ -189,7 +197,8 @@ func (d *databaseImpl) SetOptions(ctx context.Context, options map[string]string
 func (d *databaseImpl) hasImpersonationOptions() bool {
 	return d.impersonateTargetPrincipal != "" ||
 		len(d.impersonateDelegates) > 0 ||
-		len(d.impersonateScopes) > 0
+		len(d.impersonateScopes) > 0 ||
+		d.impersonateSubject != ""
 }
 
 func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) error {
@@ -217,6 +226,7 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 			OptionValueAuthTypeJSONCredentialFile,
 			OptionValueAuthTypeJSONCredentialString,
 			OptionValueAuthTypeUserAuthentication,
+			OptionValueAuthTypeAccessToken,
 			OptionValueAuthTypeAppDefaultCredentials,
 			OptionValueAuthTypeAnonymous:
 			d.authType = value
@@ -252,10 +262,14 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.clientSecret = value
 	case OptionAuthRefreshToken:
 		d.refreshToken = value
+	case OptionAuthAccessToken:
+		d.accessToken = value
 	case OptionAuthQuotaProject:
 		d.quotaProject = value
 	case OptionImpersonateTargetPrincipal:
 		d.impersonateTargetPrincipal = value
+	case OptionImpersonateSubject:
+		d.impersonateSubject = value
 	case OptionImpersonateDelegates:
 		// Guard against strings.Split("", ",") yielding [""]. These values are
 		// copied into the connection by Open, so an unguarded split here would

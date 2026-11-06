@@ -152,9 +152,14 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 ### Connection Options
 
 `bigquery.auth_type`
-: **Values:** `auth_bigquery`, `json_credential_file`, `json_credential_string`, `anonymous`, `user_authentication`, `app_default_credentials`, `json_credentials`, `oauth_client_ids`. **Default:** `auth_bigquery`. **URI Parameter:** `OAuthType`
+: **Values:** `auth_bigquery`, `json_credential_file`, `json_credential_string`, `anonymous`, `user_authentication`, `access_token`, `app_default_credentials`, `json_credentials`, `oauth_client_ids`. **Default:** `auth_bigquery`. **URI Parameter:** `OAuthType`
 
   How to authenticate.
+
+`bigquery.auth.access_token`
+: **Type:** string. **Default:** (empty)
+
+  If using `access_token` authentication, this is the OAuth 2.0 access token. The driver sends it as it is and does not refresh it, so it must stay valid for the life of the connection. An empty token is an error. A token set under any other `bigquery.auth_type` is an error, because that auth type would ignore it. A token set together with an impersonation option is also an error, because impersonation would replace it.
 
 `bigquery.auth.credentials`
 : **Type:** string. **Default:** (empty) **URI Parameter:** `AuthCredentials`
@@ -210,6 +215,11 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 : **Type:** string (comma-separated list). **Default:** (empty) **URI Parameter:** `ImpersonateScopes`
 
   The scopes that the impersonated credential should have.
+
+`bigquery.impersonate.subject`
+: **Type:** string. **Default:** (empty)
+
+  The user to impersonate through domain-wide delegation of `bigquery.impersonate.target_principal`. This option needs `bigquery.impersonate.target_principal`. The base credential is Application Default Credentials.
 
 `bigquery.impersonate.target_principal`
 : **Type:** string. **Default:** (empty) **URI Parameter:** `ImpersonateTargetPrincipal`
