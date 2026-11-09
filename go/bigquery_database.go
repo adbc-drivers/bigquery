@@ -24,7 +24,6 @@ package bigquery
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -325,12 +324,9 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 
 	parsedURI, err := url.Parse(uri)
 	if err != nil {
-		if urlErr, ok := errors.AsType[*url.Error](err); ok {
-			err = urlErr.Err
-		}
 		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("[bq] invalid BigQuery URI format: %v", err),
+			Msg:  "[bq] invalid BigQuery URI format",
 		}
 	}
 

@@ -2005,8 +2005,9 @@ func TestInvalidURIDoesNotExposeSecrets(t *testing.T) {
 	for _, tc := range []struct {
 		name, uri, diagnostic string
 	}{
-		{"escape", "bigquery://user:" + password + "@localhost/project%zz?token=" + token, "invalid URL escape"},
-		{"port", "bigquery://user:" + password + "@localhost:bad/project?token=" + token, "invalid port"},
+		{"escape", "bigquery://user:" + password + "@localhost/project%zz?token=" + token, "invalid BigQuery URI format"},
+		{"port", "bigquery://user:" + password + "@localhost:bad/project?token=" + token, "invalid BigQuery URI format"},
+		{"missing userinfo separator and host", "bigquery://user:" + password + "/project?token=" + token, "invalid BigQuery URI format"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			drv := driver.NewDriver(memory.DefaultAllocator)
