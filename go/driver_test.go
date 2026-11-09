@@ -324,7 +324,7 @@ func (q *BigQueryQuirks) SupportsCurrentCatalogSchema() bool          { return t
 func (q *BigQueryQuirks) SupportsExecuteSchema() bool                 { return false }
 func (q *BigQueryQuirks) SupportsGetSetOptions() bool                 { return true }
 func (q *BigQueryQuirks) SupportsGetTableSchema() bool                { return true }
-func (q *BigQueryQuirks) SupportsPartitionedData() bool               { return false }
+func (q *BigQueryQuirks) SupportsPartitionedData() bool               { return true }
 func (q *BigQueryQuirks) SupportsStatistics() bool                    { return true }
 func (q *BigQueryQuirks) SupportsTransactions() bool                  { return false }
 func (q *BigQueryQuirks) SupportsGetParameterSchema() bool            { return false }
@@ -2849,4 +2849,79 @@ func (suite *BigQueryImpersonatedTests) TestJobCreationOptionalNoReadSessionUser
 	}
 	suite.Equal(5000, nrows)
 	suite.Require().NoError(rdr.Err())
+}
+
+func (suite *BigQueryTests) TestPartitionsSchemaAndRows() {
+	const rowCount = 10000
+	query := `SELECT i, JSON '{"value":1}' AS json_value,
+		ST_GEOGPOINT(1, 2) AS geography_value,
+		STRUCT(JSON '{"value":1}' AS json_value,
+			[ST_GEOGPOINT(1, 2)] AS geography_values) AS nested_value,
+		[JSON '{"value":1}'] AS json_values
+		FROM UNNEST(GENERATE_ARRAY(1, 10000)) AS i`
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, query))
+	options := suite.stmt.(adbc.GetSetOptionsWithContext)
+	suite.Require().NoError(options.SetOptionInt(suite.ctx, driver.OptionQueryPartitionsMaxStreams, 2))
+	suite.Require().NoError(options.SetOptionInt(suite.ctx, driver.OptionQueryPartitionsTargetRowsPerStream, rowCount/2))
+	schema, partitions, rows, err := suite.stmt.ExecutePartitions(suite.ctx)
+	suite.Require().NoError(err)
+	suite.EqualValues(rowCount, rows)
+	suite.Require().NotEmpty(partitions.PartitionIDs)
+	suite.LessOrEqual(partitions.NumPartitions, uint64(2))
+	suite.EqualValues(len(partitions.PartitionIDs), partitions.NumPartitions)
+
+	jsonExtension := schema.Field(1).Type.(arrow.ExtensionType).ExtensionName()
+	suite.Equal("arrow.json", jsonExtension)
+	geoExtension, _ := schema.Field(2).Metadata.GetValue("ARROW:extension:name")
+	suite.Equal("geoarrow.wkt", geoExtension)
+	nested := schema.Field(3).Type.(*arrow.StructType)
+	nestedJSON := nested.Field(0).Type.(arrow.ExtensionType).ExtensionName()
+	suite.Equal("arrow.json", nestedJSON)
+	nestedGeo, _ := nested.Field(1).Type.(*arrow.ListType).ElemField().Metadata.GetValue("ARROW:extension:name")
+	suite.Equal("geoarrow.wkt", nestedGeo)
+	listJSON := schema.Field(4).Type.(*arrow.ListType).Elem().(arrow.ExtensionType).ExtensionName()
+	suite.Equal("arrow.json", listJSON)
+
+	other, err := suite.db.Open(suite.ctx)
+	suite.Require().NoError(err)
+	defer func() { suite.NoError(other.Close(suite.ctx)) }()
+	seen := make(map[int64]bool, rowCount)
+	for _, partition := range partitions.PartitionIDs {
+		rdr, err := other.ReadPartition(suite.ctx, partition)
+		suite.Require().NoError(err)
+		func() {
+			defer rdr.Release()
+			suite.True(schema.Equal(rdr.Schema()), "partition reader schema: %s", rdr.Schema())
+			for rdr.Next() {
+				record := rdr.RecordBatch()
+				suite.True(schema.Equal(record.Schema()), "partition batch schema: %s", record.Schema())
+				for i := range record.NumCols() {
+					suite.True(arrow.TypeEqual(schema.Field(int(i)).Type, record.Column(int(i)).DataType(), arrow.CheckMetadata()), "column %d type differs", i)
+				}
+				ids := record.Column(0).(*array.Int64)
+				for i := range int(record.NumRows()) {
+					id := ids.Value(i)
+					suite.False(seen[id], "duplicate row %d", id)
+					seen[id] = true
+					suite.Equal(`{"value":1}`, record.Column(1).ValueStr(i))
+					suite.Equal("POINT(1 2)", record.Column(2).(*array.String).Value(i))
+				}
+			}
+			suite.NoError(rdr.Err())
+		}()
+	}
+	suite.Len(seen, rowCount)
+	for i := int64(1); i <= rowCount; i++ {
+		suite.True(seen[i], "missing row %d", i)
+	}
+}
+
+func (suite *BigQueryTests) TestPartitionsEmpty() {
+	suite.Require().NoError(suite.stmt.SetSqlQuery(suite.ctx, "SELECT i FROM UNNEST(ARRAY<INT64>[]) AS i"))
+	schema, partitions, rows, err := suite.stmt.ExecutePartitions(suite.ctx)
+	suite.Require().NoError(err)
+	suite.Zero(rows)
+	suite.Require().NotNil(schema)
+	suite.Zero(partitions.NumPartitions)
+	suite.Empty(partitions.PartitionIDs)
 }

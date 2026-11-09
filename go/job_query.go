@@ -336,6 +336,14 @@ func readPartitionRecordReader(ctx context.Context, client *bigquery.Client, rea
 		return nil, errToAdbcErr(adbc.StatusIO, err, "open read partition stream")
 	}
 
+	schema, err := unmangleBigQueryArrowSchema(arrowIterator.SerializedArrowSchema())
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusIO, err, "decode read partition schema")
+	}
+	// Normalize before IPC decoding so nested array types and batch schemas agree too.
+	serialized := flight.SerializeSchema(schema, alloc)
+	arrowIterator.arrowSchema = serialized[:len(serialized)-8] // strip the IPC end-of-stream
+
 	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, nil, "", alloc)
 	if err != nil {
 		return nil, errToAdbcErr(adbc.StatusIO, err, "decode read partition stream")
@@ -509,7 +517,7 @@ type batchOrError struct {
 
 func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job *bigquery.Job, schema bigquery.Schema) (bigquery.ArrowIterator, error) {
 	readStream := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/streams/_default", job.ProjectID(), job.Location(), job.ID())
-	return readRowsArrowIteratorForStream(ctx, client, &storagepb.ReadRowsRequest{
+	it, err := readRowsArrowIteratorForStream(ctx, client, &storagepb.ReadRowsRequest{
 		ReadStream: readStream,
 		// TODO(lidavidm): if we get an inline response, we can use it, then set the offset to skip it
 		Offset: 0,
@@ -520,6 +528,10 @@ func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job 
 			},
 		},
 	}, schema)
+	if err != nil {
+		return nil, err
+	}
+	return it, nil
 }
 
 // readRowsArrowIteratorForStream opens ReadRows for request using the
@@ -528,7 +540,7 @@ func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job 
 // ReadPartition calls it for a stream named by an explicit CreateReadSession
 // (see partitions.go), reusing the same machinery rather than opening a second
 // kind of stream reader.
-func readRowsArrowIteratorForStream(ctx context.Context, client *bigquery.Client, request *storagepb.ReadRowsRequest, schema bigquery.Schema) (bigquery.ArrowIterator, error) {
+func readRowsArrowIteratorForStream(ctx context.Context, client *bigquery.Client, request *storagepb.ReadRowsRequest, schema bigquery.Schema) (*readRowsArrowIterator, error) {
 	rc := client.StorageReadClient()
 	if rc == nil {
 		// TODO(lidavidm): eventually we will need to support disabling this

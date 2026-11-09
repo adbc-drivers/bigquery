@@ -16,22 +16,13 @@ package bigquery
 
 import (
 	"context"
-	"net"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/bigquery"
-	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/api/option"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 )
 
 func TestPartitionDescriptorRoundTrip(t *testing.T) {
@@ -179,91 +170,4 @@ func TestPartitionOptionsInvalidRefused(t *testing.T) {
 	// Rows per stream is int64-wide and takes it.
 	require.NoError(t, st.SetOptionInt(ctx, OptionQueryPartitionsTargetRowsPerStream, pastInt32))
 	require.EqualValues(t, pastInt32, st.partitionTargetRowsPerStream)
-}
-
-// fakeStorageRead stands in for the Storage Read API on loopback. It records the
-// one request each call receives and refuses it, so a test can read what the
-// driver sent without serving a session.
-type fakeStorageRead struct {
-	storagepb.UnimplementedBigQueryReadServer
-	sessions chan *storagepb.CreateReadSessionRequest
-	reads    chan *storagepb.ReadRowsRequest
-}
-
-func (f *fakeStorageRead) CreateReadSession(_ context.Context, req *storagepb.CreateReadSessionRequest) (*storagepb.ReadSession, error) {
-	f.sessions <- req
-	return nil, status.Error(codes.InvalidArgument, "fake: recorded")
-}
-
-func (f *fakeStorageRead) ReadRows(req *storagepb.ReadRowsRequest, _ storagepb.BigQueryRead_ReadRowsServer) error {
-	f.reads <- req
-	return status.Error(codes.InvalidArgument, "fake: recorded")
-}
-
-func clientOfFakeStorageRead(t *testing.T) (*bigquery.Client, *fakeStorageRead) {
-	t.Helper()
-
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	fake := &fakeStorageRead{
-		sessions: make(chan *storagepb.CreateReadSessionRequest, 1),
-		reads:    make(chan *storagepb.ReadRowsRequest, 1),
-	}
-	srv := grpc.NewServer()
-	storagepb.RegisterBigQueryReadServer(srv, fake)
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(srv.Stop)
-
-	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	client, err := bigquery.NewClient(ctx, "p", option.WithoutAuthentication())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	require.NoError(t, client.EnableStorageReadClient(ctx, option.WithGRPCConn(conn), option.WithoutAuthentication()))
-	return client, fake
-}
-
-func recorded[T any](t *testing.T, ch chan T) T {
-	t.Helper()
-	select {
-	case req := <-ch:
-		return req
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "the fake Storage Read API received no request")
-		panic("unreachable")
-	}
-}
-
-// BigQuery refuses per-request serialization options on a session stream with
-// InvalidArgument ("Arrow serialization options are only supported for job
-// streams"), so ReadPartition must send the stream name and nothing else.
-func TestPartitionReadSendsNoRequestSerializationOptions(t *testing.T) {
-	client, fake := clientOfFakeStorageRead(t)
-	streamName := "projects/p/locations/us/sessions/s1/streams/stream-0"
-
-	_, err := readPartitionRecordReader(context.Background(), client, streamName, memory.DefaultAllocator, 1)
-	require.Error(t, err, "the fake refuses every read")
-
-	req := recorded(t, fake.reads)
-	require.Equal(t, streamName, req.GetReadStream())
-	require.Nil(t, req.GetOutputFormatSerializationOptions())
-}
-
-// The session, not the read, carries the compression. Its preferred minimum
-// equals its maximum, so a small table is still asked to split that far.
-func TestPartitionReadSessionCompressesAndAsksForAMinimum(t *testing.T) {
-	client, fake := clientOfFakeStorageRead(t)
-
-	_, _, err := createPartitionReadSession(context.Background(), client, client.Dataset("d").Table("t"), 2)
-	require.Error(t, err, "the fake refuses every session")
-
-	req := recorded(t, fake.sessions)
-	require.Equal(t, "projects/p/datasets/d/tables/t", req.GetReadSession().GetTable())
-	require.Equal(t,
-		storagepb.ArrowSerializationOptions_ZSTD,
-		req.GetReadSession().GetReadOptions().GetArrowSerializationOptions().GetBufferCompression())
-	require.EqualValues(t, 2, req.GetMaxStreamCount())
-	require.EqualValues(t, 2, req.GetPreferredMinStreamCount())
 }

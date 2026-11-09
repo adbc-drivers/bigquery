@@ -123,10 +123,7 @@ func partitionStreamCountFor(rows uint64, maxStreams int32, targetRowsPerStream 
 		return maxStreams
 	}
 	perStream := uint64(targetRowsPerStream)
-	wanted := (rows + perStream - 1) / perStream
-	if wanted < 1 {
-		wanted = 1
-	}
+	wanted := max((rows+perStream-1)/perStream, 1)
 	if wanted > uint64(maxStreams) {
 		return maxStreams
 	}
@@ -174,7 +171,7 @@ func createPartitionReadSession(ctx context.Context, client *bigquery.Client, ds
 		return nil, nil, errToAdbcErr(adbc.StatusIO, err, "create read session")
 	}
 
-	schema, err := arrowSchemaFromReadSession(readSession)
+	schema, err := unmangleBigQueryArrowSchema(readSession.GetArrowSchema().GetSerializedSchema())
 	if err != nil {
 		return nil, nil, errToAdbcErr(adbc.StatusInternal, err, "decode read session schema")
 	}
@@ -186,11 +183,8 @@ func createPartitionReadSession(ctx context.Context, client *bigquery.Client, ds
 	return schema, streamNames, nil
 }
 
-// arrowSchemaFromReadSession decodes a read session's IPC-serialized Arrow
-// schema and undoes the same BigQuery extension-type mangling that
-// newInlineArrowIterator corrects for the REST API's inline Arrow path.
-func arrowSchemaFromReadSession(readSession *storagepb.ReadSession) (*arrow.Schema, error) {
-	serialized := readSession.GetArrowSchema().GetSerializedSchema()
+// unmangleBigQueryArrowSchema normalizes the session and partition IPC schemas.
+func unmangleBigQueryArrowSchema(serialized []byte) (*arrow.Schema, error) {
 	schema, err := flight.DeserializeSchema(serialized, memory.DefaultAllocator)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize Arrow schema: %w", err)
@@ -199,5 +193,7 @@ func arrowSchemaFromReadSession(readSession *storagepb.ReadSession) (*arrow.Sche
 	for i := range fields {
 		unmangleBigQueryArrowType(&fields[i])
 	}
-	return arrow.NewSchema(fields, nil), nil
+	// Decode the normalized schema so registered extensions have the same types
+	// that the partition IPC reader constructs.
+	return flight.DeserializeSchema(flight.SerializeSchema(arrow.NewSchema(fields, nil), memory.DefaultAllocator), memory.DefaultAllocator)
 }

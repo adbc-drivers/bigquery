@@ -1059,6 +1059,11 @@ func (st *statement) ExecutePartitions(ctx context.Context) (*arrow.Schema, adbc
 		return nil, adbc.Partitions{}, -1, err
 	}
 
+	// Empty session streams end without a schema; there is nothing to read.
+	if meta.NumRows == 0 {
+		return schema, adbc.Partitions{}, rowsAffected, nil
+	}
+
 	partitions := adbc.Partitions{
 		NumPartitions: uint64(len(streams)),
 		PartitionIDs:  make([][]byte, len(streams)),
