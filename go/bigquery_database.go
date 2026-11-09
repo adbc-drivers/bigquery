@@ -322,11 +322,11 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 		}
 	}
 
-	parsedURI, err := url.Parse(uri)
+	parsedURI, err := driverbase.SafeParseURL(uri)
 	if err != nil {
 		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,
-			Msg:  "[bq] invalid BigQuery URI format",
+			Msg:  fmt.Sprintf("[bq] invalid BigQuery URI format: %v", err),
 		}
 	}
 
