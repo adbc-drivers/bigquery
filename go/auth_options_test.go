@@ -25,6 +25,8 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -104,6 +106,57 @@ func TestAccessTokenIsSentAsBearerToken(t *testing.T) {
 		require.Equal(t, "Bearer caller-token", got)
 	default:
 		t.Fatal("no request reached the endpoint")
+	}
+}
+
+func TestAccessTokenStorageWriteIsRefusedBeforeIngestion(t *testing.T) {
+	for _, optionScope := range []string{"connection", "statement"} {
+		for _, execution := range []string{"query", "update"} {
+			t.Run(optionScope+"/"+execution, func(t *testing.T) {
+				ctx := context.Background()
+				requests := make(chan struct{}, 1)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					select {
+					case requests <- struct{}{}:
+					default:
+					}
+					http.Error(w, `{"error":{"code":403,"message":"forbidden"}}`, http.StatusForbidden)
+				}))
+				defer srv.Close()
+
+				cnxn, err := openWith(t, map[string]string{
+					OptionEndpoint:        srv.URL + "/bigquery/v2/",
+					OptionStorageEndpoint: srv.Listener.Addr().String(),
+					OptionAuthType:        OptionValueAuthTypeAccessToken,
+					OptionAuthAccessToken: "caller-token",
+				})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, cnxn.Close(ctx)) }()
+
+				if optionScope == "connection" {
+					require.NoError(t, cnxn.(adbc.GetSetOptionsWithContext).SetOption(ctx, OptionBulkIngestMethod, OptionValueBulkIngestMethodStorageWrite))
+				}
+				stmt, err := cnxn.NewStatement(ctx)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, stmt.Close(ctx)) }()
+				if optionScope == "statement" {
+					require.NoError(t, stmt.SetOption(ctx, OptionBulkIngestMethod, OptionValueBulkIngestMethodStorageWrite))
+				}
+				require.NoError(t, stmt.SetOption(ctx, adbc.OptionKeyIngestTargetTable, "test_table"))
+				batch := array.NewRecordBatch(arrow.NewSchema(nil, nil), nil, 0)
+				defer batch.Release()
+				require.NoError(t, stmt.Bind(ctx, batch))
+
+				if execution == "query" {
+					_, _, err = stmt.ExecuteQuery(ctx)
+				} else {
+					_, err = stmt.ExecuteUpdate(ctx)
+				}
+				requireInvalidArgument(t, err, "storage_write")
+				require.ErrorContains(t, err, "access_token")
+				require.Empty(t, requests, "ingestion must be refused before any table or stream request")
+			})
+		}
 	}
 }
 

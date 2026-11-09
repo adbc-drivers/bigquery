@@ -159,7 +159,7 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 `bigquery.auth.access_token`
 : **Type:** string. **Default:** (empty)
 
-  If using `access_token` authentication, this is the OAuth 2.0 access token. The driver sends it as it is and does not refresh it, so it must stay valid for the life of the connection. An empty token is an error. A token set under any other `bigquery.auth_type` is an error, because that auth type would ignore it. A token set together with an impersonation option is also an error, because impersonation would replace it.
+  If using `access_token` authentication, this is the OAuth 2.0 access token. The driver sends it as it is and does not refresh it, so it must stay valid for the life of the connection. An empty token is an error. A token set under any other `bigquery.auth_type` is an error, because that auth type would ignore it. A token set together with an impersonation option is also an error, because impersonation would replace it. Storage Write ingestion (`bigquery.bulk_ingest.method=storage_write`) is refused before ingestion because its separate client does not use this token; use the default `load` method instead.
 
 `bigquery.auth.credentials`
 : **Type:** string. **Default:** (empty) **URI Parameter:** `AuthCredentials`
