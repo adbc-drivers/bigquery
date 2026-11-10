@@ -1999,6 +1999,31 @@ func (s *BigQueryTestSuite) TearDownSuite() {
 	s.mem.AssertSize(s.T(), 0)
 }
 
+func TestInvalidURIDoesNotExposeSecrets(t *testing.T) {
+	const password = "private-password-sentinel"
+	const token = "private-token-sentinel"
+	for _, tc := range []struct {
+		name, uri, diagnostic string
+	}{
+		{"escape", "bigquery://user:" + password + "@localhost/project%zz?token=" + token, "invalid URL escape"},
+		{"port", "bigquery://user:" + password + "@localhost:bad/project?token=" + token, "invalid port"},
+		{"missing userinfo separator and host", "bigquery://user:" + password + "/project?token=" + token, "invalid port"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drv := driver.NewDriver(memory.DefaultAllocator)
+			_, err := drv.NewDatabaseWithContext(context.Background(), map[string]string{adbc.OptionKeyURI: tc.uri})
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), password)
+			assert.NotContains(t, err.Error(), token)
+			assert.NotContains(t, err.Error(), tc.uri)
+			assert.Contains(t, err.Error(), tc.diagnostic)
+			var adbcErr adbc.Error
+			require.ErrorAs(t, err, &adbcErr)
+			assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code)
+		})
+	}
+}
+
 func TestBigQueryURIParsing(t *testing.T) {
 	tests := []struct {
 		name                         string
