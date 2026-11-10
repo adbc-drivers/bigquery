@@ -912,7 +912,9 @@ namespace AdbcDrivers.BigQuery
 
         internal static bool IsUnauthorizedException(Exception ex, out GoogleApiException? googleEx)
         {
-            return BigQueryUtils.ContainsException(ex, out googleEx) && googleEx!.Error.Code == (int)System.Net.HttpStatusCode.Unauthorized;
+            return BigQueryUtils.ContainsException(ex, out googleEx) &&
+                   (googleEx!.Error?.Code == (int)System.Net.HttpStatusCode.Unauthorized ||
+                    googleEx.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized);
         }
 
         /// <summary>
@@ -1631,6 +1633,10 @@ namespace AdbcDrivers.BigQuery
                 {
                     table = null;
                 }
+                catch (Exception ex) when (IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+                {
+                    throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+                }
 
                 List<Field> fields = new List<Field>();
                 IList<TableFieldSchema>? schemaFields = table?.Schema?.Fields;
@@ -1652,7 +1658,7 @@ namespace AdbcDrivers.BigQuery
             string fieldName = field.Name ?? string.Empty;
             string fieldType = field.Type ?? string.Empty;
 
-            Field.Builder fieldBuilder;
+            IArrowType dataType;
             if ((string.Equals(fieldType, "RECORD", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(fieldType, "STRUCT", StringComparison.OrdinalIgnoreCase)) &&
                 field.Fields != null && field.Fields.Count > 0)
@@ -1663,34 +1669,41 @@ namespace AdbcDrivers.BigQuery
                     nestedFields.Add(TableFieldToArrowField(subfield));
                 }
 
-                fieldBuilder = new Field.Builder()
-                    .Name(fieldName)
-                    .DataType(new StructType(nestedFields));
+                dataType = new StructType(nestedFields);
             }
             else if ((string.Equals(fieldType, "NUMERIC", StringComparison.OrdinalIgnoreCase) ||
                       string.Equals(fieldType, "DECIMAL", StringComparison.OrdinalIgnoreCase)) &&
                      !fieldType.Contains("("))
             {
                 int precision = field.Precision.HasValue ? (int)field.Precision.Value : 38;
-                int scale = field.Scale.HasValue ? (int)field.Scale.Value : 9;
-                fieldBuilder = new Field.Builder()
-                    .Name(fieldName)
-                    .DataType(new Decimal128Type(precision, scale));
+                int scale = field.Scale.HasValue ? (int)field.Scale.Value : (field.Precision.HasValue ? 0 : 9);
+                dataType = new Decimal128Type(precision, scale);
             }
             else if ((string.Equals(fieldType, "BIGNUMERIC", StringComparison.OrdinalIgnoreCase) ||
                       string.Equals(fieldType, "BIGDECIMAL", StringComparison.OrdinalIgnoreCase)) &&
                      !fieldType.Contains("("))
             {
                 int precision = field.Precision.HasValue ? (int)field.Precision.Value : 76;
-                int scale = field.Scale.HasValue ? (int)field.Scale.Value : 38;
-                fieldBuilder = new Field.Builder()
-                    .Name(fieldName)
-                    .DataType(new Decimal256Type(precision, scale));
+                int scale = field.Scale.HasValue ? (int)field.Scale.Value : (field.Precision.HasValue ? 0 : 38);
+                dataType = new Decimal256Type(precision, scale);
             }
             else
             {
-                fieldBuilder = SchemaFieldGenerator(fieldName, fieldType);
+                dataType = SchemaFieldGenerator(fieldName, fieldType).Build().DataType;
             }
+
+            bool isRepeated = string.Equals(field.Mode, "REPEATED", StringComparison.OrdinalIgnoreCase);
+            if (isRepeated)
+            {
+                dataType = new ListType(dataType);
+            }
+
+            bool isNullable = !string.Equals(field.Mode, "REQUIRED", StringComparison.OrdinalIgnoreCase) && !isRepeated;
+
+            Field.Builder fieldBuilder = new Field.Builder()
+                .Name(fieldName)
+                .DataType(dataType)
+                .Nullable(isNullable);
 
             if (ordinalPosition.HasValue)
             {
@@ -1702,10 +1715,6 @@ namespace AdbcDrivers.BigQuery
                 };
                 fieldBuilder.Metadata(metaData);
             }
-
-            bool isNullable = !string.Equals(field.Mode, "REQUIRED", StringComparison.OrdinalIgnoreCase);
-            fieldBuilder.Nullable(isNullable);
-            fieldBuilder.Name(fieldName);
 
             return fieldBuilder.Build();
         }
