@@ -26,14 +26,12 @@ on:
       - main
     paths:
       - "csharp/**"
-      - "!csharp/arrow-adbc/**"
       - .github/workflows/csharp_test.yaml
   push:
     branches:
       - main
     paths:
       - "csharp/**"
-      - "!csharp/arrow-adbc/**"
       - .github/workflows/csharp_test.yaml
 
 concurrency:
@@ -64,7 +62,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          submodules: 'recursive'
 
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
         with:

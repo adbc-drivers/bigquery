@@ -96,6 +96,13 @@ namespace AdbcDrivers.BigQuery
             _proxyConfiguration = ProxyManager.CreateProxyConfiguration(this.properties);
             this.httpClient = ProxyManager.CreateHttpClient(_proxyConfiguration);
 
+            this.properties.TryGetValue(BigQueryParameters.CustomUserAgent, out string? customUserAgent);
+            DriverUserAgent = BigQueryUtils.GetDriverUserAgent(customUserAgent);
+            if (!this.httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd(DriverUserAgent))
+            {
+                this.httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", DriverUserAgent);
+            }
+
             if (this.properties.TryGetValue(AdbcOptions.Telemetry.TraceParent, out string? traceParent) &&
                 !string.IsNullOrWhiteSpace(traceParent))
             {
@@ -260,6 +267,8 @@ namespace AdbcDrivers.BigQuery
             EffectiveUniverseDomain);
 
         internal ProxyConfiguration? ProxyConfiguration => _proxyConfiguration;
+
+        internal string DriverUserAgent { get; private set; }
 
         internal string? ProjectId
         {
@@ -488,7 +497,8 @@ namespace AdbcDrivers.BigQuery
                 {
                     QuotaProject = billingProjectId,
                     GoogleCredential = modifiedCredential,
-                    HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration)
+                    HttpClientFactory = ProxyManager.CreateHttpClientFactory(_proxyConfiguration),
+                    ApplicationName = DriverUserAgent
                 };
 
                 bigQueryClientBuilder.ProjectId = !string.IsNullOrEmpty(billingProjectId) ? billingProjectId : projectId;
@@ -607,7 +617,12 @@ namespace AdbcDrivers.BigQuery
                 }
                 else if (!string.IsNullOrEmpty(authenticationType) && authenticationType.Equals(BigQueryConstants.MockAuthenticationType, StringComparison.OrdinalIgnoreCase))
                 {
-                    Credential = ApplyScopes(GoogleCredential.FromAccessToken("mock-token"));
+                    // Tests can set an access token to observe which credentials a request used.
+                    if (!this.properties.TryGetValue(BigQueryParameters.AccessToken, out accessToken) || string.IsNullOrEmpty(accessToken))
+                    {
+                        accessToken = "mock-token";
+                    }
+                    Credential = ApplyScopes(GoogleCredential.FromAccessToken(accessToken));
                 }
                 else
                 {
