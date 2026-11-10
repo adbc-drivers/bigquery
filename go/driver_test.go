@@ -1928,6 +1928,7 @@ func TestAuthTypeConsolidation(t *testing.T) {
 		driver.OptionValueAuthTypeJSONCredentialFile,
 		driver.OptionValueAuthTypeJSONCredentialString,
 		driver.OptionValueAuthTypeUserAuthentication,
+		driver.OptionValueAuthTypeAccessToken,
 		driver.OptionValueAuthTypeAppDefaultCredentials,
 	}
 

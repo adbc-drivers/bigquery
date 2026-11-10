@@ -968,6 +968,13 @@ func (st *statement) executeIngest(ctx context.Context) (int64, error) {
 	var impl driverbase.BulkIngestImpl
 
 	if method == OptionValueBulkIngestMethodStorageWrite {
+		// The separate Storage Write client uses ADC and would discard the caller's token.
+		if st.cnxn.authType == OptionValueAuthTypeAccessToken {
+			return -1, adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  "[bq] access_token authentication does not support storage_write ingestion; use load instead",
+			}
+		}
 		logger = st.cnxn.Logger.With("op", "bulkingest-storagewrite")
 		impl = &storageWriteBulkIngestImpl{
 			alloc:           st.alloc,
