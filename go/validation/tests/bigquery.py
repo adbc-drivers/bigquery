@@ -26,8 +26,8 @@ class BigQueryQuirks(model.DriverQuirks):
     vendor_name = "BigQuery"
     # BigQuery doesn't really have a public facing version, so use the client
     # version instead
-    vendor_version = "cloud.google.com/go/bigquery v1.86.0"
-    short_version = "1.86.0"
+    vendor_version = "cloud.google.com/go/bigquery v1.86.2"
+    short_version = "1.86.2"
     features = model.DriverFeatures(
         connection_get_table_schema=True,
         # TODO(lidavidm): this is a bit weird; it does work, but we'd need two
