@@ -298,8 +298,8 @@ namespace AdbcDrivers.BigQuery.MockServer
         /// script nor mutates server state.
         /// </summary>
         /// <param name="kind">
-        /// The request kind to fail. Only the job and query-results kinds are supported;
-        /// table operations already model their own 404/409 responses.
+        /// The request kind to fail. Job, query-results, and <see cref="MockRequestKind.TablesList"/>
+        /// kinds are supported; single-table operations already model their own 404/409 responses.
         /// </param>
         /// <param name="statusCode">The HTTP status to return.</param>
         /// <param name="reason">
@@ -781,6 +781,11 @@ namespace AdbcDrivers.BigQuery.MockServer
             // GET /bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables - List tables
             app.MapGet("/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables", async (HttpContext ctx, string projectId, string datasetId) =>
             {
+                if (await TryWriteQueuedErrorAsync(ctx, MockRequestKind.TablesList, jobId: null).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 Record(MockRequestKind.TablesList);
 
                 var matchingTables = _tables.Values

@@ -1118,12 +1118,12 @@ namespace AdbcDrivers.BigQuery
 
                 string tableRegexp = PatternToRegEx(tableNamePattern);
 
-                Func<Task<PagedEnumerable<TableList, BigQueryTable>?>> func = () => Task.Run(() =>
+                Func<Task<List<BigQueryTable>?>> func = () => Task.Run(() =>
                 {
-                    return Client?.ListTables(catalog, dbSchema);
+                    return Client?.ListTables(catalog, dbSchema)?.ToList();
                 });
 
-                PagedEnumerable<TableList, BigQueryTable>? tables = ExecuteWithRetriesAsync<PagedEnumerable<TableList, BigQueryTable>?>(func, activity).GetAwaiter().GetResult();
+                List<BigQueryTable>? tables = ExecuteWithRetriesAsync<List<BigQueryTable>?>(func, activity).GetAwaiter().GetResult();
 
                 if (tables != null)
                 {
@@ -1146,6 +1146,7 @@ namespace AdbcDrivers.BigQuery
                         string tableType = rawTableType switch
                         {
                             "TABLE" => "BASE TABLE",
+                            "MATERIALIZED_VIEW" => "MATERIALIZED VIEW",
                             _ => rawTableType
                         };
 
@@ -1266,7 +1267,11 @@ namespace AdbcDrivers.BigQuery
                         ordinalPositionBuilder.Append(ordinalPosition);
                         remarksBuilder.Append(field.Description ?? string.Empty);
 
-                        string dataType = ToTypeName(field.Type ?? string.Empty, out string suffix);
+                        bool isRepeated = string.Equals(field.Mode, "REPEATED", StringComparison.OrdinalIgnoreCase);
+                        string suffix = string.Empty;
+                        string dataType = isRepeated
+                            ? "ARRAY"
+                            : ToTypeName(field.Type ?? string.Empty, out suffix);
 
                         if (field.Precision.HasValue &&
                             (dataType.StartsWith("NUMERIC", StringComparison.OrdinalIgnoreCase) ||
@@ -1293,7 +1298,8 @@ namespace AdbcDrivers.BigQuery
                             xdbcDecimalDigitsBuilder.AppendNull();
                         }
 
-                        bool isNullable = !string.Equals(field.Mode, "REQUIRED", StringComparison.OrdinalIgnoreCase);
+                        bool isNullable = !string.Equals(field.Mode, "REQUIRED", StringComparison.OrdinalIgnoreCase) &&
+                                          !isRepeated;
 
                         xdbcDataTypeBuilder.AppendNull();
                         xdbcTypeNameBuilder.Append(dataType);
