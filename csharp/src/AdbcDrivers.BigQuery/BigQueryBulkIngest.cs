@@ -107,6 +107,19 @@ namespace AdbcDrivers.BigQuery
             // Handle table lifecycle based on BulkIngestMode
             await HandleTableLifecycleAsync(catalog, targetDbSchema!, targetTable, mode, normalizedSchema, cancellationToken).ConfigureAwait(false);
 
+            RecordBatch? firstBatch;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                firstBatch = boundBatch ?? await ReadNextNonEmptyBatchAsync(boundStream!, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not AdbcException && ex is not OperationCanceledException)
+            {
+                throw new AdbcException($"Failed to append rows: {ex.Message}", AdbcStatusCode.IOError, ex);
+            }
+            if (firstBatch == null || firstBatch.Length == 0)
+                return new UpdateResult(0);
+
             // Create a PENDING write stream for atomic commit
             WriteStream writeStream = await _writeClient.CreateWriteStreamAsync(
                 new CreateWriteStreamRequest
@@ -122,7 +135,7 @@ namespace AdbcDrivers.BigQuery
             {
                 // Serialize the Arrow schema (sent with first request)
                 byte[]? schemaBytes = protoEncoder == null ? SerializeSchema(normalizedSchema) : null;
-                totalRows = await AppendBatchesAsync(writeStream.Name, schemaBytes, protoEncoder, boundBatch, boundStream,
+                totalRows = await AppendBatchesAsync(writeStream.Name, schemaBytes, protoEncoder, firstBatch, boundBatch == null ? boundStream : null,
                     maxInFlightBatches, grpcCompression, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not AdbcException && ex is not OperationCanceledException)
@@ -147,11 +160,24 @@ namespace AdbcDrivers.BigQuery
             return new UpdateResult(totalRows);
         }
 
+        private static async ValueTask<RecordBatch?> ReadNextNonEmptyBatchAsync(
+            IArrowArrayStream stream, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                RecordBatch? batch = await stream.ReadNextRecordBatchAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (batch == null || batch.Length > 0)
+                    return batch;
+            }
+        }
+
         private async Task<long> AppendBatchesAsync(
             string writeStreamName,
             byte[]? schemaBytes,
             ProtobufEncoder? protoEncoder,
-            RecordBatch? boundBatch,
+            RecordBatch firstBatch,
             IArrowArrayStream? boundStream,
             int maxInFlightBatches,
             string grpcCompression,
@@ -186,15 +212,12 @@ namespace AdbcDrivers.BigQuery
                 try
                 {
                     bool first = true;
-                    while (boundBatch == null || first)
+                    while (first || boundStream != null)
                     {
                         // Reserve before reading so the input stream cannot run ahead of the window.
                         await slots.WaitAsync(cancellation.Token).ConfigureAwait(false);
-                        RecordBatch? batch = boundBatch;
-                        if (batch == null)
-                        {
-                            batch = await boundStream!.ReadNextRecordBatchAsync(cancellation.Token).ConfigureAwait(false);
-                        }
+                        RecordBatch? batch = first ? firstBatch
+                            : await ReadNextNonEmptyBatchAsync(boundStream!, cancellation.Token).ConfigureAwait(false);
                         if (batch == null)
                         {
                             slots.Release();

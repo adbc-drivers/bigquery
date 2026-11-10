@@ -132,6 +132,43 @@ namespace AdbcDrivers.BigQuery.Tests
         }
 
         [SkippableTheory]
+        [InlineData("protobuf", "batch")]
+        [InlineData("protobuf", "stream")]
+        [InlineData("protobuf", "schema_only_stream")]
+        [InlineData("arrow", "batch")]
+        [InlineData("arrow", "stream")]
+        [InlineData("arrow", "schema_only_stream")]
+        public void CanBulkIngestEmptyTable(string format, string inputKind)
+        {
+            foreach (BigQueryTestEnvironment environment in _environments)
+            {
+                string catalog = environment.Metadata.Catalog;
+                string dataset = environment.Metadata.Schema;
+                string tableName = UniqueTableName($"empty_{inputKind}");
+                _outputHelper?.WriteLine($"Empty ingestion: format={format}, input={inputKind}, table={catalog}.{dataset}.{tableName}");
+
+                using AdbcConnection connection = BigQueryTestingUtils.GetBigQueryAdbcConnection(environment);
+                EnsureTableDropped(connection, catalog, dataset, tableName);
+                RegisterCleanup(environment, catalog, dataset, tableName);
+
+                using RecordBatch batch = CreateSimpleBatch(0);
+                using var stream = new TestArrowArrayStream(batch.Schema,
+                    inputKind == "schema_only_stream" ? System.Array.Empty<RecordBatch>() : new[] { batch });
+                using AdbcStatement statement = connection.BulkIngest(catalog, dataset, tableName, BulkIngestMode.Create, false);
+                statement.SetOption(BigQueryParameters.IngestFormat, format);
+                if (inputKind == "batch")
+                    statement.Bind(batch, batch.Schema);
+                else
+                    statement.BindStream(stream);
+
+                UpdateResult result = statement.ExecuteUpdate();
+
+                Assert.Equal(0, result.AffectedRows);
+                Assert.Equal(0, CountRows(connection, catalog, dataset, tableName));
+            }
+        }
+
+        [SkippableTheory]
         [InlineData("protobuf")]
         [InlineData("arrow")]
         public void CanBulkIngestCreateMode(string format)

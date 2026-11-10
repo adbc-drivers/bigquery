@@ -322,7 +322,7 @@ func ParseBigQueryURIToParams(uri string) (map[string]string, error) {
 		}
 	}
 
-	parsedURI, err := url.Parse(uri)
+	parsedURI, err := driverbase.SafeParseURL(uri)
 	if err != nil {
 		return nil, adbc.Error{
 			Code: adbc.StatusInvalidArgument,

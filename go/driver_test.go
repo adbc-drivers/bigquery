@@ -343,7 +343,7 @@ func (q *BigQueryQuirks) GetMetadata(code adbc.InfoCode) any {
 	case adbc.InfoDriverArrowVersion:
 		return "v18.8.0"
 	case adbc.InfoVendorVersion:
-		return "cloud.google.com/go/bigquery v1.85.0"
+		return "cloud.google.com/go/bigquery v1.86.0"
 	case adbc.InfoVendorArrowVersion:
 		return "(unknown or development build)"
 	case adbc.InfoDriverADBCVersion:
@@ -1999,6 +1999,31 @@ func (s *BigQueryTestSuite) TearDownSuite() {
 	s.mem.AssertSize(s.T(), 0)
 }
 
+func TestInvalidURIDoesNotExposeSecrets(t *testing.T) {
+	const password = "private-password-sentinel"
+	const token = "private-token-sentinel"
+	for _, tc := range []struct {
+		name, uri, diagnostic string
+	}{
+		{"escape", "bigquery://user:" + password + "@localhost/project%zz?token=" + token, "invalid URL escape"},
+		{"port", "bigquery://user:" + password + "@localhost:bad/project?token=" + token, "invalid port"},
+		{"missing userinfo separator and host", "bigquery://user:" + password + "/project?token=" + token, "invalid port"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drv := driver.NewDriver(memory.DefaultAllocator)
+			_, err := drv.NewDatabaseWithContext(context.Background(), map[string]string{adbc.OptionKeyURI: tc.uri})
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), password)
+			assert.NotContains(t, err.Error(), token)
+			assert.NotContains(t, err.Error(), tc.uri)
+			assert.Contains(t, err.Error(), tc.diagnostic)
+			var adbcErr adbc.Error
+			require.ErrorAs(t, err, &adbcErr)
+			assert.Equal(t, adbc.StatusInvalidArgument, adbcErr.Code)
+		})
+	}
+}
+
 func TestBigQueryURIParsing(t *testing.T) {
 	tests := []struct {
 		name                         string
@@ -2505,6 +2530,7 @@ func (suite *BigQueryTests) TestOldOptionNames() {
 		{k: "adbc.bigquery.sql.query.default_dataset_id", v: "foobar"},
 		{k: "adbc.bigquery.sql.query.default_project_id", v: "foobar"},
 		{k: "adbc.bigquery.sql.query.destination_table", v: "foobar", a: new(fmt.Sprintf("%s.%s.foobar", suite.Quirks.catalogName, suite.Quirks.schemaName))},
+		{k: "adbc.bigquery.sql.query.destination_table", v: "proj.cat.ns.foobar", a: new("proj.cat.ns.foobar")},
 		{k: "adbc.bigquery.sql.query.parameter_mode", v: "adbc.bigquery.sql.query.parameter_mode_named", a: new("named")},
 		{k: "adbc.bigquery.sql.query.parameter_mode", v: "adbc.bigquery.sql.query.parameter_mode_positional", a: new("positional")},
 		{k: "adbc.bigquery.sql.query.create_disposition", v: "CREATE_IF_NEEDED"},
