@@ -315,6 +315,54 @@ func runPlainQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Cl
 	return bigqueryRdr, totalRows, nil
 }
 
+// readPartitionRecordReader turns a Storage Read API stream into an
+// array.RecordReader for ReadPartition. It builds the reader as runPlainQuery
+// does. A bare stream name has no known BigQuery schema, so
+// ipcReaderFromArrowIterator takes the schema from the Arrow IPC stream itself.
+// Releasing the reader cancels the stream.
+func readPartitionRecordReader(ctx context.Context, client *bigquery.Client, readStream string, alloc memory.Allocator, resultRecordBufferSize int) (_ array.RecordReader, err error) {
+	ctx, cancelFn := context.WithCancel(ctx)
+	defer func() {
+		if err != nil {
+			cancelFn()
+		}
+	}()
+
+	// A session stream takes no per-request serialization options: BigQuery refuses
+	// them with InvalidArgument ("only supported for job streams"). The session
+	// carries the compression; see createPartitionReadSession.
+	arrowIterator, err := readRowsArrowIteratorForStream(ctx, client, &storagepb.ReadRowsRequest{ReadStream: readStream}, nil)
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusIO, err, "open read partition stream")
+	}
+
+	schema, err := unmangleBigQueryArrowSchema(arrowIterator.SerializedArrowSchema())
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusIO, err, "decode read partition schema")
+	}
+	// Normalize before IPC decoding so nested array types and batch schemas agree too.
+	serialized := flight.SerializeSchema(schema, alloc)
+	arrowIterator.arrowSchema = serialized[:len(serialized)-8] // strip the IPC end-of-stream
+
+	rdr, schema, err := ipcReaderFromArrowIterator(arrowIterator, nil, "", alloc)
+	if err != nil {
+		return nil, errToAdbcErr(adbc.StatusIO, err, "decode read partition stream")
+	}
+
+	ch := make(chan arrow.RecordBatch, resultRecordBufferSize)
+	result := &reader{
+		refCount:   1,
+		chs:        []chan arrow.RecordBatch{ch},
+		curChIndex: 0,
+		err:        nil,
+		cancelFn:   cancelFn,
+		schema:     schema,
+	}
+
+	go streamRecordBatches(ctx, rdr, result, ch)
+	return result, nil
+}
+
 // streamRecordBatches reads a RecordReader into a channel; it terminates if the supplied context is cancelled.
 func streamRecordBatches(ctx context.Context, source array.RecordReader, result *reader, ch chan arrow.RecordBatch) {
 	defer close(ch)
@@ -468,6 +516,31 @@ type batchOrError struct {
 }
 
 func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job *bigquery.Job, schema bigquery.Schema) (bigquery.ArrowIterator, error) {
+	readStream := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/streams/_default", job.ProjectID(), job.Location(), job.ID())
+	it, err := readRowsArrowIteratorForStream(ctx, client, &storagepb.ReadRowsRequest{
+		ReadStream: readStream,
+		// TODO(lidavidm): if we get an inline response, we can use it, then set the offset to skip it
+		Offset: 0,
+		OutputFormatSerializationOptions: &storagepb.ReadRowsRequest_ArrowSerializationOptions{
+			ArrowSerializationOptions: &storagepb.ArrowSerializationOptions{
+				BufferCompression: storagepb.ArrowSerializationOptions_ZSTD,
+				// TODO: hmm, there's a way to get nanos and picos (string) out of BigQuery...
+			},
+		},
+	}, schema)
+	if err != nil {
+		return nil, err
+	}
+	return it, nil
+}
+
+// readRowsArrowIteratorForStream opens ReadRows for request using the
+// connection's own StorageReadClient, i.e. its own credentials.
+// newReadRowsArrowIterator calls it for a job's implicit default stream;
+// ReadPartition calls it for a stream named by an explicit CreateReadSession
+// (see partitions.go), reusing the same machinery rather than opening a second
+// kind of stream reader.
+func readRowsArrowIteratorForStream(ctx context.Context, client *bigquery.Client, request *storagepb.ReadRowsRequest, schema bigquery.Schema) (*readRowsArrowIterator, error) {
 	rc := client.StorageReadClient()
 	if rc == nil {
 		// TODO(lidavidm): eventually we will need to support disabling this
@@ -479,18 +552,8 @@ func newReadRowsArrowIterator(ctx context.Context, client *bigquery.Client, job 
 		// https://cloud.google.com/bigquery/quotas#storage-limits
 		grpc.MaxCallRecvMsgSize(1024 * 1024 * 129),
 	)
-	readStream := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/streams/_default", job.ProjectID(), job.Location(), job.ID())
-	rows, err := rc.ReadRows(ctx, &storagepb.ReadRowsRequest{
-		ReadStream: readStream,
-		// TODO(lidavidm): if we get an inline response, we can use it, then set the offset to skip it
-		Offset: 0,
-		OutputFormatSerializationOptions: &storagepb.ReadRowsRequest_ArrowSerializationOptions{
-			ArrowSerializationOptions: &storagepb.ArrowSerializationOptions{
-				BufferCompression: storagepb.ArrowSerializationOptions_ZSTD,
-				// TODO: hmm, there's a way to get nanos and picos (string) out of BigQuery...
-			},
-		},
-	}, msgSizeOpt)
+	readStream := request.GetReadStream()
+	rows, err := rc.ReadRows(ctx, request, msgSizeOpt)
 	if err != nil {
 		return nil, err
 	}
