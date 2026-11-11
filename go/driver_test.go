@@ -2460,6 +2460,53 @@ func (suite *BigQueryTests) TestGetStatisticsHiddenDataset() {
 	suite.NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestGetStatisticsLakehouseDataset() {
+	// 4-part Project.Catalog.Namespace.Table (Lakehouse Iceberg) datasets do not
+	// support INFORMATION_SCHEMA queries and use the BigQuery Tables REST API instead.
+	// Test against Google Cloud's public Lakehouse Iceberg dataset.
+	catalog := "bigquery-public-data"
+	dataset := "lakehouse-public-data.austin_bikeshare"
+	tableName := "bikeshare_trips"
+
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	statsRdr, err := statsCnxn.GetStatistics(suite.ctx, &catalog, &dataset, &tableName, true)
+	suite.Require().NoError(err)
+	defer statsRdr.Release()
+
+	suite.True(adbc.GetStatisticsSchema.Equal(statsRdr.Schema()),
+		"Schema should match ADBC spec\nexpected: %s\ngot: %s",
+		adbc.GetStatisticsSchema, statsRdr.Schema())
+
+	var allStats []testutil.Statistic
+	for statsRdr.Next() {
+		rec := statsRdr.RecordBatch()
+		stats := testutil.ExtractStatisticsForTable(rec, catalog, dataset, tableName)
+		allStats = append(allStats, stats...)
+	}
+	suite.Require().NoError(statsRdr.Err())
+	suite.Require().NotEmpty(allStats, "Should find statistics for %s.%s.%s", catalog, dataset, tableName)
+
+	statsMap := testutil.StatisticsToLookupMap(allStats)
+
+	lastModifiedStat, ok := statsMap[driver.StatisticLastModifiedTimeKey]
+	suite.Require().True(ok, "last_modified_time statistic should be present")
+	lastModifiedBytes, ok := lastModifiedStat.StatisticValue.([]byte)
+	suite.Require().True(ok, "last_modified_time should be binary")
+	_, err = time.Parse(time.RFC3339Nano, string(lastModifiedBytes))
+	suite.NoError(err, "last_modified_time should be valid RFC3339Nano")
+	suite.False(lastModifiedStat.IsApproximate, "last_modified_time should be exact")
+
+	// BigQuery Tables REST API omits numRows/numBytes for BigLake Iceberg tables;
+	// ensure we do not falsely report 0 rows for a non-empty Iceberg table.
+	if rowCountStat, hasRowCount := statsMap[int16(adbc.StatisticRowCountKey)]; hasRowCount {
+		rowCount, ok := rowCountStat.StatisticValue.(float64)
+		suite.True(ok, "row_count statistic should be float64")
+		suite.Greater(rowCount, float64(0), "non-empty Iceberg table should not report 0 rows")
+	}
+}
+
 func (suite *BigQueryTests) TestGetStatisticNames() {
 	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
 	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")

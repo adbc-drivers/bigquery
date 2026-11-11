@@ -182,8 +182,8 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 		return nil, nil
 	}
 
-	// 4-part PCNT datasets (catalog.namespace) do not support INFORMATION_SCHEMA queries,
-	// so retrieve statistics directly from the BigQuery Tables REST API.
+	// 4-part Project.Catalog.Namespace.Table datasets (catalog.namespace) do not support
+	// INFORMATION_SCHEMA queries, so retrieve statistics from the BigQuery Tables REST API.
 	if strings.Contains(dataset, ".") {
 		return c.getTableStatisticsFromAPI(ctx, project, dataset, tableNames)
 	}
@@ -206,7 +206,8 @@ func (c *connectionImpl) getTableStatistics(ctx context.Context, project, datase
 	return allStats, nil
 }
 
-// getTableStatisticsFromAPI retrieves statistics for tables in a PCNT dataset using the BigQuery Tables REST API.
+// getTableStatisticsFromAPI retrieves statistics for tables in a 4-part (catalog.namespace) dataset
+// using the BigQuery Tables REST API.
 func (c *connectionImpl) getTableStatisticsFromAPI(ctx context.Context, project, dataset string, tableNames []string) ([]driverbase.Statistic, error) {
 	ds := c.client.DatasetInProject(project, dataset)
 	var allStats []driverbase.Statistic
@@ -221,13 +222,20 @@ func (c *connectionImpl) getTableStatisticsFromAPI(ctx context.Context, project,
 			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", project, dataset, tableName)
 		}
 
-		activeLogicalBytes := max(md.NumBytes-md.NumLongTermBytes, int64(0))
-		allStats = append(allStats,
-			driverbase.NewFloat64Stat(tableName, nil, int16(adbc.StatisticRowCountKey), float64(md.NumRows), true),
-			driverbase.NewInt64Stat(tableName, nil, StatisticTotalLogicalBytesKey, md.NumBytes, true),
-			driverbase.NewInt64Stat(tableName, nil, StatisticActiveLogicalBytesKey, activeLogicalBytes, true),
-			driverbase.NewInt64Stat(tableName, nil, StatisticLongTermLogicalBytesKey, md.NumLongTermBytes, true),
-		)
+		// BigQuery omits numRows/numBytes on BigLake Iceberg, external, and view tables
+		// (leaving Go's zero values), so only emit row/byte stats when reported.
+		hasStorageStats := (md.BigLakeConfiguration == nil && md.ExternalDataConfig == nil &&
+			md.Type != bigquery.ViewTable && md.Type != bigquery.ExternalTable) ||
+			md.NumRows > 0 || md.NumBytes > 0 || md.NumLongTermBytes > 0
+		if hasStorageStats {
+			activeLogicalBytes := max(md.NumBytes-md.NumLongTermBytes, int64(0))
+			allStats = append(allStats,
+				driverbase.NewFloat64Stat(tableName, nil, int16(adbc.StatisticRowCountKey), float64(md.NumRows), true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticTotalLogicalBytesKey, md.NumBytes, true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticActiveLogicalBytesKey, activeLogicalBytes, true),
+				driverbase.NewInt64Stat(tableName, nil, StatisticLongTermLogicalBytesKey, md.NumLongTermBytes, true),
+			)
+		}
 		if !md.LastModifiedTime.IsZero() {
 			allStats = append(allStats,
 				driverbase.NewBinaryStat(tableName, nil, StatisticLastModifiedTimeKey, []byte(md.LastModifiedTime.Format(time.RFC3339Nano)), false),
