@@ -219,7 +219,7 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 	if !mayReturnResults && statsOk {
 		arrowIterator = emptyArrowIterator{stats.Schema}
 		totalRows = stats.NumDMLAffectedRows
-	} else if mayReturnResults && readRowsFastPath {
+	} else if mayReturnResults && readRowsFastPath && !st.disableStorageApi {
 		driverbase.DebugAssert(statsOk, "stats should be available if mayReturnResults is true")
 		arrowIterator, err = newReadRowsArrowIterator(ctx, client, job, stats.Schema)
 		if err != nil && (stats.StatementType != "SCRIPT" || !errors.Is(err, io.EOF)) {
@@ -249,7 +249,9 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 		// _necessarily_ populated until after a call to Next). Finally we use
 		// job statistics instead
 		if mayReturnResults {
-			if arrowIterator, err = iter.ArrowIterator(); err != nil {
+			if st.disableStorageApi {
+				arrowIterator = newRowBasedArrowIterator(iter, st.cnxn.Alloc)
+			} else if arrowIterator, err = iter.ArrowIterator(); err != nil {
 				if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
 					// Script job with no results
 					// N.B. BigQuery SDK doesn't give a structured error - it's a fmt.Errorf
