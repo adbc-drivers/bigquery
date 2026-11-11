@@ -96,6 +96,22 @@ def test_script_results(driver, conn) -> None:
         assert len(table) == 1, repr(table)
 
 
+def test_script_ending_without_results(driver, conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute("""
+        CREATE TEMP TABLE staging AS SELECT 1 AS x;
+        SELECT * FROM staging;
+        DROP TABLE staging;
+        """)
+        assert not cursor.description
+        table = cursor.fetch_arrow_table()
+        assert (
+            table.schema.metadata[b"BIGQUERY:statistics:query:statement_type"]
+            == b"SCRIPT"
+        )
+        assert len(table) == 0, repr(table)
+
+
 QUERY_ID_KEY = b"BIGQUERY:query_id"
 
 

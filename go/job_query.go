@@ -248,7 +248,10 @@ func runQuery(ctx context.Context, logger *slog.Logger, client *bigquery.Client,
 		// iter.TotalRows == 0 (this is valid as per the API: the field is not
 		// _necessarily_ populated until after a call to Next). Finally we use
 		// job statistics instead
-		if mayReturnResults {
+		if mayReturnResults && stats.StatementType == "SCRIPT" && len(iter.Schema) == 0 {
+			arrowIterator = emptyArrowIterator{iter.Schema}
+			totalRows = 0
+		} else if mayReturnResults {
 			if arrowIterator, err = iter.ArrowIterator(); err != nil {
 				if stats.StatementType == "SCRIPT" && err.Error() == "failed to resolve table for script job: no child jobs found" {
 					// Script job with no results
