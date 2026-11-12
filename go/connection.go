@@ -915,7 +915,7 @@ const iamCredentialsScope = "https://www.googleapis.com/auth/cloud-platform"
 
 // newImpersonatedCredentials creates impersonated credentials for the given
 // universe domain. IAM Credentials is not universe-specific: it is served from
-// iamcredentials.googleapis.com in every universe, including S3NS. The
+// iamcredentials.googleapis.com in every universe. The
 // impersonate package derives that host from its base credentials instead, so
 // for another universe it is given an HTTP client (the host then defaults to
 // googleapis.com) and the result is rebound to the universe so that it matches
