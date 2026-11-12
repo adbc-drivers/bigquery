@@ -2485,6 +2485,50 @@ func (suite *BigQueryTests) TestGetStatisticsHiddenDataset() {
 	suite.NoError(rdr.Err())
 }
 
+func (suite *BigQueryTests) TestGetStatisticsPublicDataset() {
+	// An exact catalog name selects that project even when it is not the connection's
+	// own, so statistics are available for public datasets.
+	catalog := "bigquery-public-data"
+	dataset := "samples"
+	tableName := "shakespeare"
+	suite.Require().NotEqual(catalog, suite.Quirks.catalogName, "the test needs a catalog other than the connection's project")
+
+	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
+	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
+
+	statsRdr, err := statsCnxn.GetStatistics(suite.ctx, &catalog, &dataset, &tableName, true)
+	suite.Require().NoError(err)
+	defer statsRdr.Release()
+
+	suite.True(adbc.GetStatisticsSchema.Equal(statsRdr.Schema()),
+		"Schema should match ADBC spec\nexpected: %s\ngot: %s",
+		adbc.GetStatisticsSchema, statsRdr.Schema())
+
+	var allStats []testutil.Statistic
+	for statsRdr.Next() {
+		rec := statsRdr.RecordBatch()
+		stats := testutil.ExtractStatisticsForTable(rec, catalog, dataset, tableName)
+		allStats = append(allStats, stats...)
+	}
+	suite.Require().NoError(statsRdr.Err())
+	suite.Require().NotEmpty(allStats, "Should find statistics for %s.%s.%s", catalog, dataset, tableName)
+
+	statsMap := testutil.StatisticsToLookupMap(allStats)
+
+	rowCountStat, ok := statsMap[int16(adbc.StatisticRowCountKey)]
+	suite.Require().True(ok, "row_count statistic should be present")
+	rowCount, ok := rowCountStat.StatisticValue.(float64)
+	suite.Require().True(ok, "row_count statistic should be float64")
+	suite.Greater(rowCount, float64(0), "the public table is not empty")
+
+	lastModifiedStat, ok := statsMap[driver.StatisticLastModifiedTimeKey]
+	suite.Require().True(ok, "last_modified_time statistic should be present")
+	lastModifiedBytes, ok := lastModifiedStat.StatisticValue.([]byte)
+	suite.Require().True(ok, "last_modified_time should be binary")
+	_, err = time.Parse(time.RFC3339Nano, string(lastModifiedBytes))
+	suite.NoError(err, "last_modified_time should be valid RFC3339Nano")
+}
+
 func (suite *BigQueryTests) TestGetStatisticNames() {
 	statsCnxn, ok := suite.cnxn.(adbc.ConnectionGetStatistics)
 	suite.Require().True(ok, "BigQuery must implement ConnectionGetStatistics")
