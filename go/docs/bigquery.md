@@ -235,11 +235,11 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 `bigquery.universe_domain`
 : **Type:** string. **Default:** (empty) **URI Parameter:** `UniverseDomain`
 
-  The Google Cloud universe domain to connect to, for example `s3nsapis.fr` for [S3NS](https://www.s3ns.io/). The BigQuery and BigQuery Storage endpoints are derived from it, e.g. `bigquery.s3nsapis.fr`. IAM Credentials, used for impersonation, is not universe-specific and stays on `iamcredentials.googleapis.com` in every universe, so that host must remain reachable. When empty, the `GOOGLE_CLOUD_UNIVERSE_DOMAIN` environment variable is used if set, otherwise `googleapis.com`.
+  The Google Cloud universe domain to connect to, for example `s3nsapis.fr` for [S3NS](https://www.s3ns.io/). The BigQuery and BigQuery Storage endpoints are derived from it, e.g. `bigquery.s3nsapis.fr`. IAM Credentials uses `iamcredentials.googleapis.com` regardless of this setting. When empty, the `GOOGLE_CLOUD_UNIVERSE_DOMAIN` environment variable is used if set, otherwise `googleapis.com`.
 
   Because credentials are sent to hosts under this domain, only the known universes `googleapis.com`, `googleapis.de` and `s3nsapis.fr` are accepted unless `bigquery.allow_unknown_universe_domain` is set.
 
-  The universe domain of the credentials must match. Service account and external account (Workload Identity Federation) JSON files issued for another universe carry a `universe_domain` field and their own token endpoints, so they work unchanged. User authentication (`OAuthType=3`) always uses `accounts.google.com` and is only supported in the default universe.
+  The universe domain of the credentials must match. User authentication (`OAuthType=3`) always uses `accounts.google.com` and is only supported in the default universe.
 
 `bigquery.allow_unknown_universe_domain`
 : **Type:** boolean. **Default:** `false` **URI Parameter:** `AllowUnknownUniverseDomain`
