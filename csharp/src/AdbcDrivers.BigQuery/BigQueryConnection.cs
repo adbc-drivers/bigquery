@@ -927,7 +927,9 @@ namespace AdbcDrivers.BigQuery
 
         internal static bool IsUnauthorizedException(Exception ex, out GoogleApiException? googleEx)
         {
-            return BigQueryUtils.ContainsException(ex, out googleEx) && googleEx!.Error.Code == (int)System.Net.HttpStatusCode.Unauthorized;
+            return BigQueryUtils.ContainsException(ex, out googleEx) &&
+                   (googleEx!.Error?.Code == (int)System.Net.HttpStatusCode.Unauthorized ||
+                    googleEx.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized);
         }
 
         /// <summary>
@@ -1629,21 +1631,36 @@ namespace AdbcDrivers.BigQuery
         {
             return this.TraceActivity(activity =>
             {
-                string query = string.Format("SELECT * FROM `{0}`.`{1}`.INFORMATION_SCHEMA.COLUMNS WHERE table_name = @tableName",
-                SanitizeIdentifier(catalog), SanitizeIdentifier(dbSchema));
+                string projectId = string.IsNullOrEmpty(catalog) ? (this.ProjectId ?? string.Empty) : SanitizeCatalogIdentifier(catalog);
+                string datasetId = SanitizeIdentifier(dbSchema);
 
-                BigQueryResults? result = ExecuteQuery(query, new List<BigQueryParameter>
+                BigQueryTable? table = null;
+                try
                 {
-                    new BigQueryParameter("tableName", BigQueryDbType.String, tableName),
-                });
+                    Func<Task<BigQueryTable?>> func = () => Task.Run(() =>
+                    {
+                        return Client?.GetTable(projectId, datasetId, tableName);
+                    });
+
+                    table = ExecuteWithRetriesAsync<BigQueryTable?>(func, activity).GetAwaiter().GetResult();
+                }
+                catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound)
+                {
+                    table = null;
+                }
+                catch (Exception ex) when (IsUnauthorizedException(ex, out GoogleApiException? googleEx))
+                {
+                    throw new AdbcException(googleEx!.Message, AdbcStatusCode.Unauthorized, ex);
+                }
 
                 List<Field> fields = new List<Field>();
+                IList<TableFieldSchema>? schemaFields = table?.Schema?.Fields;
 
-                if (result != null)
+                if (schemaFields != null)
                 {
-                    foreach (BigQueryRow row in result)
+                    for (int i = 0; i < schemaFields.Count; i++)
                     {
-                        fields.Add(DescToField(row));
+                        fields.Add(TableFieldToArrowField(schemaFields[i], ordinalPosition: i + 1));
                     }
                 }
 
@@ -1651,22 +1668,68 @@ namespace AdbcDrivers.BigQuery
             }, ClassName + "." + nameof(GetTableSchema));
         }
 
-        private Field DescToField(BigQueryRow row)
+        private Field TableFieldToArrowField(TableFieldSchema field, int? ordinalPosition = null)
         {
-            Dictionary<string, string> metaData = new Dictionary<string, string>();
-            metaData.Add("PRIMARY_KEY", "");
-            metaData.Add("ORDINAL_POSITION", GetValue(row["ordinal_position"]));
-            metaData.Add("DATA_TYPE", GetValue(row["data_type"]));
+            string fieldName = field.Name ?? string.Empty;
+            string fieldType = field.Type ?? string.Empty;
 
-            Field.Builder fieldBuilder = SchemaFieldGenerator(GetValue(row["column_name"]), GetValue(row["data_type"]));
-            fieldBuilder.Metadata(metaData);
-
-            if (!GetValue(row["is_nullable"]).Equals("YES", StringComparison.OrdinalIgnoreCase))
+            IArrowType dataType;
+            if ((string.Equals(fieldType, "RECORD", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(fieldType, "STRUCT", StringComparison.OrdinalIgnoreCase)) &&
+                field.Fields != null && field.Fields.Count > 0)
             {
-                fieldBuilder.Nullable(false);
+                List<Field> nestedFields = new List<Field>(field.Fields.Count);
+                foreach (TableFieldSchema subfield in field.Fields)
+                {
+                    nestedFields.Add(TableFieldToArrowField(subfield));
+                }
+
+                dataType = new StructType(nestedFields);
+            }
+            else if ((string.Equals(fieldType, "NUMERIC", StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(fieldType, "DECIMAL", StringComparison.OrdinalIgnoreCase)) &&
+                     !fieldType.Contains("("))
+            {
+                int precision = field.Precision.HasValue ? (int)field.Precision.Value : 38;
+                int scale = field.Scale.HasValue ? (int)field.Scale.Value : (field.Precision.HasValue ? 0 : 9);
+                dataType = new Decimal128Type(precision, scale);
+            }
+            else if ((string.Equals(fieldType, "BIGNUMERIC", StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(fieldType, "BIGDECIMAL", StringComparison.OrdinalIgnoreCase)) &&
+                     !fieldType.Contains("("))
+            {
+                int precision = field.Precision.HasValue ? (int)field.Precision.Value : 76;
+                int scale = field.Scale.HasValue ? (int)field.Scale.Value : (field.Precision.HasValue ? 0 : 38);
+                dataType = new Decimal256Type(precision, scale);
+            }
+            else
+            {
+                dataType = SchemaFieldGenerator(fieldName, fieldType).Build().DataType;
             }
 
-            fieldBuilder.Name(GetValue(row["column_name"]));
+            bool isRepeated = string.Equals(field.Mode, "REPEATED", StringComparison.OrdinalIgnoreCase);
+            if (isRepeated)
+            {
+                dataType = new ListType(dataType);
+            }
+
+            bool isNullable = !string.Equals(field.Mode, "REQUIRED", StringComparison.OrdinalIgnoreCase) && !isRepeated;
+
+            Field.Builder fieldBuilder = new Field.Builder()
+                .Name(fieldName)
+                .DataType(dataType)
+                .Nullable(isNullable);
+
+            if (ordinalPosition.HasValue)
+            {
+                Dictionary<string, string> metaData = new Dictionary<string, string>
+                {
+                    { "PRIMARY_KEY", "" },
+                    { "ORDINAL_POSITION", ordinalPosition.Value.ToString() },
+                    { "DATA_TYPE", fieldType }
+                };
+                fieldBuilder.Metadata(metaData);
+            }
 
             return fieldBuilder.Build();
         }
@@ -2028,24 +2091,31 @@ namespace AdbcDrivers.BigQuery
         }
 
         /// <summary>
-        /// Matches a complete BigQuery project or dataset identifier. The character class is the
-        /// union of what BigQuery permits in each: a project id allows lowercase letters, digits
-        /// and hyphens, a dataset id allows letters, digits and underscores. Both anchors are
-        /// required - \A and \z rather than ^ and $, because .NET's $ also matches immediately
-        /// before a trailing newline.
+        /// Matches a complete BigQuery project identifier (lowercase letters, digits, hyphens)
+        /// or dataset identifier (including 4-part PCNT <c>catalog.namespace</c> identifiers).
+        /// Both anchors are required - \A and \z rather than ^ and $, because .NET's $ also
+        /// matches immediately before a trailing newline.
         /// </summary>
-        private static readonly Regex s_identifierRegex = new Regex(@"\A[a-zA-Z0-9_-]+\z", RegexOptions.CultureInvariant);
+        private static readonly Regex s_catalogIdentifierRegex = new Regex(@"\A[a-zA-Z0-9_-]+\z", RegexOptions.CultureInvariant);
+        private static readonly Regex s_identifierRegex = new Regex(@"\A[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)?\z", RegexOptions.CultureInvariant);
+
+        internal static string SanitizeCatalogIdentifier(string? input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
+
+            if (!s_catalogIdentifierRegex.IsMatch(input))
+            {
+                throw new AdbcException("catalog or dataset identifier is invalid", AdbcStatusCode.InvalidArgument);
+            }
+
+            return input!;
+        }
 
         /// <summary>
-        /// Validates a value that is interpolated into a query as a quoted identifier.
+        /// Validates a catalog or dataset identifier (including PCNT <c>catalog.namespace</c>
+        /// dataset identifiers).
         /// </summary>
-        /// <remarks>
-        /// BigQuery query parameters cannot stand in for identifiers, so the catalog and dataset
-        /// that name an INFORMATION_SCHEMA view have to be embedded in the query text. They are
-        /// therefore checked against the full set of characters BigQuery allows in those names;
-        /// anything else - a backtick that would close the identifier especially - is rejected.
-        /// Every other caller-supplied value is passed as a query parameter instead.
-        /// </remarks>
         internal static string SanitizeIdentifier(string? input)
         {
             if (string.IsNullOrEmpty(input))
