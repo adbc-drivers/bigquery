@@ -1631,7 +1631,7 @@ namespace AdbcDrivers.BigQuery
         {
             return this.TraceActivity(activity =>
             {
-                string projectId = string.IsNullOrEmpty(catalog) ? (this.ProjectId ?? string.Empty) : SanitizeCatalogIdentifier(catalog);
+                string projectId = ResolveTableProjectId(catalog);
                 string datasetId = SanitizeIdentifier(dbSchema);
 
                 BigQueryTable? table = null;
@@ -1666,6 +1666,23 @@ namespace AdbcDrivers.BigQuery
 
                 return new Schema(fields, null);
             }, ClassName + "." + nameof(GetTableSchema));
+        }
+
+        private string ResolveTableProjectId(string? catalog)
+        {
+            if (!string.IsNullOrEmpty(catalog))
+            {
+                return SanitizeCatalogIdentifier(catalog);
+            }
+
+            if (this.properties.TryGetValue(BigQueryParameters.ProjectId, out string? configuredProjectId) &&
+                !string.IsNullOrEmpty(configuredProjectId) &&
+                !configuredProjectId.Equals(BigQueryConstants.DetectProjectId, StringComparison.OrdinalIgnoreCase))
+            {
+                return SanitizeCatalogIdentifier(configuredProjectId);
+            }
+
+            return this.ProjectId ?? string.Empty;
         }
 
         private Field TableFieldToArrowField(TableFieldSchema field, int? ordinalPosition = null)

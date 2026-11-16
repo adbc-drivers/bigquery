@@ -320,6 +320,136 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.Empty(mockServer.ExecutedQueries);
         }
 
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void OmittedCatalogUsesConfiguredProjectIdOverBillingProjectId(string? catalog)
+        {
+            const string dataProject = "data-project";
+            const string billingProject = "billing-project";
+
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Google.Apis.Bigquery.v2.Data.Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = dataProject,
+                    DatasetId = DbSchema,
+                    TableId = "my_table",
+                },
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "from_data_project", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+            });
+            mockServer.AddTable(new Google.Apis.Bigquery.v2.Data.Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = billingProject,
+                    DatasetId = DbSchema,
+                    TableId = "my_table",
+                },
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "from_billing_project", Type = "INTEGER", Mode = "REQUIRED" },
+                    },
+                },
+            });
+
+            using AdbcConnection connection = Connect(mockServer, new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, dataProject },
+                { BigQueryParameters.BillingProjectId, billingProject },
+            });
+
+            Schema schema = connection.GetTableSchema(catalog, DbSchema, "my_table");
+
+            Field field = Assert.Single(schema.FieldsList);
+            Assert.Equal("from_data_project", field.Name);
+            Assert.IsType<StringType>(field.DataType);
+        }
+
+        [Fact]
+        public void OmittedCatalogUsesPublicProjectIdOverBillingProjectId()
+        {
+            const string billingProject = "billing-project";
+
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Google.Apis.Bigquery.v2.Data.Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = BigQueryConstants.PublicProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "public_table",
+                },
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "word", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+            });
+
+            using AdbcConnection connection = Connect(mockServer, new Dictionary<string, string>
+            {
+                { BigQueryParameters.ProjectId, BigQueryConstants.PublicProjectId },
+                { BigQueryParameters.BillingProjectId, billingProject },
+            });
+
+            Schema schema = connection.GetTableSchema(null, DbSchema, "public_table");
+
+            Field field = Assert.Single(schema.FieldsList);
+            Assert.Equal("word", field.Name);
+        }
+
+        [Fact]
+        public void OmittedCatalogFallsBackToBillingProjectIdWhenProjectIdNotConfigured()
+        {
+            const string billingProject = "billing-project";
+
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Google.Apis.Bigquery.v2.Data.Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = billingProject,
+                    DatasetId = DbSchema,
+                    TableId = "billing_table",
+                },
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "cost", Type = "FLOAT", Mode = "NULLABLE" },
+                    },
+                },
+            });
+
+            var driver = new BigQueryDriver();
+            AdbcDatabase database = driver.Open(new Dictionary<string, string>
+            {
+                { BigQueryParameters.BillingProjectId, billingProject },
+                { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
+                { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
+                { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
+            });
+            using AdbcConnection connection = database.Connect(new Dictionary<string, string>());
+
+            Schema schema = connection.GetTableSchema(null, DbSchema, "billing_table");
+
+            Field field = Assert.Single(schema.FieldsList);
+            Assert.Equal("cost", field.Name);
+            Assert.IsType<DoubleType>(field.DataType);
+        }
+
         private static Schema GetTableSchema(params (string Name, string DataType)[] columns)
         {
             var fields = new TableFieldSchema[columns.Length];

@@ -21,6 +21,7 @@
 * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -158,7 +159,20 @@ namespace AdbcDrivers.BigQuery.Tests
                 var exception = Assert.Throws<AdbcException>(() => adbcConnection.GetObjects(AdbcConnection.GetObjectsDepth.Catalogs, null, null, null, null, null));
                 Assert.Equal(AdbcStatusCode.Unauthorized, exception.Status);
 
-                exception = Assert.Throws<AdbcException>(() => adbcConnection.GetTableSchema(null, null, string.Empty));
+                string catalogName = !string.IsNullOrEmpty(environment.Metadata?.Catalog)
+                    ? environment.Metadata!.Catalog
+                    : (!string.IsNullOrEmpty(environment.ProjectId) &&
+                       !environment.ProjectId!.Equals(BigQueryConstants.DetectProjectId, StringComparison.OrdinalIgnoreCase)
+                        ? environment.ProjectId!
+                        : "invalid-project");
+                string schemaName = !string.IsNullOrEmpty(environment.Metadata?.Schema)
+                    ? environment.Metadata!.Schema
+                    : "invalid_dataset";
+                string tableName = !string.IsNullOrEmpty(environment.Metadata?.Table)
+                    ? environment.Metadata!.Table
+                    : "invalid_table";
+
+                exception = Assert.Throws<AdbcException>(() => adbcConnection.GetTableSchema(catalogName, schemaName, tableName));
                 Assert.Equal(AdbcStatusCode.Unauthorized, exception.Status);
 
                 AdbcStatement statement = adbcConnection.CreateStatement();
