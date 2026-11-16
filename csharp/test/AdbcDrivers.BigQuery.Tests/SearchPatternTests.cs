@@ -111,6 +111,7 @@ namespace AdbcDrivers.BigQuery.Tests
         [InlineData("my_table")]
         [InlineData("mock-project")]
         [InlineData("A1")]
+        [InlineData("my_catalog.my_namespace")]
         public void ValidIdentifiersAreAccepted(string input)
         {
             Assert.Equal(input, BigQueryConnection.SanitizeIdentifier(input));
@@ -120,7 +121,8 @@ namespace AdbcDrivers.BigQuery.Tests
         // Each of these starts with an allowed character, which the unanchored allowlist accepted.
         [InlineData("a'; DROP TABLE secrets; SELECT '")]
         [InlineData("a` UNION ALL SELECT 1 --")]
-        [InlineData("a.b")]
+        [InlineData("a..b")]
+        [InlineData("a.b.c")]
         [InlineData("a b")]
         [InlineData("a%")]
         // .NET's "$" also matches before a trailing newline, so "\\z" is used instead.
