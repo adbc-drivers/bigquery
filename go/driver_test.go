@@ -2922,6 +2922,9 @@ func (suite *BigQueryTests) TestPartitionsEmpty() {
 	suite.Require().NoError(err)
 	suite.Zero(rows)
 	suite.Require().NotNil(schema)
+	suite.Require().Equal(1, schema.NumFields())
+	suite.Equal("i", schema.Field(0).Name)
+	suite.Equal(arrow.PrimitiveTypes.Int64, schema.Field(0).Type)
 	suite.Zero(partitions.NumPartitions)
 	suite.Empty(partitions.PartitionIDs)
 }

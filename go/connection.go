@@ -564,11 +564,6 @@ func (c *connectionImpl) GetTableSchema(ctx context.Context, catalog *string, db
 	return c.getTableSchemaWithFilter(ctx, catalog, dbSchema, tableName, nil)
 }
 
-// ReadPartition turns a partition descriptor produced by (*statement).ExecutePartitions
-// into a RecordReader, by decoding the Storage Read API stream name it carries and
-// opening it with this connection's own credentials -- never the credentials of
-// whichever connection created the partition. A malformed descriptor is reported
-// as adbc.StatusInvalidArgument rather than panicking.
 func (c *connectionImpl) ReadPartition(ctx context.Context, descriptor []byte) (array.RecordReader, error) {
 	streamName, err := decodePartitionDescriptor(descriptor)
 	if err != nil {

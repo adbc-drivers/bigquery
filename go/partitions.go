@@ -17,7 +17,6 @@ package bigquery
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/bigquery/storage/apiv1/storagepb"
@@ -69,40 +68,6 @@ func decodePartitionDescriptor(descriptor []byte) (string, error) {
 		}
 	}
 	return streamName, nil
-}
-
-// defaultPartitionMaxStreams is how many Storage Read API streams ExecutePartitions
-// requests when OptionQueryPartitionsMaxStreams is unset.
-const defaultPartitionMaxStreams = 4
-
-// maxPartitionStreams is OptionQueryPartitionsMaxStreams, or its default when unset.
-func (st *statement) maxPartitionStreams() int32 {
-	if st.partitionMaxStreams == 0 {
-		return defaultPartitionMaxStreams
-	}
-	return st.partitionMaxStreams
-}
-
-// setPartitionOption stores one of the two partition sizing options. Both must be
-// positive. OptionQueryPartitionsMaxStreams must also fit the int32 that the Storage
-// Read API's MaxStreamCount field has, so a larger value is refused instead of wrapping.
-func (st *statement) setPartitionOption(key string, n int64) error {
-	limit := int64(math.MaxInt64)
-	if key == OptionQueryPartitionsMaxStreams {
-		limit = math.MaxInt32
-	}
-	if n <= 0 || n > limit {
-		return adbc.Error{
-			Code: adbc.StatusInvalidArgument,
-			Msg:  fmt.Sprintf("[bq] `%s` must be a positive integer of at most %d, got %d", key, limit, n),
-		}
-	}
-	if key == OptionQueryPartitionsMaxStreams {
-		st.partitionMaxStreams = int32(n)
-	} else {
-		st.partitionTargetRowsPerStream = n
-	}
-	return nil
 }
 
 // partitionStreamCountFor decides how many streams ExecutePartitions asks for, from

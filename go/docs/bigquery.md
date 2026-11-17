@@ -141,9 +141,9 @@ A selection of query statistics and other metadata is supplied in the metadata o
 
 ### Partitioned Results
 
-`ExecutePartitions` runs the query, then opens a multi-stream [Storage Read API](https://docs.cloud.google.com/bigquery/docs/reference/storage) session on the destination table of the query job. It returns one partition for each stream and reports the exact row count of the result. `ReadPartition` reads one partition. A partition descriptor holds only the name of a stream and a version byte. It holds no credential, so any connection can read it with its own credentials.
+`ExecutePartitions` runs the query, then opens a multi-stream [Storage Read API](https://docs.cloud.google.com/bigquery/docs/reference/storage) session on the destination table. It returns one partition for each stream. A partition does not contain credentials, so any connection can read it with its own credentials.
 
-BigQuery can return fewer streams than the driver asks for. `ExecutePartitions` does not support dry runs or bound parameters. See `bigquery.query.partitions.max_streams` and `bigquery.query.partitions.target_rows_per_stream` in [](#query-options) below.
+BigQuery can return fewer streams than the driver asks for. Also, dry runs and bound parameters are not supported. Also see `bigquery.query.partitions.max_streams` and `bigquery.query.partitions.target_rows_per_stream` in [](#query-options) below.
 
 ### Storage Write API Support
 
@@ -349,7 +349,7 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 `bigquery.query.partitions.max_streams`
 : **Type:** integer. **Default:** 4
 
-  The largest number of Storage Read API streams that `ExecutePartitions` asks for. The value must be positive and fit in 32 bits. The driver also asks BigQuery for at least this many streams, but BigQuery can return fewer.
+  The number of Storage Read API streams that `ExecutePartitions` asks for.
 
 `bigquery.query.partitions.target_rows_per_stream`
 : **Type:** integer. **Default:** 0 (always ask for `bigquery.query.partitions.max_streams` streams)
