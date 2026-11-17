@@ -762,7 +762,6 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 	authOptions := []option.ClientOption{}
 
-	// Every other arm ignores the token, which would drop it silently.
 	if c.accessToken != "" && c.authType != OptionValueAuthTypeAccessToken {
 		return adbc.Error{
 			Code: adbc.StatusInvalidArgument,
@@ -868,20 +867,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			}
 		}
 
-		var lifetime time.Duration
-		if c.impersonateLifetime != 0 {
-			lifetime = c.impersonateLifetime
-		}
-		// Unset (0) lets the impersonate package refresh 1h tokens; any explicit lifetime yields a static token
-
-		impCfg := impersonate.CredentialsConfig{
-			TargetPrincipal: c.impersonateTargetPrincipal,
-			Delegates:       c.impersonateDelegates,
-			Scopes:          c.impersonateScopes,
-			Lifetime:        lifetime,
-			Subject:         c.impersonateSubject,
-		}
-		tokenSource, err := newImpersonatedTokenSource(ctx, impCfg)
+		tokenSource, err := impersonate.CredentialsTokenSource(ctx, c.impersonationConfig())
 		if err != nil {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
@@ -934,8 +920,16 @@ func (c *connectionImpl) hasImpersonationOptions() bool {
 		c.impersonateSubject != ""
 }
 
-// newImpersonatedTokenSource is a variable so that a test can observe the impersonation config.
-var newImpersonatedTokenSource = impersonate.CredentialsTokenSource
+func (c *connectionImpl) impersonationConfig() impersonate.CredentialsConfig {
+	// Unset (0) lets the impersonate package refresh 1h tokens; any explicit lifetime yields a static token
+	return impersonate.CredentialsConfig{
+		TargetPrincipal: c.impersonateTargetPrincipal,
+		Delegates:       c.impersonateDelegates,
+		Scopes:          c.impersonateScopes,
+		Lifetime:        c.impersonateLifetime,
+		Subject:         c.impersonateSubject,
+	}
+}
 
 var (
 	// Dataset:

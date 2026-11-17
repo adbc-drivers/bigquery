@@ -16,7 +16,6 @@ package bigquery
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,9 +28,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/oauth2"
 	"google.golang.org/api/impersonate"
-	"google.golang.org/api/option"
 )
 
 const testTargetPrincipal = "delegating@test-project.iam.gserviceaccount.com"
@@ -55,19 +52,14 @@ func requireInvalidArgument(t *testing.T, err error, mentions string) {
 	require.Contains(t, adbcErr.Msg, mentions)
 }
 
-// observeImpersonation replaces the impersonated token source with one that records its
-// configuration and fails, so that no test reaches Google.
-func observeImpersonation(t *testing.T) (*impersonate.CredentialsConfig, error) {
+// impersonationConfig sets the options on a connection and returns the config it would impersonate with.
+func impersonationConfig(t *testing.T, opts map[string]string) impersonate.CredentialsConfig {
 	t.Helper()
-	var got impersonate.CredentialsConfig
-	stop := errors.New("impersonation config observed")
-	orig := newImpersonatedTokenSource
-	t.Cleanup(func() { newImpersonatedTokenSource = orig })
-	newImpersonatedTokenSource = func(_ context.Context, cfg impersonate.CredentialsConfig, _ ...option.ClientOption) (oauth2.TokenSource, error) {
-		got = cfg
-		return nil, stop
+	cnxn := &connectionImpl{}
+	for key, value := range opts {
+		require.NoError(t, cnxn.SetOption(context.Background(), key, value))
 	}
-	return &got, stop
+	return cnxn.impersonationConfig()
 }
 
 func TestAccessTokenIsSentAsBearerToken(t *testing.T) {
@@ -206,25 +198,17 @@ func TestAccessTokenWithAnotherAuthTypeIsRefused(t *testing.T) {
 }
 
 func TestImpersonateSubjectReachesTheImpersonationConfig(t *testing.T) {
-	got, stop := observeImpersonation(t)
-	_, err := openWith(t, map[string]string{
+	got := impersonationConfig(t, map[string]string{
 		OptionImpersonateTargetPrincipal: testTargetPrincipal,
-		OptionImpersonateScopes:          "https://www.googleapis.com/auth/bigquery",
 		OptionImpersonateSubject:         "user@example.com",
 	})
-	require.ErrorContains(t, err, stop.Error())
 	require.Equal(t, "user@example.com", got.Subject)
 	require.Equal(t, testTargetPrincipal, got.TargetPrincipal)
 }
 
 // Without a subject, the config keeps the target principal's own identity.
 func TestImpersonateWithoutSubjectLeavesItEmpty(t *testing.T) {
-	got, stop := observeImpersonation(t)
-	_, err := openWith(t, map[string]string{
-		OptionImpersonateTargetPrincipal: testTargetPrincipal,
-		OptionImpersonateScopes:          "https://www.googleapis.com/auth/bigquery",
-	})
-	require.ErrorContains(t, err, stop.Error())
+	got := impersonationConfig(t, map[string]string{OptionImpersonateTargetPrincipal: testTargetPrincipal})
 	require.Empty(t, got.Subject)
 	require.Equal(t, testTargetPrincipal, got.TargetPrincipal)
 }
