@@ -226,6 +226,16 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   The project to connect to.
 
+`bigquery.skip_anonymous_tables`
+: **Type:** boolean. **Default:** `false`
+
+  Leave the tables of cached query results out of `GetObjects`: tables whose name starts with `anon` in the anonymous datasets BigQuery creates for them (an underscore and 40 hex digits). The driver skips them before getting any table metadata. Tables in other hidden datasets are kept.
+
+`bigquery.skip_hidden_datasets`
+: **Type:** boolean. **Default:** `false`
+
+  Leave hidden datasets, whose name starts with an underscore, out of `GetObjects`. This includes the anonymous datasets of cached query results.
+
 `bigquery.storage_endpoint`
 : **Type:** string. **Default:** (empty)
 

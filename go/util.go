@@ -358,3 +358,19 @@ func retry(ctx context.Context, context string, f func() (bool, error)) error {
 	}
 	return retryWithBackoff(ctx, context, 20, backoff, f)
 }
+
+// parseBoolOption sets *dst from a "true" or "false" option value.
+func parseBoolOption(key string, value string, dst *bool) error {
+	switch value {
+	case "true":
+		*dst = true
+	case "false":
+		*dst = false
+	default:
+		return adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] invalid value for %s: %q (expected true or false)", key, value),
+		}
+	}
+	return nil
+}

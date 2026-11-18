@@ -25,14 +25,18 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/api/option"
 )
 
 // tablesGetServer answers tables.get for project "p", dataset "d". A table
-// named "denied…" gets a 403, "gone…" a 404, "bad…" a 400, "view…" is a VIEW,
-// and anything else is a TABLE. Every answer takes delay, and the server
+// named "denied…" gets a 403 accessDenied, "quota…" a 403 quotaExceeded,
+// "gone…" a 404, "bad…" a 400, "view…" is a VIEW, and anything else is a
+// TABLE. Every answer takes delay, and the server
 // counts the calls it got and the most it had in flight at once.
 type tablesGetServer struct {
 	server *httptest.Server
@@ -74,6 +78,9 @@ func (s *tablesGetServer) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(tableID, "denied"):
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"error":{"code":403,"message":"Access Denied: User does not have permission to access results of another user's job.","errors":[{"reason":"accessDenied"}]}}`)
+	case strings.HasPrefix(tableID, "quota"):
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"error":{"code":403,"message":"Quota exceeded: Your user exceeded quota for concurrent api requests","errors":[{"reason":"quotaExceeded"}]}}`)
 	case strings.HasPrefix(tableID, "gone"):
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = fmt.Fprint(w, `{"error":{"code":404,"message":"Not found","errors":[{"reason":"notFound"}]}}`)
@@ -106,29 +113,35 @@ func (s *tablesGetServer) tables(t *testing.T, ids ...string) []*bigquery.Table 
 	return tables
 }
 
-func TestGetTablesMetadataKeepsOrderAndSkipsDeniedAndMissingTables(t *testing.T) {
+// listTables runs getTableInfos and renders each result as "name type".
+func listTables(ctx context.Context, limit *semaphore.Weighted, tables []*bigquery.Table) ([]string, error) {
+	infos, err := getTableInfos(ctx, limit, "p", "d", tables, func(table *bigquery.Table, md *bigquery.TableMetadata) (driverbase.TableInfo, error) {
+		return driverbase.TableInfo{TableName: table.TableID, TableType: string(md.Type)}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	got := make([]string, len(infos))
+	for i, info := range infos {
+		got[i] = info.TableName + " " + info.TableType
+	}
+	return got, nil
+}
+
+func TestGetTableInfosKeepsOrderAndSkipsInaccessibleTables(t *testing.T) {
 	srv := newTablesGetServer(t, 20*time.Millisecond)
-	ids := []string{
+	tables := srv.tables(t,
 		"t0", "denied0", "view0", "t1", "gone0", "t2", "t3", "view1",
 		"denied1", "t4", "t5", "t6", "gone1", "t7", "view2", "t8",
 		"t9", "denied2", "t10", "t11", "t12", "t13", "t14", "t15",
-	}
+	)
 
-	metadata, err := getTablesMetadata(context.Background(), "p", "d", srv.tables(t, ids...))
+	got, err := listTables(context.Background(), semaphore.NewWeighted(tableMetadataConcurrency), tables)
 	require.NoError(t, err)
-
-	got := make([]string, len(ids))
-	for i, md := range metadata {
-		if md == nil {
-			got[i] = "<skipped>"
-		} else {
-			got[i] = md.FullID + " " + string(md.Type)
-		}
-	}
 	require.Equal(t, []string{
-		"p:d.t0 TABLE", "<skipped>", "p:d.view0 VIEW", "p:d.t1 TABLE", "<skipped>", "p:d.t2 TABLE", "p:d.t3 TABLE", "p:d.view1 VIEW",
-		"<skipped>", "p:d.t4 TABLE", "p:d.t5 TABLE", "p:d.t6 TABLE", "<skipped>", "p:d.t7 TABLE", "p:d.view2 VIEW", "p:d.t8 TABLE",
-		"p:d.t9 TABLE", "<skipped>", "p:d.t10 TABLE", "p:d.t11 TABLE", "p:d.t12 TABLE", "p:d.t13 TABLE", "p:d.t14 TABLE", "p:d.t15 TABLE",
+		"t0 TABLE", "view0 VIEW", "t1 TABLE", "t2 TABLE", "t3 TABLE", "view1 VIEW",
+		"t4 TABLE", "t5 TABLE", "t6 TABLE", "t7 TABLE", "view2 VIEW", "t8 TABLE",
+		"t9 TABLE", "t10 TABLE", "t11 TABLE", "t12 TABLE", "t13 TABLE", "t14 TABLE", "t15 TABLE",
 	}, got)
 
 	// 24 calls of 20ms each: with no concurrency at most one is in flight.
@@ -136,29 +149,57 @@ func TestGetTablesMetadataKeepsOrderAndSkipsDeniedAndMissingTables(t *testing.T)
 	require.LessOrEqual(t, srv.maxInFlight, tableMetadataConcurrency)
 }
 
-func TestGetTablesMetadataReturnsOtherErrors(t *testing.T) {
+// Two listings on one connection, such as two datasets GetObjects lists in
+// parallel, share the connection's bound on tables.get calls in flight.
+func TestGetTableInfosSharesTheConnectionLimit(t *testing.T) {
+	srv := newTablesGetServer(t, 20*time.Millisecond)
+	limit := semaphore.NewWeighted(tableMetadataConcurrency)
+	var g errgroup.Group
+	for range 3 {
+		tables := srv.tables(t, "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11")
+		g.Go(func() error {
+			_, err := listTables(context.Background(), limit, tables)
+			return err
+		})
+	}
+	require.NoError(t, g.Wait())
+	require.Equal(t, 36, srv.requests)
+	require.LessOrEqual(t, srv.maxInFlight, tableMetadataConcurrency)
+}
+
+// A 403 for an exceeded quota is not a table the caller may not read, so it
+// fails the listing instead of leaving out a readable table.
+func TestGetTableInfosReturnsQuotaErrors(t *testing.T) {
 	srv := newTablesGetServer(t, 0)
 
-	_, err := getTablesMetadata(context.Background(), "p", "d", srv.tables(t, "t0", "bad0", "t1"))
+	_, err := listTables(context.Background(), nil, srv.tables(t, "t0", "quota0", "t1"))
+	require.ErrorContains(t, err, "get table metadata for p.d.quota0")
+	require.ErrorContains(t, err, "Quota exceeded")
+}
+
+func TestGetTableInfosReturnsOtherErrors(t *testing.T) {
+	srv := newTablesGetServer(t, 0)
+
+	_, err := listTables(context.Background(), nil, srv.tables(t, "t0", "bad0", "t1"))
 	require.ErrorContains(t, err, "get table metadata for p.d.bad0")
 	require.ErrorContains(t, err, "Invalid table")
 }
 
-func TestGetTablesMetadataStopsWhenCancelled(t *testing.T) {
+func TestGetTableInfosStopsWhenCancelled(t *testing.T) {
 	srv := newTablesGetServer(t, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	metadata, err := getTablesMetadata(ctx, "p", "d", srv.tables(t, "t0", "t1", "t2"))
-	require.Nil(t, metadata)
+	got, err := listTables(ctx, semaphore.NewWeighted(tableMetadataConcurrency), srv.tables(t, "t0", "t1", "t2"))
+	require.Nil(t, got)
 	var adbcErr adbc.Error
 	require.ErrorAs(t, err, &adbcErr)
 	require.Equal(t, adbc.StatusCancelled, adbcErr.Code)
 	require.Zero(t, srv.requests, "a cancelled call still sent tables.get")
 }
 
-func TestGetTablesMetadataOfNoTables(t *testing.T) {
-	metadata, err := getTablesMetadata(context.Background(), "p", "d", nil)
+func TestGetTableInfosOfNoTables(t *testing.T) {
+	got, err := listTables(context.Background(), nil, nil)
 	require.NoError(t, err)
-	require.Empty(t, metadata)
+	require.Empty(t, got)
 }

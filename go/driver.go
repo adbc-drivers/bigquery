@@ -144,6 +144,16 @@ const (
 	OptionValueCompressionZSTD  = "zstd"
 
 	OptionCustomUserAgent = "bigquery.user_agent"
+
+	// OptionSkipHiddenDatasets makes GetObjects leave out hidden datasets: those
+	// whose name starts with an underscore, including the anonymous datasets
+	// that hold cached query results. Default: false.
+	OptionSkipHiddenDatasets = "bigquery.skip_hidden_datasets"
+	// OptionSkipAnonymousTables makes GetObjects leave out the tables of cached
+	// query results ("anon…" tables in the anonymous datasets BigQuery names
+	// "_" and 40 hex digits) without getting their metadata. Tables in a user's
+	// hidden datasets are kept. Default: false.
+	OptionSkipAnonymousTables = "bigquery.skip_anonymous_tables"
 )
 
 var (
