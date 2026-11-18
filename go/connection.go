@@ -43,6 +43,7 @@ import (
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
@@ -153,7 +154,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 	it := c.client.DatasetInProject(catalog, schema).Tables(ctx)
 
-	res := make([]driverbase.TableInfo, 0)
+	tables := make([]*bigquery.Table, 0)
 	for {
 		table, err := it.Next()
 		if err == iterator.Done {
@@ -162,20 +163,21 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 		if err != nil {
 			return nil, err
 		}
-		if !tablePattern.MatchString(table.TableID) {
-			continue
+		if tablePattern.MatchString(table.TableID) {
+			tables = append(tables, table)
 		}
+	}
 
-		md, err := table.Metadata(ctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
-		if err != nil {
-			if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
-				// "User does not have permission to access results of another user's job"
-				// No sense in erroring the entire list operation; just treat it as nonexistent
+	metadata, err := getTablesMetadata(ctx, catalog, schema, tables)
+	if err != nil {
+		return nil, err
+	}
 
-				// Similarly a 404 probably just means a TOC/TOU error and we can proceed
-				continue
-			}
-			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
+	res := make([]driverbase.TableInfo, 0, len(tables))
+	for i, table := range tables {
+		md := metadata[i]
+		if md == nil {
+			continue
 		}
 
 		var constraints []driverbase.ConstraintInfo
@@ -278,6 +280,42 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 	}
 
 	return res, nil
+}
+
+// tableMetadataConcurrency bounds the tables.get calls one GetObjects call
+// makes per dataset at once. It keeps the request rate well under BigQuery's
+// per-user, per-method API limit; the client retries rate-limited calls.
+const tableMetadataConcurrency = 8
+
+// getTablesMetadata gets the metadata of each table concurrently, since
+// tables.list returns neither a table's type nor its constraints or columns.
+// Element i holds the metadata of tables[i], or nil when tables.get answers 403
+// or 404, so that the caller skips that table.
+func getTablesMetadata(ctx context.Context, catalog string, schema string, tables []*bigquery.Table) ([]*bigquery.TableMetadata, error) {
+	metadata := make([]*bigquery.TableMetadata, len(tables))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(tableMetadataConcurrency)
+	for i, table := range tables {
+		g.Go(func() error {
+			md, err := table.Metadata(gctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
+			if err != nil {
+				if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
+					// "User does not have permission to access results of another user's job"
+					// No sense in erroring the entire list operation; just treat it as nonexistent
+
+					// Similarly a 404 probably just means a TOC/TOU error and we can proceed
+					return nil
+				}
+				return errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
+			}
+			metadata[i] = md
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return metadata, nil
 }
 
 type bigQueryTokenResponse struct {
