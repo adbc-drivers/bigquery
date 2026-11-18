@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -165,6 +166,38 @@ func TestGetTableInfosSharesTheConnectionLimit(t *testing.T) {
 	require.NoError(t, g.Wait())
 	require.Equal(t, 36, srv.requests)
 	require.LessOrEqual(t, srv.maxInFlight, tableMetadataConcurrency)
+}
+
+// A listing waiting for the connection's permits parks one goroutine, not a
+// worker per table, so many datasets waiting at once stay cheap.
+func TestGetTableInfosWaitsForAPermitBeforeStartingAWorker(t *testing.T) {
+	srv := newTablesGetServer(t, 0)
+	limit := semaphore.NewWeighted(tableMetadataConcurrency)
+	require.NoError(t, limit.Acquire(context.Background(), tableMetadataConcurrency))
+	tables := srv.tables(t, "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11")
+
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := listTables(ctx, limit, tables)
+		done <- err
+	}()
+	// Nothing signals that a goroutine has parked, so give any worker the
+	// listing would start time to start, and read the peak.
+	parked := 0
+	for range 20 {
+		time.Sleep(5 * time.Millisecond)
+		parked = max(parked, runtime.NumGoroutine()-before)
+	}
+	cancel()
+
+	err := <-done
+	var adbcErr adbc.Error
+	require.ErrorAs(t, err, &adbcErr)
+	require.Equal(t, adbc.StatusCancelled, adbcErr.Code)
+	require.Zero(t, srv.requests)
+	require.LessOrEqual(t, parked, 1, "goroutines parked while waiting for a permit")
 }
 
 // A 403 for an exceeded quota is not a table the caller may not read, so it

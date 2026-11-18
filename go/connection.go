@@ -311,11 +311,15 @@ func getTableInfos(ctx context.Context, limit *semaphore.Weighted, catalog strin
 			// A call failed or the caller cancelled: start no more calls.
 			break
 		}
+		// Take the connection's permit before starting a worker, so that a call
+		// waiting for one parks only this goroutine, not a worker per table.
+		if limit != nil {
+			if err := limit.Acquire(gctx, 1); err != nil {
+				break
+			}
+		}
 		g.Go(func() error {
 			if limit != nil {
-				if err := limit.Acquire(gctx, 1); err != nil {
-					return errToAdbcErr(adbc.StatusCancelled, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
-				}
 				defer limit.Release(1)
 			}
 			md, err := table.Metadata(gctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
