@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/option"
 )
@@ -32,12 +33,13 @@ import (
 // tablesGetServer answers tables.get for project "p", dataset "d". A table
 // named "denied…" gets a 403, "gone…" a 404, "bad…" a 400, "view…" is a VIEW,
 // and anything else is a TABLE. Every answer takes delay, and the server
-// records the most calls it had in flight at once.
+// counts the calls it got and the most it had in flight at once.
 type tablesGetServer struct {
 	server *httptest.Server
 	delay  time.Duration
 
 	mu          sync.Mutex
+	requests    int
 	inFlight    int
 	maxInFlight int
 }
@@ -51,6 +53,7 @@ func newTablesGetServer(t *testing.T, delay time.Duration) *tablesGetServer {
 
 func (s *tablesGetServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
+	s.requests++
 	s.inFlight++
 	s.maxInFlight = max(s.maxInFlight, s.inFlight)
 	s.mu.Unlock()
@@ -139,6 +142,19 @@ func TestGetTablesMetadataReturnsOtherErrors(t *testing.T) {
 	_, err := getTablesMetadata(context.Background(), "p", "d", srv.tables(t, "t0", "bad0", "t1"))
 	require.ErrorContains(t, err, "get table metadata for p.d.bad0")
 	require.ErrorContains(t, err, "Invalid table")
+}
+
+func TestGetTablesMetadataStopsWhenCancelled(t *testing.T) {
+	srv := newTablesGetServer(t, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	metadata, err := getTablesMetadata(ctx, "p", "d", srv.tables(t, "t0", "t1", "t2"))
+	require.Nil(t, metadata)
+	var adbcErr adbc.Error
+	require.ErrorAs(t, err, &adbcErr)
+	require.Equal(t, adbc.StatusCancelled, adbcErr.Code)
+	require.Zero(t, srv.requests, "a cancelled call still sent tables.get")
 }
 
 func TestGetTablesMetadataOfNoTables(t *testing.T) {

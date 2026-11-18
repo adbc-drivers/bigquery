@@ -296,6 +296,10 @@ func getTablesMetadata(ctx context.Context, catalog string, schema string, table
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(tableMetadataConcurrency)
 	for i, table := range tables {
+		if gctx.Err() != nil {
+			// A call failed or the caller cancelled: start no more calls.
+			break
+		}
 		g.Go(func() error {
 			md, err := table.Metadata(gctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
 			if err != nil {
@@ -314,6 +318,11 @@ func getTablesMetadata(ctx context.Context, catalog string, schema string, table
 	}
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+	// The loop stops early when the caller cancels, even if no call reported
+	// it, so the remaining tables have no metadata.
+	if err := ctx.Err(); err != nil {
+		return nil, errToAdbcErr(adbc.StatusCancelled, err, "get table metadata for %s.%s", catalog, schema)
 	}
 	return metadata, nil
 }
