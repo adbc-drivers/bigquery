@@ -43,6 +43,8 @@ import (
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
@@ -89,6 +91,13 @@ type connectionImpl struct {
 
 	customUserAgent string
 
+	skipHiddenDatasets    bool
+	skipQueryResultTables bool
+
+	// tableMetadataLimit bounds the tables.get calls this connection makes at
+	// once; see tableMetadataConcurrency.
+	tableMetadataLimit *semaphore.Weighted
+
 	client *bigquery.Client
 }
 
@@ -123,7 +132,7 @@ func (c *connectionImpl) GetDBSchemasForCatalog(ctx context.Context, catalog str
 
 	it := c.client.Datasets(ctx)
 	it.ProjectID = catalog
-	it.ListHidden = true
+	it.ListHidden = !c.skipHiddenDatasets
 
 	res := make([]string, 0)
 	for {
@@ -153,7 +162,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 
 	it := c.client.DatasetInProject(catalog, schema).Tables(ctx)
 
-	res := make([]driverbase.TableInfo, 0)
+	tables := make([]*bigquery.Table, 0)
 	for {
 		table, err := it.Next()
 		if err == iterator.Done {
@@ -162,122 +171,214 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 		if err != nil {
 			return nil, err
 		}
-		if !tablePattern.MatchString(table.TableID) {
+		if c.skipQueryResultTables && isQueryResultTable(schema, table.TableID) {
 			continue
 		}
+		if tablePattern.MatchString(table.TableID) {
+			tables = append(tables, table)
+		}
+	}
 
+	var columnPattern *regexp.Regexp
+	if includeColumns {
+		columnPattern, err = driverbase.PatternToRegexp(columnFilter)
+		if err != nil {
+			return nil, err
+		}
+		if columnPattern == nil {
+			columnPattern = driverbase.AcceptAll
+		}
+	}
+
+	return getTableInfos(ctx, c.tableMetadataLimit, catalog, schema, tables, func(ctx context.Context, table *bigquery.Table) (*driverbase.TableInfo, error) {
 		md, err := table.Metadata(ctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
 		if err != nil {
-			if apiErr, ok := errors.AsType[*googleapi.Error](err); ok && (apiErr.Code == http.StatusForbidden || apiErr.Code == http.StatusNotFound) {
-				// "User does not have permission to access results of another user's job"
-				// No sense in erroring the entire list operation; just treat it as nonexistent
-
-				// Similarly a 404 probably just means a TOC/TOU error and we can proceed
-				continue
+			if isInaccessibleTable(err) {
+				return nil, nil
 			}
 			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
 		}
+		info, err := tableInfoFromMetadata(catalog, schema, table.TableID, md, columnPattern)
+		if err != nil {
+			return nil, err
+		}
+		return &info, nil
+	})
+}
 
-		var constraints []driverbase.ConstraintInfo
-		if md.TableConstraints != nil {
-			constraints = make([]driverbase.ConstraintInfo, 0)
-			if md.TableConstraints.PrimaryKey != nil {
-				constraints = append(constraints, driverbase.ConstraintInfo{
-					// BigQuery Primary Keys are unnamed
-					ConstraintType:        driverbase.PrimaryKey,
-					ConstraintColumnNames: driverbase.RequiredList(md.TableConstraints.PrimaryKey.Columns),
-				})
-			}
-
-			for _, fk := range md.TableConstraints.ForeignKeys {
-				var columnUsage []driverbase.ConstraintColumnUsage
-				columnNames := make([]string, len(fk.ColumnReferences))
-				if len(fk.ColumnReferences) > 0 {
-					columnUsage = make([]driverbase.ConstraintColumnUsage, len(fk.ColumnReferences))
-				}
-				for i, ref := range fk.ColumnReferences {
-					columnNames[i] = ref.ReferencingColumn
-					columnUsage[i] = driverbase.ConstraintColumnUsage{
-						ForeignKeyCatalog:  new(fk.ReferencedTable.ProjectID),
-						ForeignKeyDbSchema: new(fk.ReferencedTable.DatasetID),
-						ForeignKeyTable:    fk.ReferencedTable.TableID,
-						ForeignKeyColumn:   ref.ReferencedColumn,
-					}
-				}
-				constraints = append(constraints, driverbase.ConstraintInfo{
-					ConstraintName:        new(fk.Name),
-					ConstraintType:        driverbase.ForeignKey,
-					ConstraintColumnNames: columnNames,
-					ConstraintColumnUsage: columnUsage,
-				})
-			}
+// tableInfoFromMetadata converts a table's metadata. columnPattern selects the
+// columns to include; nil includes none.
+func tableInfoFromMetadata(catalog string, schema string, tableID string, md *bigquery.TableMetadata, columnPattern *regexp.Regexp) (driverbase.TableInfo, error) {
+	var constraints []driverbase.ConstraintInfo
+	if md.TableConstraints != nil {
+		constraints = make([]driverbase.ConstraintInfo, 0)
+		if md.TableConstraints.PrimaryKey != nil {
+			constraints = append(constraints, driverbase.ConstraintInfo{
+				// BigQuery Primary Keys are unnamed
+				ConstraintType:        driverbase.PrimaryKey,
+				ConstraintColumnNames: driverbase.RequiredList(md.TableConstraints.PrimaryKey.Columns),
+			})
 		}
 
-		var columns []driverbase.ColumnInfo
-		if includeColumns {
-			columnPattern, err := driverbase.PatternToRegexp(columnFilter)
-			if err != nil {
-				return nil, err
+		for _, fk := range md.TableConstraints.ForeignKeys {
+			var columnUsage []driverbase.ConstraintColumnUsage
+			columnNames := make([]string, len(fk.ColumnReferences))
+			if len(fk.ColumnReferences) > 0 {
+				columnUsage = make([]driverbase.ConstraintColumnUsage, len(fk.ColumnReferences))
 			}
-			if columnPattern == nil {
-				columnPattern = driverbase.AcceptAll
-			}
-
-			columns = make([]driverbase.ColumnInfo, 0)
-			for pos, fieldschema := range md.Schema {
-				if columnPattern.MatchString(fieldschema.Name) {
-					xdbcIsNullable := "YES"
-					xdbcNullable := int16(1)
-					if fieldschema.Required {
-						xdbcIsNullable = "NO"
-						xdbcNullable = 0
-					}
-
-					xdbcColumnSize := fieldschema.MaxLength
-					if xdbcColumnSize == 0 {
-						xdbcColumnSize = fieldschema.Precision
-					}
-
-					var xdbcCharOctetLength int32
-					if fieldschema.Type == bigquery.BytesFieldType {
-						xdbcCharOctetLength = int32(fieldschema.MaxLength)
-					}
-
-					field, err := buildField(fieldschema, 0)
-					if err != nil {
-						return nil, err
-					}
-					xdbcDataType := driverbase.ToXdbcDataType(field.Type)
-
-					columns = append(columns, driverbase.ColumnInfo{
-						ColumnName:          fieldschema.Name,
-						OrdinalPosition:     new(int32(pos + 1)),
-						Remarks:             new(fieldschema.Description),
-						XdbcDataType:        new(int16(field.Type.ID())),
-						XdbcTypeName:        new(string(fieldschema.Type)),
-						XdbcNullable:        new(xdbcNullable),
-						XdbcSqlDataType:     new(int16(xdbcDataType)),
-						XdbcIsNullable:      new(xdbcIsNullable),
-						XdbcDecimalDigits:   new(int16(fieldschema.Scale)),
-						XdbcColumnSize:      new(int32(xdbcColumnSize)),
-						XdbcCharOctetLength: new(xdbcCharOctetLength),
-						XdbcScopeCatalog:    new(catalog),
-						XdbcScopeSchema:     new(schema),
-						XdbcScopeTable:      new(table.TableID),
-					})
+			for i, ref := range fk.ColumnReferences {
+				columnNames[i] = ref.ReferencingColumn
+				columnUsage[i] = driverbase.ConstraintColumnUsage{
+					ForeignKeyCatalog:  new(fk.ReferencedTable.ProjectID),
+					ForeignKeyDbSchema: new(fk.ReferencedTable.DatasetID),
+					ForeignKeyTable:    fk.ReferencedTable.TableID,
+					ForeignKeyColumn:   ref.ReferencedColumn,
 				}
 			}
+			constraints = append(constraints, driverbase.ConstraintInfo{
+				ConstraintName:        new(fk.Name),
+				ConstraintType:        driverbase.ForeignKey,
+				ConstraintColumnNames: columnNames,
+				ConstraintColumnUsage: columnUsage,
+			})
 		}
-
-		res = append(res, driverbase.TableInfo{
-			TableName:        table.TableID,
-			TableType:        string(md.Type),
-			TableConstraints: constraints,
-			TableColumns:     columns,
-		})
 	}
 
+	var columns []driverbase.ColumnInfo
+	if columnPattern != nil {
+		columns = make([]driverbase.ColumnInfo, 0)
+		for pos, fieldschema := range md.Schema {
+			if columnPattern.MatchString(fieldschema.Name) {
+				xdbcIsNullable := "YES"
+				xdbcNullable := int16(1)
+				if fieldschema.Required {
+					xdbcIsNullable = "NO"
+					xdbcNullable = 0
+				}
+
+				xdbcColumnSize := fieldschema.MaxLength
+				if xdbcColumnSize == 0 {
+					xdbcColumnSize = fieldschema.Precision
+				}
+
+				var xdbcCharOctetLength int32
+				if fieldschema.Type == bigquery.BytesFieldType {
+					xdbcCharOctetLength = int32(fieldschema.MaxLength)
+				}
+
+				field, err := buildField(fieldschema, 0)
+				if err != nil {
+					return driverbase.TableInfo{}, err
+				}
+				xdbcDataType := driverbase.ToXdbcDataType(field.Type)
+
+				columns = append(columns, driverbase.ColumnInfo{
+					ColumnName:          fieldschema.Name,
+					OrdinalPosition:     new(int32(pos + 1)),
+					Remarks:             new(fieldschema.Description),
+					XdbcDataType:        new(int16(field.Type.ID())),
+					XdbcTypeName:        new(string(fieldschema.Type)),
+					XdbcNullable:        new(xdbcNullable),
+					XdbcSqlDataType:     new(int16(xdbcDataType)),
+					XdbcIsNullable:      new(xdbcIsNullable),
+					XdbcDecimalDigits:   new(int16(fieldschema.Scale)),
+					XdbcColumnSize:      new(int32(xdbcColumnSize)),
+					XdbcCharOctetLength: new(xdbcCharOctetLength),
+					XdbcScopeCatalog:    new(catalog),
+					XdbcScopeSchema:     new(schema),
+					XdbcScopeTable:      new(tableID),
+				})
+			}
+		}
+	}
+
+	return driverbase.TableInfo{
+		TableName:        tableID,
+		TableType:        string(md.Type),
+		TableConstraints: constraints,
+		TableColumns:     columns,
+	}, nil
+}
+
+// tableMetadataConcurrency bounds the tables.get calls a connection makes at
+// once, across all the datasets GetObjects lists in parallel. That keeps the
+// request rate near tableMetadataConcurrency per call latency, under BigQuery's
+// per-user, per-method API limit; the client retries rate-limited calls.
+const tableMetadataConcurrency = 8
+
+// getTableInfos calls get for each table concurrently, since tables.list
+// returns neither a table's type nor its constraints or columns. limit, shared
+// by all of a connection's calls, bounds the get calls in flight. The result
+// keeps the order of tables and leaves out the tables for which get returns
+// nil.
+func getTableInfos(ctx context.Context, limit *semaphore.Weighted, catalog string, schema string, tables []*bigquery.Table, get func(context.Context, *bigquery.Table) (*driverbase.TableInfo, error)) ([]driverbase.TableInfo, error) {
+	infos := make([]*driverbase.TableInfo, len(tables))
+	g, gctx := errgroup.WithContext(ctx)
+	for i, table := range tables {
+		// Take the permit before starting a worker, so that a listing waiting
+		// for one parks only this goroutine, not a worker per table. Acquire
+		// fails once a call has failed or the caller has cancelled.
+		if err := limit.Acquire(gctx, 1); err != nil {
+			break
+		}
+		g.Go(func() error {
+			defer limit.Release(1)
+			info, err := get(gctx, table)
+			if err != nil {
+				return err
+			}
+			infos[i] = info
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	// The loop stops early when the caller cancels, even if no call reported
+	// it, so the remaining tables have no metadata.
+	if err := ctx.Err(); err != nil {
+		return nil, errToAdbcErr(adbc.StatusCancelled, err, "get table metadata for %s.%s", catalog, schema)
+	}
+	res := make([]driverbase.TableInfo, 0, len(tables))
+	for _, info := range infos {
+		if info != nil {
+			res = append(res, *info)
+		}
+	}
 	return res, nil
+}
+
+// queryResultDataset matches the names BigQuery gives the hidden datasets that
+// hold cached query results: an underscore and 40 hex digits.
+var queryResultDataset = regexp.MustCompile(`^_[0-9a-f]{40}$`)
+
+// isQueryResultTable reports whether a table holds cached query results:
+// BigQuery names those tables "anon…" and keeps them in datasets that
+// queryResultDataset matches. A table in any other dataset, including a user's
+// hidden dataset, is not a query result table.
+func isQueryResultTable(dataset string, table string) bool {
+	return queryResultDataset.MatchString(dataset) && strings.HasPrefix(table, "anon")
+}
+
+// isInaccessibleTable reports whether a tables.get error lets the listing skip
+// the table instead of failing: a 403 accessDenied, which BigQuery answers for
+// a table the caller may not read (such as "User does not have permission to
+// access results of another user's job"), or a 404 for a table deleted after
+// tables.list listed it. Any other error, including a 403 for an exceeded
+// quota, fails the listing rather than leaving out a readable table.
+func isInaccessibleTable(err error) bool {
+	apiErr, ok := errors.AsType[*googleapi.Error](err)
+	if !ok {
+		return false
+	}
+	switch apiErr.Code {
+	case http.StatusNotFound:
+		return true
+	case http.StatusForbidden:
+		return len(apiErr.Errors) > 0 && apiErr.Errors[0].Reason == "accessDenied"
+	default:
+		return false
+	}
 }
 
 type bigQueryTokenResponse struct {
@@ -627,6 +728,10 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.bulkIngestCompression, nil
 	case OptionCustomUserAgent:
 		return c.customUserAgent, nil
+	case OptionSkipHiddenDatasets:
+		return strconv.FormatBool(c.skipHiddenDatasets), nil
+	case OptionSkipQueryResultTables:
+		return strconv.FormatBool(c.skipQueryResultTables), nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -710,6 +815,10 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 		c.bulkIngestCompression = value
 	case OptionCustomUserAgent:
 		c.customUserAgent = value
+	case OptionSkipHiddenDatasets:
+		return parseBoolOption(key, value, &c.skipHiddenDatasets)
+	case OptionSkipQueryResultTables:
+		return parseBoolOption(key, value, &c.skipQueryResultTables)
 	default:
 		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}

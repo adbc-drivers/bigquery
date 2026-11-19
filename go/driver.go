@@ -144,6 +144,17 @@ const (
 	OptionValueCompressionZSTD  = "zstd"
 
 	OptionCustomUserAgent = "bigquery.user_agent"
+
+	// OptionSkipHiddenDatasets makes GetObjects leave out hidden datasets: those
+	// whose name starts with an underscore, including the datasets that hold
+	// cached query results. Default: false.
+	OptionSkipHiddenDatasets = "bigquery.skip_hidden_datasets"
+	// OptionSkipQueryResultTables makes GetObjects leave out the tables of
+	// cached query results: tables whose name starts with "anon" in the hidden
+	// datasets BigQuery names "_" and 40 hex digits. The driver skips them
+	// without getting their metadata. Tables in a user's hidden datasets are
+	// kept. Default: false.
+	OptionSkipQueryResultTables = "bigquery.skip_query_result_tables"
 )
 
 var (

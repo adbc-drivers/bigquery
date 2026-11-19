@@ -32,6 +32,7 @@ import (
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/api/option"
 )
 
@@ -65,6 +66,9 @@ type databaseImpl struct {
 	bulkIngestCompression string
 
 	customUserAgent string
+
+	skipHiddenDatasets    bool
+	skipQueryResultTables bool
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
@@ -92,6 +96,9 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		bulkIngestMethod:           d.bulkIngestMethod,
 		bulkIngestCompression:      d.bulkIngestCompression,
 		customUserAgent:            d.customUserAgent,
+		skipHiddenDatasets:         d.skipHiddenDatasets,
+		skipQueryResultTables:      d.skipQueryResultTables,
+		tableMetadataLimit:         semaphore.NewWeighted(tableMetadataConcurrency),
 	}
 
 	err := conn.newClient(ctx)
@@ -160,6 +167,10 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.bulkIngestCompression, nil
 	case OptionCustomUserAgent:
 		return d.customUserAgent, nil
+	case OptionSkipHiddenDatasets:
+		return strconv.FormatBool(d.skipHiddenDatasets), nil
+	case OptionSkipQueryResultTables:
+		return strconv.FormatBool(d.skipQueryResultTables), nil
 	default:
 		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
@@ -307,6 +318,10 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.bulkIngestCompression = value
 	case OptionCustomUserAgent:
 		d.customUserAgent = value
+	case OptionSkipHiddenDatasets:
+		return parseBoolOption(key, value, &d.skipHiddenDatasets)
+	case OptionSkipQueryResultTables:
+		return parseBoolOption(key, value, &d.skipQueryResultTables)
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}

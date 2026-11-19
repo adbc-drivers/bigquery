@@ -255,6 +255,22 @@ The BigQuery driver supports using the [Storage Write API](https://docs.cloud.go
 
   Can also be set on initial connection.
 
+### Metadata Options
+
+`bigquery.skip_hidden_datasets`
+: **Type:** boolean. **Default:** `false`
+
+  Leave hidden datasets, whose name starts with an underscore, out of `GetObjects`.
+
+  Can also be set on initial connection.
+
+`bigquery.skip_query_result_tables`
+: **Type:** boolean. **Default:** `false`
+
+  Leave the tables of cached query results out of `GetObjects`: tables whose name starts with `anon`, inside hidden datasets whose name consists of an underscore and 40 hex digits. Tables in other hidden datasets are kept.
+
+  Can also be set on initial connection.
+
 ### Query Options
 
 `bigquery.query.allow_large_results`
