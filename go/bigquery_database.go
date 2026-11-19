@@ -67,8 +67,8 @@ type databaseImpl struct {
 
 	customUserAgent string
 
-	skipHiddenDatasets  bool
-	skipAnonymousTables bool
+	skipHiddenDatasets    bool
+	skipQueryResultTables bool
 }
 
 func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, error) {
@@ -97,7 +97,7 @@ func (d *databaseImpl) Open(ctx context.Context) (adbc.ConnectionWithContext, er
 		bulkIngestCompression:      d.bulkIngestCompression,
 		customUserAgent:            d.customUserAgent,
 		skipHiddenDatasets:         d.skipHiddenDatasets,
-		skipAnonymousTables:        d.skipAnonymousTables,
+		skipQueryResultTables:      d.skipQueryResultTables,
 		tableMetadataLimit:         semaphore.NewWeighted(tableMetadataConcurrency),
 	}
 
@@ -169,8 +169,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.customUserAgent, nil
 	case OptionSkipHiddenDatasets:
 		return strconv.FormatBool(d.skipHiddenDatasets), nil
-	case OptionSkipAnonymousTables:
-		return strconv.FormatBool(d.skipAnonymousTables), nil
+	case OptionSkipQueryResultTables:
+		return strconv.FormatBool(d.skipQueryResultTables), nil
 	default:
 		return d.DatabaseImplBase.GetOption(ctx, key)
 	}
@@ -320,8 +320,8 @@ func (d *databaseImpl) SetOption(ctx context.Context, key string, value string) 
 		d.customUserAgent = value
 	case OptionSkipHiddenDatasets:
 		return parseBoolOption(key, value, &d.skipHiddenDatasets)
-	case OptionSkipAnonymousTables:
-		return parseBoolOption(key, value, &d.skipAnonymousTables)
+	case OptionSkipQueryResultTables:
+		return parseBoolOption(key, value, &d.skipQueryResultTables)
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}

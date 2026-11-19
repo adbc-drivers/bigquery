@@ -2676,6 +2676,104 @@ func (suite *BigQueryTests) TestUserJob403() {
 	suite.NoError(obj.Err())
 }
 
+// GetObjects lists the tables of cached query results and of a user's hidden
+// datasets, unless the skip options leave them out.
+func (suite *BigQueryTests) TestMetadataGetObjectsSkipOptions() {
+	ctx := suite.ctx
+	client := suite.Quirks.client
+	schema := bigquery.Schema{{Name: "id", Type: bigquery.IntegerFieldType}}
+
+	suite.Require().NoError(client.Dataset(suite.Quirks.schemaName).Table("skip_options").Create(ctx, &bigquery.TableMetadata{Schema: schema}))
+	userTable := suite.Quirks.schemaName + ".skip_options"
+
+	// A user's hidden dataset, with a table named like a query result table.
+	hidden := "_" + suite.Quirks.schemaName
+	suite.Require().NoError(client.Dataset(hidden).Create(ctx, nil))
+	defer func() {
+		suite.NoError(client.Dataset(hidden).DeleteWithContents(context.Background()))
+	}()
+	suite.Require().NoError(client.Dataset(hidden).Table("anon_kept").Create(ctx, &bigquery.TableMetadata{Schema: schema}))
+	hiddenTable := hidden + ".anon_kept"
+
+	// BigQuery caches a query's result in a table of a hidden dataset.
+	job, err := client.Query("SELECT 42").Run(ctx)
+	suite.Require().NoError(err)
+	status, err := job.Wait(ctx)
+	suite.Require().NoError(err)
+	suite.Require().NoError(status.Err())
+	config, err := job.Config()
+	suite.Require().NoError(err)
+	result := config.(*bigquery.QueryConfig).Dst
+	suite.Require().NotNil(result, "the query has no destination table")
+	suite.Require().Regexp(`^_[0-9a-f]{40}$`, result.DatasetID)
+	suite.Require().True(strings.HasPrefix(result.TableID, "anon"), "query result table %s", result.TableID)
+	resultTable := result.DatasetID + "." + result.TableID
+
+	for _, tc := range []struct {
+		option string
+		want   []string
+	}{
+		{"", []string{userTable, hiddenTable, resultTable}},
+		{driver.OptionSkipQueryResultTables, []string{userTable, hiddenTable}},
+		{driver.OptionSkipHiddenDatasets, []string{userTable}},
+	} {
+		suite.Run(tc.option, func() {
+			options := maps.Clone(suite.Quirks.DatabaseOptions())
+			if tc.option != "" {
+				options[tc.option] = adbc.OptionValueEnabled
+			}
+			db, err := suite.driver.NewDatabaseWithContext(ctx, options)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), db, context.Background())
+			cnxn, err := db.Open(ctx)
+			suite.Require().NoError(err)
+			defer testutil.CheckedCloseWithContext(suite.T(), cnxn, context.Background())
+
+			var got []string
+			for _, ref := range []*bigquery.Table{
+				client.Dataset(suite.Quirks.schemaName).Table("skip_options"),
+				client.Dataset(hidden).Table("anon_kept"),
+				result,
+			} {
+				got = append(got, suite.listedTables(cnxn, ref.DatasetID, ref.TableID)...)
+			}
+			suite.Equal(tc.want, got)
+		})
+	}
+}
+
+// listedTables returns "dataset.table" for each table GetObjects lists in
+// the given dataset with the given name. "_" in either name is a wildcard
+// to GetObjects, so other names it matches are left out.
+func (suite *BigQueryTests) listedTables(cnxn adbc.ConnectionWithContext, dataset string, table string) []string {
+	rdr, err := cnxn.GetObjects(suite.ctx, adbc.ObjectDepthTables, &suite.Quirks.catalogName, &dataset, &table, nil, nil)
+	suite.Require().NoError(err)
+	defer rdr.Release()
+
+	var got []string
+	for rdr.Next() {
+		rec := rdr.RecordBatch()
+		schemasList := rec.Column(1).(*array.List)
+		schemas := schemasList.ListValues().(*array.Struct)
+		schemaNames := schemas.Field(0).(*array.String)
+		tablesList := schemas.Field(1).(*array.List)
+		tableNames := tablesList.ListValues().(*array.Struct).Field(0).(*array.String)
+		for row := range int(rec.NumRows()) {
+			schemaStart, schemaEnd := schemasList.ValueOffsets(row)
+			for s := int(schemaStart); s < int(schemaEnd); s++ {
+				tableStart, tableEnd := tablesList.ValueOffsets(s)
+				for t := int(tableStart); t < int(tableEnd); t++ {
+					if schemaNames.Value(s) == dataset && tableNames.Value(t) == table {
+						got = append(got, dataset+"."+table)
+					}
+				}
+			}
+		}
+	}
+	suite.Require().NoError(rdr.Err())
+	return got
+}
+
 func (suite *BigQueryTests) TestCleanUpOldDatasets() {
 	// Best-effort clean up of old datasets
 	ctx := context.Background()

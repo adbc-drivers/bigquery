@@ -91,8 +91,8 @@ type connectionImpl struct {
 
 	customUserAgent string
 
-	skipHiddenDatasets  bool
-	skipAnonymousTables bool
+	skipHiddenDatasets    bool
+	skipQueryResultTables bool
 
 	// tableMetadataLimit bounds the tables.get calls this connection makes at
 	// once; see tableMetadataConcurrency.
@@ -171,7 +171,7 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 		if err != nil {
 			return nil, err
 		}
-		if c.skipAnonymousTables && isAnonymousTable(schema, table.TableID) {
+		if c.skipQueryResultTables && isQueryResultTable(schema, table.TableID) {
 			continue
 		}
 		if tablePattern.MatchString(table.TableID) {
@@ -190,8 +190,19 @@ func (c *connectionImpl) GetTablesForDBSchema(ctx context.Context, catalog strin
 		}
 	}
 
-	return getTableInfos(ctx, c.tableMetadataLimit, catalog, schema, tables, func(table *bigquery.Table, md *bigquery.TableMetadata) (driverbase.TableInfo, error) {
-		return tableInfoFromMetadata(catalog, schema, table.TableID, md, columnPattern)
+	return getTableInfos(ctx, c.tableMetadataLimit, catalog, schema, tables, func(ctx context.Context, table *bigquery.Table) (*driverbase.TableInfo, error) {
+		md, err := table.Metadata(ctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
+		if err != nil {
+			if isInaccessibleTable(err) {
+				return nil, nil
+			}
+			return nil, errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
+		}
+		info, err := tableInfoFromMetadata(catalog, schema, table.TableID, md, columnPattern)
+		if err != nil {
+			return nil, err
+		}
+		return &info, nil
 	})
 }
 
@@ -295,45 +306,28 @@ func tableInfoFromMetadata(catalog string, schema string, tableID string, md *bi
 // per-user, per-method API limit; the client retries rate-limited calls.
 const tableMetadataConcurrency = 8
 
-// getTableInfos gets the metadata of each table concurrently, since
-// tables.list returns neither a table's type nor its constraints or columns.
-// Each worker converts its table's metadata with convert, so only the
-// converted results are kept. limit, shared by the connection's calls, bounds
-// the tables.get calls in flight; nil leaves only the per-call bound. The
-// result keeps the order of tables and leaves out the tables that
-// isInaccessibleTable skips.
-func getTableInfos(ctx context.Context, limit *semaphore.Weighted, catalog string, schema string, tables []*bigquery.Table, convert func(*bigquery.Table, *bigquery.TableMetadata) (driverbase.TableInfo, error)) ([]driverbase.TableInfo, error) {
+// getTableInfos calls get for each table concurrently, since tables.list
+// returns neither a table's type nor its constraints or columns. limit, shared
+// by all of a connection's calls, bounds the get calls in flight. The result
+// keeps the order of tables and leaves out the tables for which get returns
+// nil.
+func getTableInfos(ctx context.Context, limit *semaphore.Weighted, catalog string, schema string, tables []*bigquery.Table, get func(context.Context, *bigquery.Table) (*driverbase.TableInfo, error)) ([]driverbase.TableInfo, error) {
 	infos := make([]*driverbase.TableInfo, len(tables))
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(tableMetadataConcurrency)
 	for i, table := range tables {
-		if gctx.Err() != nil {
-			// A call failed or the caller cancelled: start no more calls.
+		// Take the permit before starting a worker, so that a listing waiting
+		// for one parks only this goroutine, not a worker per table. Acquire
+		// fails once a call has failed or the caller has cancelled.
+		if err := limit.Acquire(gctx, 1); err != nil {
 			break
 		}
-		// Take the connection's permit before starting a worker, so that a call
-		// waiting for one parks only this goroutine, not a worker per table.
-		if limit != nil {
-			if err := limit.Acquire(gctx, 1); err != nil {
-				break
-			}
-		}
 		g.Go(func() error {
-			if limit != nil {
-				defer limit.Release(1)
-			}
-			md, err := table.Metadata(gctx, bigquery.WithMetadataView(bigquery.BasicMetadataView))
-			if err != nil {
-				if isInaccessibleTable(err) {
-					return nil
-				}
-				return errToAdbcErr(adbc.StatusInternal, err, "get table metadata for %s.%s.%s", catalog, schema, table.TableID)
-			}
-			info, err := convert(table, md)
+			defer limit.Release(1)
+			info, err := get(gctx, table)
 			if err != nil {
 				return err
 			}
-			infos[i] = &info
+			infos[i] = info
 			return nil
 		})
 	}
@@ -354,15 +348,16 @@ func getTableInfos(ctx context.Context, limit *semaphore.Weighted, catalog strin
 	return res, nil
 }
 
-// anonymousDataset matches the names BigQuery gives the hidden datasets that
+// queryResultDataset matches the names BigQuery gives the hidden datasets that
 // hold cached query results: an underscore and 40 hex digits.
-var anonymousDataset = regexp.MustCompile(`^_[0-9a-f]{40}$`)
+var queryResultDataset = regexp.MustCompile(`^_[0-9a-f]{40}$`)
 
-// isAnonymousTable reports whether a table holds cached query results: BigQuery
-// names those tables "anon…" and keeps them in anonymous datasets. A table in
-// any other dataset, including a user's hidden dataset, is not anonymous.
-func isAnonymousTable(dataset string, table string) bool {
-	return anonymousDataset.MatchString(dataset) && strings.HasPrefix(table, "anon")
+// isQueryResultTable reports whether a table holds cached query results:
+// BigQuery names those tables "anon…" and keeps them in datasets that
+// queryResultDataset matches. A table in any other dataset, including a user's
+// hidden dataset, is not a query result table.
+func isQueryResultTable(dataset string, table string) bool {
+	return queryResultDataset.MatchString(dataset) && strings.HasPrefix(table, "anon")
 }
 
 // isInaccessibleTable reports whether a tables.get error lets the listing skip
@@ -735,8 +730,8 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.customUserAgent, nil
 	case OptionSkipHiddenDatasets:
 		return strconv.FormatBool(c.skipHiddenDatasets), nil
-	case OptionSkipAnonymousTables:
-		return strconv.FormatBool(c.skipAnonymousTables), nil
+	case OptionSkipQueryResultTables:
+		return strconv.FormatBool(c.skipQueryResultTables), nil
 	default:
 		return c.ConnectionImplBase.GetOption(ctx, key)
 	}
@@ -822,8 +817,8 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 		c.customUserAgent = value
 	case OptionSkipHiddenDatasets:
 		return parseBoolOption(key, value, &c.skipHiddenDatasets)
-	case OptionSkipAnonymousTables:
-		return parseBoolOption(key, value, &c.skipAnonymousTables)
+	case OptionSkipQueryResultTables:
+		return parseBoolOption(key, value, &c.skipQueryResultTables)
 	default:
 		return c.ConnectionImplBase.SetOption(ctx, key, value)
 	}
