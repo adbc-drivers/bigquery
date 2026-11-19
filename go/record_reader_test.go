@@ -24,10 +24,13 @@ package bigquery
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow/flight"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/assert"
@@ -210,4 +213,27 @@ func sampleJobStatistics() *bigquery.JobStatistics {
 			ExportDataStatistics:          &bigquery.ExportDataStatistics{FileCount: 4, RowCount: 5},
 		},
 	}
+}
+
+type failingArrowIterator struct{}
+
+func (failingArrowIterator) Next() (*bigquery.ArrowRecordBatch, error) {
+	return nil, fmt.Errorf("stream failed")
+}
+
+func (failingArrowIterator) Schema() bigquery.Schema {
+	return bigquery.Schema{{Name: "col", Type: bigquery.StringFieldType}}
+}
+
+func (failingArrowIterator) SerializedArrowSchema() []byte {
+	return nil
+}
+
+func TestIpcReaderFromArrowIteratorPropagatesReaderError(t *testing.T) {
+	rdr, schema, err := ipcReaderFromArrowIterator(failingArrowIterator{}, nil, "job", memory.NewCheckedAllocator(memory.DefaultAllocator))
+	require.Error(t, err)
+	_, ok := errors.AsType[adbc.Error](err)
+	require.True(t, ok)
+	require.Nil(t, rdr)
+	require.Nil(t, schema)
 }
