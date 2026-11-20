@@ -42,6 +42,7 @@ import (
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -662,6 +663,14 @@ func (c *connectionImpl) Close(ctx context.Context) error {
 
 func (c *connectionImpl) GetTableSchema(ctx context.Context, catalog *string, dbSchema *string, tableName string) (*arrow.Schema, error) {
 	return c.getTableSchemaWithFilter(ctx, catalog, dbSchema, tableName, nil)
+}
+
+func (c *connectionImpl) ReadPartition(ctx context.Context, descriptor []byte) (array.RecordReader, error) {
+	streamName, err := decodePartitionDescriptor(descriptor)
+	if err != nil {
+		return nil, err
+	}
+	return readPartitionRecordReader(ctx, c.client, streamName, c.Alloc, c.resultRecordBufferSize)
 }
 
 // NewStatement initializes a new statement object tied to this connection

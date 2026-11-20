@@ -93,6 +93,16 @@ const (
 	OptionQueryCreateSession           = "bigquery.query.create_session"
 	OptionQueryJobTimeout              = "bigquery.query.job_timeout"
 
+	// OptionQueryPartitionsMaxStreams bounds how many Storage Read API streams
+	// ExecutePartitions requests for a query's destination table. A positive
+	// integer; unset keeps defaultPartitionMaxStreams.
+	OptionQueryPartitionsMaxStreams = "bigquery.query.partitions.max_streams"
+	// OptionQueryPartitionsTargetRowsPerStream asks ExecutePartitions to size each
+	// stream to roughly this many rows of the query's result, instead of always
+	// requesting OptionQueryPartitionsMaxStreams streams. A positive integer; unset
+	// always requests OptionQueryPartitionsMaxStreams streams.
+	OptionQueryPartitionsTargetRowsPerStream = "bigquery.query.partitions.target_rows_per_stream"
+
 	OptionQueryJobCreationMode = "bigquery.query.job_creation_mode"
 	JobCreationModeRequired    = "required"
 	JobCreationModeOptional    = "optional"
