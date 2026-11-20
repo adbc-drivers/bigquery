@@ -62,12 +62,14 @@ type connectionImpl struct {
 	clientID        string
 	clientSecret    string
 	refreshToken    string
+	accessToken     string
 	quotaProject    string
 
 	impersonateTargetPrincipal string
 	impersonateDelegates       []string
 	impersonateScopes          []string
 	impersonateLifetime        time.Duration
+	impersonateSubject         string
 
 	// the default location to use for all BigQuery requests
 	location string
@@ -701,12 +703,16 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.clientSecret, nil
 	case OptionAuthRefreshToken:
 		return c.refreshToken, nil
+	case OptionAuthAccessToken:
+		return c.accessToken, nil
 	case OptionAuthQuotaProject:
 		return c.quotaProject, nil
 	case OptionProjectID:
 		return c.catalog, nil
 	case OptionDatasetID:
 		return c.dbSchema, nil
+	case OptionImpersonateSubject:
+		return c.impersonateSubject, nil
 	case OptionImpersonateLifetime:
 		if c.impersonateLifetime == 0 {
 			// If no lifetime is set but impersonation is enabled, return the default
@@ -771,10 +777,14 @@ func (c *connectionImpl) SetOption(ctx context.Context, key string, value string
 		c.clientSecret = value
 	case OptionAuthRefreshToken:
 		c.refreshToken = value
+	case OptionAuthAccessToken:
+		c.accessToken = value
 	case OptionAuthQuotaProject:
 		c.quotaProject = value
 	case OptionImpersonateTargetPrincipal:
 		c.impersonateTargetPrincipal = value
+	case OptionImpersonateSubject:
+		c.impersonateSubject = value
 	case OptionImpersonateDelegates:
 		// Guard against strings.Split("", ",") yielding [""], which would look
 		// like one empty delegate/scope rather than none.
@@ -861,6 +871,13 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 
 	authOptions := []option.ClientOption{}
 
+	if c.accessToken != "" && c.authType != OptionValueAuthTypeAccessToken {
+		return adbc.Error{
+			Code: adbc.StatusInvalidArgument,
+			Msg:  fmt.Sprintf("[bq] `%s` requires `%s=%s`", OptionAuthAccessToken, OptionAuthType, OptionValueAuthTypeAccessToken),
+		}
+	}
+
 	// First, establish base authentication
 	switch c.authType {
 	case OptionValueAuthTypeJSONCredentialFile:
@@ -915,6 +932,22 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 		}
 		c.Logger.Debug("Using user OAuth authentication")
 		authOptions = append(authOptions, option.WithTokenSource(c))
+	case OptionValueAuthTypeAccessToken:
+		if c.accessToken == "" {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] `%s` parameter is empty", OptionAuthAccessToken),
+			}
+		}
+		// Impersonation below replaces the base credential with ADC, which would drop this token.
+		if c.hasImpersonationOptions() {
+			return adbc.Error{
+				Code: adbc.StatusInvalidArgument,
+				Msg:  fmt.Sprintf("[bq] `%s` cannot be combined with impersonation", OptionAuthAccessToken),
+			}
+		}
+		c.Logger.Debug("Using a static OAuth access token")
+		authOptions = append(authOptions, option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: c.accessToken})))
 	case OptionValueAuthTypeAppDefaultCredentials, OptionValueAuthTypeDefault, "":
 		c.Logger.Debug("Using Application Default Credentials (ADC)", "authType", c.authType)
 		// Use Application Default Credentials (default behavior)
@@ -943,19 +976,7 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 			}
 		}
 
-		var lifetime time.Duration
-		if c.impersonateLifetime != 0 {
-			lifetime = c.impersonateLifetime
-		}
-		// Unset (0) lets the impersonate package refresh 1h tokens; any explicit lifetime yields a static token
-
-		impCfg := impersonate.CredentialsConfig{
-			TargetPrincipal: c.impersonateTargetPrincipal,
-			Delegates:       c.impersonateDelegates,
-			Scopes:          c.impersonateScopes,
-			Lifetime:        lifetime,
-		}
-		tokenSource, err := impersonate.CredentialsTokenSource(ctx, impCfg)
+		tokenSource, err := impersonate.CredentialsTokenSource(ctx, c.impersonationConfig())
 		if err != nil {
 			return adbc.Error{
 				Code: adbc.StatusInvalidArgument,
@@ -1004,7 +1025,19 @@ func (c *connectionImpl) newClient(ctx context.Context) error {
 func (c *connectionImpl) hasImpersonationOptions() bool {
 	return c.impersonateTargetPrincipal != "" ||
 		len(c.impersonateDelegates) > 0 ||
-		len(c.impersonateScopes) > 0
+		len(c.impersonateScopes) > 0 ||
+		c.impersonateSubject != ""
+}
+
+func (c *connectionImpl) impersonationConfig() impersonate.CredentialsConfig {
+	// Unset (0) lets the impersonate package refresh 1h tokens; any explicit lifetime yields a static token
+	return impersonate.CredentialsConfig{
+		TargetPrincipal: c.impersonateTargetPrincipal,
+		Delegates:       c.impersonateDelegates,
+		Scopes:          c.impersonateScopes,
+		Lifetime:        c.impersonateLifetime,
+		Subject:         c.impersonateSubject,
+	}
 }
 
 var (
