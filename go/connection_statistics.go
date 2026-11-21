@@ -16,6 +16,7 @@ package bigquery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -105,16 +106,31 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 		tablePattern = driverbase.AcceptAll
 	}
 
+	// An exact catalog name selects that project, which need not be the connection's own
+	// (for example bigquery-public-data). A pattern can only match the connection's project.
 	project := c.client.Project()
-	if !catalogPattern.MatchString(project) {
+	if catalog != nil && *catalog != "" && !strings.ContainsAny(*catalog, "%_") {
+		project = *catalog
+	} else if !catalogPattern.MatchString(project) {
 		// No matching catalog, return empty result
 		return driverbase.EmptyGetStatisticsReader()
 	}
 
-	// Get datasets matching the schema pattern
-	datasets, err := c.GetDBSchemasForCatalog(ctx, project, dbSchema)
-	if err != nil {
-		return nil, errToAdbcErr(adbc.StatusInternal, err, "list datasets")
+	// A schema given without a % wildcard is used as it is, without listing the project's
+	// datasets: the name is known, and datasets.list does not return every dataset that can
+	// be read. An underscore is taken literally in that case, since nearly every dataset
+	// name contains one.
+	exactSchema := dbSchema != nil && *dbSchema != "" && !strings.Contains(*dbSchema, "%")
+
+	var datasets []string
+	if exactSchema {
+		datasets = []string{*dbSchema}
+	} else {
+		// Get datasets matching the schema pattern
+		datasets, err = c.GetDBSchemasForCatalog(ctx, project, dbSchema)
+		if err != nil {
+			return nil, errToAdbcErr(adbc.StatusInternal, err, "list datasets")
+		}
 	}
 
 	statsByDataset := map[string][]driverbase.Statistic{}
@@ -122,7 +138,7 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 	seenDataset := map[string]bool{}
 
 	for _, dataset := range datasets {
-		if !schemaPattern.MatchString(dataset) {
+		if !exactSchema && !schemaPattern.MatchString(dataset) {
 			continue
 		}
 
@@ -133,6 +149,10 @@ func (c *connectionImpl) GetStatistics(ctx context.Context, catalog, dbSchema, t
 
 		stats, err := c.getTableStatistics(ctx, project, dataset, tablePattern, tableName, approximate)
 		if err != nil {
+			// A named schema that does not exist has no statistics, as when it is not listed.
+			if adbcErr, ok := errors.AsType[adbc.Error](err); ok && exactSchema && adbcErr.Code == adbc.StatusNotFound {
+				return driverbase.EmptyGetStatisticsReader()
+			}
 			return nil, err
 		}
 
