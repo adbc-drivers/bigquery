@@ -18,8 +18,11 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 using AdbcDrivers.BigQuery.MockServer;
 using Apache.Arrow.Adbc;
+using Apache.Arrow.Adbc.Tests.Metadata;
 using Google.Apis.Bigquery.v2.Data;
 using Xunit;
 
@@ -63,41 +66,523 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Fact]
-        public void GetObjectsBindsTableAndColumnPatterns()
+        public async Task GetObjectsUsesRestApiAndMatchesTableAndColumnPatternsClientSide()
         {
             using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "orders_2026",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "id", Type = "INTEGER", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "order_total", Type = "NUMERIC", Mode = "NULLABLE" },
+                        new TableFieldSchema { Name = "order_status", Type = "STRING", Mode = "NULLABLE" },
+                        new TableFieldSchema { Name = "notes", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+            });
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "customers_2026",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "order_customer", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+            });
+
             using AdbcConnection connection = Connect(mockServer);
 
-            connection.GetObjects(
+            // Injection payload does not match any table and executes no SQL.
+            using (var payloadStream = connection.GetObjects(
                 AdbcConnection.GetObjectsDepth.All,
                 catalogPattern: ProjectId,
                 dbSchemaPattern: DbSchema,
                 tableNamePattern: Payload,
                 tableTypes: new List<string> { "BASE TABLE" },
-                columnNamePattern: Payload);
-
-            Assert.NotEmpty(mockServer.ExecutedQueries);
-            foreach (string executed in mockServer.ExecutedQueries)
+                columnNamePattern: Payload))
             {
-                Assert.DoesNotContain("DROP TABLE secrets", executed);
+                var payloadBatch = await payloadStream.ReadNextRecordBatchAsync();
+                List<AdbcCatalog> payloadCatalogs = GetObjectsParser.ParseCatalog(payloadBatch, DbSchema);
+                Assert.Empty(Assert.Single(Assert.Single(payloadCatalogs).DbSchemas!).Tables!);
             }
 
-            string tablesQuery = mockServer.ExecutedQueries.First(q => q.Contains("INFORMATION_SCHEMA.TABLES"));
-            Assert.Contains("table_name LIKE @tableNamePattern", tablesQuery);
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Equal(1, mockServer.CountOfKind(MockRequestKind.TablesList));
+            Assert.Equal(0, mockServer.CountOfKind(MockRequestKind.TableGet));
 
-            // An array parameter with IN UNNEST; BigQuery will not expand one into an IN list.
-            Assert.Contains("table_type IN UNNEST(@tableTypes)", tablesQuery);
+            // Matching table pattern with injection payload as column pattern reaches GetColumnSchema safely.
+            using (var columnPayloadStream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.All,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: "orders_%",
+                tableTypes: new List<string> { "BASE TABLE" },
+                columnNamePattern: Payload))
+            {
+                var columnPayloadBatch = await columnPayloadStream.ReadNextRecordBatchAsync();
+                List<AdbcCatalog> columnPayloadCatalogs = GetObjectsParser.ParseCatalog(columnPayloadBatch, DbSchema);
+                AdbcTable matchedTable = Assert.Single(Assert.Single(Assert.Single(columnPayloadCatalogs).DbSchemas!).Tables!);
+                Assert.Equal("orders_2026", matchedTable.Name);
+                Assert.Empty(matchedTable.Columns!);
+            }
 
-            IReadOnlyList<QueryParameter> parameters =
-                mockServer.ExecutedQueryParameters[mockServer.ExecutedQueries.ToList().IndexOf(tablesQuery)];
-            QueryParameter pattern = parameters.Single(p => p.Name == "tableNamePattern");
-            Assert.Equal(Payload, pattern.ParameterValue.Value);
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.TablesList));
+            Assert.Equal(1, mockServer.CountOfKind(MockRequestKind.TableGet));
 
-            QueryParameter types = parameters.Single(p => p.Name == "tableTypes");
-            Assert.Equal("ARRAY", types.ParameterType.Type);
-            Assert.Equal(
-                new[] { "BASE TABLE" },
-                types.ParameterValue.ArrayValues.Select(v => v.Value).ToArray());
+            // Matching table and column patterns filter out nonmatching tables/columns while preserving original ordinals.
+            using (var filteredStream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.All,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: "orders_%",
+                tableTypes: new List<string> { "BASE TABLE" },
+                columnNamePattern: "order_%"))
+            {
+                var filteredBatch = await filteredStream.ReadNextRecordBatchAsync();
+                List<AdbcCatalog> filteredCatalogs = GetObjectsParser.ParseCatalog(filteredBatch, DbSchema);
+                AdbcTable table = Assert.Single(Assert.Single(Assert.Single(filteredCatalogs).DbSchemas!).Tables!);
+
+                Assert.Equal("orders_2026", table.Name);
+                Assert.NotNull(table.Columns);
+                Assert.Equal(2, table.Columns!.Count);
+                Assert.Equal("order_total", table.Columns[0].Name);
+                Assert.Equal(2, table.Columns[0].OrdinalPosition);
+                Assert.Equal("order_status", table.Columns[1].Name);
+                Assert.Equal(3, table.Columns[1].OrdinalPosition);
+            }
+
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Equal(3, mockServer.CountOfKind(MockRequestKind.TablesList));
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.TableGet));
+        }
+
+        [Fact]
+        public async Task GetObjectsSupportsPcntDatasets()
+        {
+            const string pcntDataset = "my_catalog.my_namespace";
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = pcntDataset,
+                    TableId = "pcnt_table",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "id", Type = "INTEGER", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "name", Type = "STRING", Mode = "NULLABLE" },
+                    },
+                },
+                TableConstraints = new TableConstraints
+                {
+                    PrimaryKey = new TableConstraints.PrimaryKeyData
+                    {
+                        Columns = new[] { "id" },
+                    },
+                },
+            });
+
+            using AdbcConnection connection = Connect(mockServer);
+
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.All,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: pcntDataset,
+                tableNamePattern: "pcnt_table",
+                tableTypes: new List<string> { "BASE TABLE" },
+                columnNamePattern: null);
+
+            var batch = await stream.ReadNextRecordBatchAsync();
+            Assert.NotNull(batch);
+
+            List<AdbcCatalog> catalogs = GetObjectsParser.ParseCatalog(batch, pcntDataset);
+            AdbcCatalog catalog = Assert.Single(catalogs);
+            Assert.Equal(ProjectId, catalog.Name);
+
+            AdbcDbSchema dbSchema = Assert.Single(catalog.DbSchemas!);
+            Assert.Equal(pcntDataset, dbSchema.Name);
+
+            AdbcTable table = Assert.Single(dbSchema.Tables!);
+            Assert.Equal("pcnt_table", table.Name);
+            Assert.Equal("BASE TABLE", table.Type);
+
+            Assert.NotNull(table.Columns);
+            Assert.Equal(2, table.Columns!.Count);
+            Assert.Equal("id", table.Columns[0].Name);
+            Assert.Equal(1, table.Columns[0].OrdinalPosition);
+            Assert.Equal("INTEGER", table.Columns[0].XdbcTypeName);
+            Assert.Equal("NO", table.Columns[0].XdbcIsNullable);
+            Assert.Equal("name", table.Columns[1].Name);
+            Assert.Equal(2, table.Columns[1].OrdinalPosition);
+            Assert.Equal("STRING", table.Columns[1].XdbcTypeName);
+            Assert.Equal("YES", table.Columns[1].XdbcIsNullable);
+
+            AdbcConstraint pk = Assert.Single(table.Constraints!);
+            Assert.Equal(string.Empty, pk.Name);
+            Assert.Equal("PRIMARY KEY", pk.Type);
+            Assert.Equal(new[] { "id" }, pk.ColumnNames);
+            Assert.Empty(pk.ColumnUsage);
+
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TablesList));
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TableGet));
+        }
+
+        [Fact]
+        public async Task GetObjectsMapsCompositeForeignKeysScopedPerTable()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "orders",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "order_id", Type = "INTEGER", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "tenant_id", Type = "STRING", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "customer_id", Type = "INTEGER", Mode = "REQUIRED" },
+                    },
+                },
+                TableConstraints = new TableConstraints
+                {
+                    PrimaryKey = new TableConstraints.PrimaryKeyData
+                    {
+                        Columns = new[] { "order_id" },
+                    },
+                    ForeignKeys = new[]
+                    {
+                        new TableConstraints.ForeignKeysData
+                        {
+                            Name = "fk_shared",
+                            ReferencedTable = new TableConstraints.ForeignKeysData.ReferencedTableData
+                            {
+                                ProjectId = "ref-project",
+                                DatasetId = "ref_dataset",
+                                TableId = "customers",
+                            },
+                            ColumnReferences = new[]
+                            {
+                                new TableConstraints.ForeignKeysData.ColumnReferencesData
+                                {
+                                    ReferencingColumn = "tenant_id",
+                                    ReferencedColumn = "id_tenant",
+                                },
+                                new TableConstraints.ForeignKeysData.ColumnReferencesData
+                                {
+                                    ReferencingColumn = "customer_id",
+                                    ReferencedColumn = "id_customer",
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "invoices",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "account_id", Type = "INTEGER", Mode = "REQUIRED" },
+                    },
+                },
+                TableConstraints = new TableConstraints
+                {
+                    ForeignKeys = new[]
+                    {
+                        new TableConstraints.ForeignKeysData
+                        {
+                            Name = "fk_shared",
+                            ReferencedTable = new TableConstraints.ForeignKeysData.ReferencedTableData
+                            {
+                                ProjectId = "other-project",
+                                DatasetId = "other_dataset",
+                                TableId = "accounts",
+                            },
+                            ColumnReferences = new[]
+                            {
+                                new TableConstraints.ForeignKeysData.ColumnReferencesData
+                                {
+                                    ReferencingColumn = "account_id",
+                                    ReferencedColumn = "acct_id",
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            using AdbcConnection connection = Connect(mockServer);
+
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.All,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: null,
+                tableTypes: null,
+                columnNamePattern: null);
+
+            var batch = await stream.ReadNextRecordBatchAsync();
+            List<AdbcCatalog> catalogs = GetObjectsParser.ParseCatalog(batch, DbSchema);
+            List<AdbcTable> tables = Assert.Single(Assert.Single(catalogs).DbSchemas!).Tables!;
+
+            Assert.Equal(2, tables.Count);
+
+            AdbcTable orders = Assert.Single(tables, t => t.Name == "orders");
+            Assert.NotNull(orders.Constraints);
+            Assert.Equal(2, orders.Constraints!.Count);
+
+            AdbcConstraint ordersPk = Assert.Single(orders.Constraints, c => c.Type == "PRIMARY KEY");
+            Assert.Equal(string.Empty, ordersPk.Name);
+            Assert.Equal(new[] { "order_id" }, ordersPk.ColumnNames);
+            Assert.Empty(ordersPk.ColumnUsage);
+
+            AdbcConstraint ordersFk = Assert.Single(orders.Constraints, c => c.Type == "FOREIGN KEY");
+            Assert.Equal("fk_shared", ordersFk.Name);
+            Assert.Equal(new[] { "tenant_id", "customer_id" }, ordersFk.ColumnNames);
+            Assert.Equal(2, ordersFk.ColumnUsage.Count);
+            Assert.Equal("ref-project", ordersFk.ColumnUsage[0].FkCatalog);
+            Assert.Equal("ref_dataset", ordersFk.ColumnUsage[0].FkDbSchema);
+            Assert.Equal("customers", ordersFk.ColumnUsage[0].FkTable);
+            Assert.Equal("id_tenant", ordersFk.ColumnUsage[0].FkColumnName);
+            Assert.Equal("ref-project", ordersFk.ColumnUsage[1].FkCatalog);
+            Assert.Equal("ref_dataset", ordersFk.ColumnUsage[1].FkDbSchema);
+            Assert.Equal("customers", ordersFk.ColumnUsage[1].FkTable);
+            Assert.Equal("id_customer", ordersFk.ColumnUsage[1].FkColumnName);
+
+            AdbcTable invoices = Assert.Single(tables, t => t.Name == "invoices");
+            AdbcConstraint invoicesFk = Assert.Single(invoices.Constraints!);
+            Assert.Equal("fk_shared", invoicesFk.Name);
+            Assert.Equal("FOREIGN KEY", invoicesFk.Type);
+            Assert.Equal(new[] { "account_id" }, invoicesFk.ColumnNames);
+            AdbcUsageSchema invoiceUsage = Assert.Single(invoicesFk.ColumnUsage);
+            Assert.Equal("other-project", invoiceUsage.FkCatalog);
+            Assert.Equal("other_dataset", invoiceUsage.FkDbSchema);
+            Assert.Equal("accounts", invoiceUsage.FkTable);
+            Assert.Equal("acct_id", invoiceUsage.FkColumnName);
+
+            Assert.Empty(mockServer.ExecutedQueries);
+        }
+
+        [Fact]
+        public async Task GetObjectsRetriesTransientTablesListError()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "retry_table",
+                },
+                Type = "TABLE",
+            });
+
+            // Pair 500 with a reason Google.Apis ignores so RetryManager (not the HTTP handler) retries.
+            mockServer.QueueError(MockRequestKind.TablesList, HttpStatusCode.InternalServerError, "invalidQuery");
+
+            using AdbcConnection connection = Connect(mockServer, new Dictionary<string, string>
+            {
+                { BigQueryParameters.RetryDelayMs, "1" },
+            });
+
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.Tables,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: "retry_table",
+                tableTypes: new List<string> { "BASE TABLE" },
+                columnNamePattern: null);
+
+            var batch = await stream.ReadNextRecordBatchAsync();
+            List<AdbcCatalog> catalogs = GetObjectsParser.ParseCatalog(batch, DbSchema);
+            AdbcTable table = Assert.Single(Assert.Single(Assert.Single(catalogs).DbSchemas!).Tables!);
+
+            Assert.Equal("retry_table", table.Name);
+            Assert.Equal("BASE TABLE", table.Type);
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.TablesList));
+        }
+
+        [Fact]
+        public async Task GetObjectsRefreshesTokenWhenTablesListReturnsUnauthorized()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "auth_table",
+                },
+                Type = "TABLE",
+            });
+
+            mockServer.QueueError(MockRequestKind.TablesList, HttpStatusCode.Unauthorized, "authError");
+
+            using AdbcConnection connection = Connect(mockServer, new Dictionary<string, string>
+            {
+                { BigQueryParameters.RetryDelayMs, "1" },
+            });
+
+            bool tokenRefreshed = false;
+            ((BigQueryConnection)connection).UpdateToken = () =>
+            {
+                tokenRefreshed = true;
+                ((BigQueryConnection)connection).UpdateClientToken();
+                return Task.CompletedTask;
+            };
+
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.Tables,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: "auth_table",
+                tableTypes: null,
+                columnNamePattern: null);
+
+            var batch = await stream.ReadNextRecordBatchAsync();
+            List<AdbcCatalog> catalogs = GetObjectsParser.ParseCatalog(batch, DbSchema);
+            AdbcTable table = Assert.Single(Assert.Single(Assert.Single(catalogs).DbSchemas!).Tables!);
+
+            Assert.True(tokenRefreshed);
+            Assert.Equal("auth_table", table.Name);
+            Assert.Equal(2, mockServer.CountOfKind(MockRequestKind.TablesList));
+        }
+
+        [Theory]
+        [InlineData("MATERIALIZED VIEW")]
+        [InlineData("MATERIALIZED_VIEW")]
+        public async Task GetObjectsNormalizesMaterializedViewTableType(string filterType)
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "my_mv",
+                },
+                Type = "MATERIALIZED_VIEW",
+            });
+
+            using AdbcConnection connection = Connect(mockServer);
+
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.Tables,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: "my_mv",
+                tableTypes: new List<string> { filterType },
+                columnNamePattern: null);
+
+            var batch = await stream.ReadNextRecordBatchAsync();
+            List<AdbcCatalog> catalogs = GetObjectsParser.ParseCatalog(batch, DbSchema);
+            AdbcTable table = Assert.Single(Assert.Single(Assert.Single(catalogs).DbSchemas!).Tables!);
+
+            Assert.Equal("my_mv", table.Name);
+            Assert.Equal("MATERIALIZED VIEW", table.Type);
+        }
+
+        [Fact]
+        public async Task GetObjectsMapsRepeatedFieldsAsNonNullableArrays()
+        {
+            using var mockServer = new BigQueryMockServer();
+            mockServer.AddTable(new Table
+            {
+                TableReference = new TableReference
+                {
+                    ProjectId = ProjectId,
+                    DatasetId = DbSchema,
+                    TableId = "array_table",
+                },
+                Type = "TABLE",
+                Schema = new TableSchema
+                {
+                    Fields = new[]
+                    {
+                        new TableFieldSchema { Name = "req_id", Type = "INTEGER", Mode = "REQUIRED" },
+                        new TableFieldSchema { Name = "opt_name", Type = "STRING", Mode = "NULLABLE" },
+                        new TableFieldSchema { Name = "default_mode", Type = "STRING" },
+                        new TableFieldSchema { Name = "int_array", Type = "INTEGER", Mode = "REPEATED" },
+                        new TableFieldSchema { Name = "dec_array", Type = "NUMERIC", Mode = "REPEATED", Precision = 10, Scale = 2 },
+                    },
+                },
+            });
+
+            using AdbcConnection connection = Connect(mockServer);
+
+            using var stream = connection.GetObjects(
+                AdbcConnection.GetObjectsDepth.All,
+                catalogPattern: ProjectId,
+                dbSchemaPattern: DbSchema,
+                tableNamePattern: "array_table",
+                tableTypes: null,
+                columnNamePattern: null);
+
+            var batch = await stream.ReadNextRecordBatchAsync();
+            List<AdbcCatalog> catalogs = GetObjectsParser.ParseCatalog(batch, DbSchema);
+            List<AdbcColumn> columns = Assert.Single(Assert.Single(Assert.Single(catalogs).DbSchemas!).Tables!).Columns!;
+
+            Assert.Equal(5, columns.Count);
+
+            Assert.Equal("NO", columns[0].XdbcIsNullable);
+            Assert.Equal("INTEGER", columns[0].XdbcTypeName);
+            Assert.Equal((short)4, columns[0].XdbcSqlDataType);
+
+            Assert.Equal("YES", columns[1].XdbcIsNullable);
+            Assert.Equal("YES", columns[2].XdbcIsNullable);
+
+            Assert.Equal("ARRAY", columns[3].XdbcTypeName);
+            Assert.Equal((short)0, columns[3].XdbcSqlDataType);
+            Assert.Equal("NO", columns[3].XdbcIsNullable);
+            Assert.Null(columns[3].XdbcColumnSize);
+            Assert.Null(columns[3].XdbcDecimalDigits);
+
+            Assert.Equal("ARRAY", columns[4].XdbcTypeName);
+            Assert.Equal((short)0, columns[4].XdbcSqlDataType);
+            Assert.Equal("NO", columns[4].XdbcIsNullable);
+            Assert.Null(columns[4].XdbcColumnSize);
+            Assert.Null(columns[4].XdbcDecimalDigits);
         }
 
         [Theory]
@@ -158,16 +643,26 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
             Assert.Equal(tableName, parameter.ParameterValue.Value);
         }
 
-        private static AdbcConnection Connect(BigQueryMockServer mockServer)
+        private static AdbcConnection Connect(BigQueryMockServer mockServer, IDictionary<string, string>? extraParameters = null)
         {
-            var driver = new BigQueryDriver();
-            AdbcDatabase database = driver.Open(new Dictionary<string, string>
+            var parameters = new Dictionary<string, string>
             {
                 { BigQueryParameters.ProjectId, ProjectId },
                 { BigQueryParameters.AuthenticationType, BigQueryConstants.MockAuthenticationType },
                 { BigQueryParameters.TestRestEndpoint, mockServer.RestEndpoint },
                 { BigQueryParameters.TestStorageEndpoint, mockServer.GrpcEndpoint },
-            });
+            };
+
+            if (extraParameters != null)
+            {
+                foreach (var kvp in extraParameters)
+                {
+                    parameters[kvp.Key] = kvp.Value;
+                }
+            }
+
+            var driver = new BigQueryDriver();
+            AdbcDatabase database = driver.Open(parameters);
 
             return database.Connect(new Dictionary<string, string>());
         }
