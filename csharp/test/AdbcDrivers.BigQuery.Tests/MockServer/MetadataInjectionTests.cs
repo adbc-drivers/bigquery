@@ -46,20 +46,15 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         private const string Payload = "t'; DROP TABLE secrets; SELECT '";
 
         [Fact]
-        public void GetTableSchemaBindsTableNameInsteadOfInterpolatingIt()
+        public void GetTableSchemaUsesRestApiInsteadOfInterpolatingSql()
         {
             using var mockServer = new BigQueryMockServer();
             using AdbcConnection connection = Connect(mockServer);
 
             connection.GetTableSchema(ProjectId, DbSchema, Payload);
 
-            string query = Assert.Single(mockServer.ExecutedQueries);
-            Assert.DoesNotContain("DROP TABLE secrets", query);
-            Assert.Contains("table_name = @tableName", query);
-
-            QueryParameter parameter = Assert.Single(Assert.Single(mockServer.ExecutedQueryParameters));
-            Assert.Equal("tableName", parameter.Name);
-            Assert.Equal(Payload, parameter.ParameterValue.Value);
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TableGet));
         }
 
         [Fact]
@@ -101,7 +96,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Theory]
-        // A backtick would close the quoted identifier that names the INFORMATION_SCHEMA view.
+        // A backtick would close a quoted identifier.
         [InlineData("mock-project` UNION ALL SELECT 1 --")]
         // The allowlist is anchored at both ends, so a valid prefix is no longer sufficient.
         [InlineData("mock-project'; DROP TABLE secrets --")]
@@ -116,6 +111,7 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
 
             Assert.Equal(AdbcStatusCode.InvalidArgument, exception.Status);
             Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.TableGet));
         }
 
         [Fact]
@@ -128,34 +124,34 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
                 () => connection.GetTableSchema(ProjectId, "mock_dataset` UNION ALL SELECT 1 --", "some_table"));
 
             Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Empty(mockServer.RequestsOfKind(MockRequestKind.TableGet));
         }
 
         [Fact]
-        public void ValidNamesStillReachTheQuery()
+        public void ValidNamesReachRestApi()
         {
             using var mockServer = new BigQueryMockServer();
             using AdbcConnection connection = Connect(mockServer);
 
             connection.GetTableSchema("mock-project", "mock_dataset", "my_table");
 
-            string query = Assert.Single(mockServer.ExecutedQueries);
-            Assert.Contains("`mock-project`.`mock_dataset`.INFORMATION_SCHEMA.COLUMNS", query);
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TableGet));
         }
 
         [Fact]
-        public void TableNamesBigQueryAllowsButTheOldAllowlistWouldRejectAreBound()
+        public void TableNamesWithUnicodeAndSpacesReachRestApi()
         {
             using var mockServer = new BigQueryMockServer();
             using AdbcConnection connection = Connect(mockServer);
 
             // BigQuery table names may use any Unicode letter, mark, number, connector, dash or
-            // space. None of these survive an ASCII identifier allowlist, which is one reason the
-            // table name is bound rather than validated.
+            // space. None of these survive an ASCII identifier allowlist.
             const string tableName = "étudiant-01 お客様";
             connection.GetTableSchema(ProjectId, DbSchema, tableName);
 
-            QueryParameter parameter = Assert.Single(Assert.Single(mockServer.ExecutedQueryParameters));
-            Assert.Equal(tableName, parameter.ParameterValue.Value);
+            Assert.Empty(mockServer.ExecutedQueries);
+            Assert.Single(mockServer.RequestsOfKind(MockRequestKind.TableGet));
         }
 
         private static AdbcConnection Connect(BigQueryMockServer mockServer)

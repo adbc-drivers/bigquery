@@ -229,7 +229,6 @@ namespace AdbcDrivers.BigQuery.Tests.MockServer
         }
 
         [Theory]
-        [InlineData(MockRequestKind.TableGet)]
         [InlineData(MockRequestKind.TableInsert)]
         [InlineData(MockRequestKind.TableDelete)]
         public void QueueErrorRejectsTableKinds(MockRequestKind kind)
